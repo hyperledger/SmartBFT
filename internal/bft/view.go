@@ -46,6 +46,21 @@ func (p Phase) String() string {
 	}
 }
 
+// PrepareBufferInfo identifies the exact proposal currently collecting PREPARE
+// votes. The deadline is the authoritative upper bound for request-timer
+// suppression; heartbeat failure detection remains independent.
+type PrepareBufferInfo struct {
+	View     uint64
+	Sequence uint64
+	Digest   string
+	Deadline time.Time
+}
+
+type activePrepareState struct {
+	info     PrepareBufferInfo
+	requests map[types.RequestInfo]struct{}
+}
+
 // State can save and restore the state
 //
 //go:generate mockery -dir . -name State -case underscore -output ./mocks/
@@ -125,8 +140,61 @@ type View struct {
 	abortChan          chan struct{}
 	stopOnce           sync.Once
 	viewEnded          sync.WaitGroup
+	prepareBufferLock  sync.RWMutex
+	activePrepareState *activePrepareState
 
 	ViewSequences *atomic.Value
+}
+
+// PrepareBufferInfo returns the active PREPARE buffer only when requestInfo is
+// part of that exact in-flight proposal and its deadline has not expired.
+func (v *View) PrepareBufferInfo(requestInfo types.RequestInfo) (PrepareBufferInfo, bool) {
+	v.prepareBufferLock.RLock()
+	defer v.prepareBufferLock.RUnlock()
+
+	state := v.activePrepareState
+	if state == nil || !time.Now().Before(state.info.Deadline) {
+		return PrepareBufferInfo{}, false
+	}
+	if _, exists := state.requests[requestInfo]; !exists {
+		return PrepareBufferInfo{}, false
+	}
+	return state.info, true
+}
+
+func (v *View) beginPrepareBuffer(digest string) *PrepareBufferInfo {
+	if v.PrepareVoteCollectionTimeout <= 0 {
+		return nil
+	}
+
+	requests := make(map[types.RequestInfo]struct{}, len(v.inFlightRequests))
+	for _, requestInfo := range v.inFlightRequests {
+		requests[requestInfo] = struct{}{}
+	}
+	info := PrepareBufferInfo{
+		View:     v.Number,
+		Sequence: v.ProposalSequence,
+		Digest:   digest,
+		Deadline: time.Now().Add(v.PrepareVoteCollectionTimeout),
+	}
+
+	v.prepareBufferLock.Lock()
+	v.activePrepareState = &activePrepareState{info: info, requests: requests}
+	v.prepareBufferLock.Unlock()
+	return &info
+}
+
+func (v *View) endPrepareBuffer(info *PrepareBufferInfo) {
+	if info == nil {
+		return
+	}
+
+	v.prepareBufferLock.Lock()
+	defer v.prepareBufferLock.Unlock()
+	state := v.activePrepareState
+	if state != nil && state.info.View == info.View && state.info.Sequence == info.Sequence && state.info.Digest == info.Digest {
+		v.activePrepareState = nil
+	}
 }
 
 // Start starts the view
@@ -447,6 +515,8 @@ func (v *View) createPrepare(seq uint64, proposal types.Proposal) *protos.Messag
 func (v *View) processPrepares() Phase {
 	proposal := v.inFlightProposal
 	expectedDigest := proposal.Digest()
+	prepareBuffer := v.beginPrepareBuffer(expectedDigest)
+	defer v.endPrepareBuffer(prepareBuffer)
 
 	var timeout <-chan time.Time
 	var timer *time.Timer

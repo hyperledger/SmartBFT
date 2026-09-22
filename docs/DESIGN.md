@@ -19,49 +19,73 @@ not call a Go consensus engine directly. The Go application is not a complete
 MWVN validator and does not know the witness-event or local-QC policy.
 
 ```mermaid
-flowchart LR
-    A[Local QC Aggregator] -->|Submit local QC over IP<br/>to any validator; V1 shown| V1
+sequenceDiagram
+    participant A as Local QC Aggregator
+    participant V1 as Python Validator 1
+    participant B1 as Go Engine 1 (Leader)
+    participant B2 as Go Engine 2
+    participant V2 as Python Validator 2
+    participant B3 as Go Engine 3
+    participant V3 as Python Validator 3
+    participant B4 as Go Engine 4
+    participant V4 as Python Validator 4
 
-    subgraph Validators[Python MWVN Regional Validators]
-        V1[Validator 1]
-        V2[Validator 2]
-        V3[Validator 3]
-        V4[Validator 4]
+    Note over A,V4: Example successful round: ingress at Validator 1, Engine 1 is the current leader
+    A->>V1: Submit local QC over IP
+    V1->>V1: Validate and reserve request ID
+    V1->>B1: POST /v1/requests
+    B1->>V1: Verify request callback
+    V1-->>B1: Stable request ID
+
+    B1->>B2: Signed PRE-PREPARE
+    B1->>B3: Signed PRE-PREPARE
+    B1->>B4: Signed PRE-PREPARE
+
+    par Engine 1 checks with Validator 1
+        B1->>V1: Verify proposal callback
+        V1-->>B1: Valid ordered request IDs
+    and Engine 2 checks with Validator 2
+        B2->>V2: Verify proposal callback
+        V2-->>B2: Valid ordered request IDs
+    and Engine 3 checks with Validator 3
+        B3->>V3: Verify proposal callback
+        V3-->>B3: Valid ordered request IDs
+    and Engine 4 checks with Validator 4
+        B4->>V4: Verify proposal callback
+        V4-->>B4: Valid ordered request IDs
     end
 
-    subgraph Engines[Go SmartBFT Engine Processes]
-        B1[Engine 1]
-        B2[Engine 2]
-        B3[Engine 3]
-        B4[Engine 4]
+    Note over B1,V4: Engines exchange signed PREPARE votes with peers<br/>Each engine proceeds when its PREPARE quorum is reached<br/>If its PREPARE deadline expires first, it aborts the view and triggers view change
+    Note over B1,V4: Engines exchange signed COMMIT votes with peers<br/>Each engine verifies its 3-of-4 decision proof before delivery
+
+    par Engine 1 delivers its decision
+        B1->>V1: Commit callback and decision proof
+        V1->>V1: Append durable Ledger 1 record
+        V1-->>B1: HTTP 200 after persistence
+    and Engine 2 delivers its decision
+        B2->>V2: Commit callback and decision proof
+        V2->>V2: Append durable Ledger 2 record
+        V2-->>B2: HTTP 200 after persistence
+    and Engine 3 delivers its decision
+        B3->>V3: Commit callback and decision proof
+        V3->>V3: Append durable Ledger 3 record
+        V3-->>B3: HTTP 200 after persistence
+    and Engine 4 delivers its decision
+        B4->>V4: Commit callback and decision proof
+        V4->>V4: Append durable Ledger 4 record
+        V4-->>B4: HTTP 200 after persistence
     end
 
-    V1 -->|Admitted request<br/>POST /v1/requests| B1
-    V2 -->|Admitted request<br/>POST /v1/requests| B2
-    V3 -->|Admitted request<br/>POST /v1/requests| B3
-    V4 -->|Admitted request<br/>POST /v1/requests| B4
-
-    B1 -->|Verify and commit callbacks| V1
-    B2 -->|Verify and commit callbacks| V2
-    B3 -->|Verify and commit callbacks| V3
-    B4 -->|Verify and commit callbacks| V4
-
-    B1 <-->|Signed SmartBFT messages| B2
-    B1 <-->|Signed SmartBFT messages| B3
-    B1 <-->|Signed SmartBFT messages| B4
-    B2 <-->|Signed SmartBFT messages| B3
-    B2 <-->|Signed SmartBFT messages| B4
-    B3 <-->|Signed SmartBFT messages| B4
-
-    V1 --> L1[(Ledger 1)]
-    V2 --> L2[(Ledger 2)]
-    V3 --> L3[(Ledger 3)]
-    V4 --> L4[(Ledger 4)]
+    A->>V1: GET request status
+    V1-->>A: committed
 ```
 
 Each Regional Validator knows only its paired engine URL. Each Go engine knows
 all Go peers from the shared membership file and knows only its paired Python
-validator callback URL. The diagram uses Validator 1 as the example ingress.
+validator callback URL. The diagram uses Validator 1 as the example ingress and Engine 1 as the current
+leader. If the ingress engine is not the leader, it forwards the request to the
+current leader. Peer vote exchanges are summarized in notes to keep the diagram
+readable; ledger writes are shown as local actions inside each Python validator.
 After SmartBFT distributes a proposal, every engine asks its own paired validator
 to verify the proposal; after the decision, every engine delivers the same
 consensus-decided record to its paired validator's independent ledger.
@@ -113,12 +137,15 @@ SmartBFT/
 │       ├── callback.go               Go-to-Python validation/commit client
 │       ├── server.go                 public and peer HTTP routes
 │       ├── config_test.go            membership/configuration tests
+│       ├── node_config_test.go       NEW: coordinated MWVN timer tests
 │       └── Dockerfile                engine container image
 ├── docs/
 │   ├── DESIGN.md                     NEW: consolidated design and API document
 │   └── INSTALLATION.md               NEW: standalone build and test instructions
 ├── internal/bft/
 │   ├── view.go                       CHANGED: PREPARE deadline behavior
+│   ├── controller.go                 CHANGED: active-buffer request-timer guard
+│   ├── requestpool.go                CHANGED: coordinated auto-remove scheduling
 │   ├── util.go                       CHANGED: pass deadline into a view
 │   └── prepare_timeout_test.go       NEW: focused timeout tests
 ├── pkg/
@@ -128,6 +155,7 @@ SmartBFT/
 │       └── config_test.go            NEW: default and validation tests
 ├── test/
 │   ├── prepare_timeout_test.go       NEW: four-node behavior tests
+│   ├── strict_prepare_buffer_test.go NEW: timer-interaction regression tests
 │   ├── reconfig.go                   CHANGED: retain setting on reconfiguration
 │   └── test_app.go                   CHANGED: configure the default in tests
 ├── scripts/install-go.sh             NEW: local Go installation helper
@@ -135,7 +163,7 @@ SmartBFT/
 └── README.md                         CHANGED: points to MWVN documentation
 ```
 
-Deployment-only files are deliberately absent. The four-node Compose file,
+Deployment-only files are deliberately absent. The generated Compose files,
 membership, development keys, and cross-repository end-to-end test live in
 `mwvn-regional-deployment`. The full MWVN validation/state-machine code lives in
 `mwvn-validator`.
@@ -157,48 +185,58 @@ independent engine:
 - `Synchronizer`: expose limited in-process state required by SmartBFT;
 - `WAL`: persist SmartBFT protocol state.
 
-The adapter starts one `consensus.Consensus` instance per process. A four-node
-deployment therefore runs four Go processes and four paired Python processes.
-For `n = 4`, SmartBFT tolerates `f = 1` Byzantine validator and decides with a
-quorum of `2f + 1 = 3`.
+The adapter starts one `consensus.Consensus` instance per process. A generated
+`N`-validator deployment therefore runs `N` Go processes and `N` paired Python
+processes. SmartBFT derives `N` from membership and calculates `f` and its safe
+quorum. For the default `N=4`, it tolerates `f=1` Byzantine validator and
+decides with quorum `3`; for `N=7`, it tolerates `f=2` and uses quorum `5`.
 
 ### 4.2 Request and decision flow
 
 ```mermaid
 sequenceDiagram
-    participant C as Aggregator / Client
-    participant V as Python Validator
-    participant E as Paired Go Engine
-    participant P as Other Go Engines
-    participant L as Python Ledger
+    participant A as Local QC Aggregator
+    participant V as MWVN Validator
+    participant G as Paired SmartBFT Engine
+    participant P as Other SmartBFT Engines
 
-    C->>V: Submit local QC
-    V->>V: MWVN validation and state-machine checks
-    V->>E: POST /v1/requests
-    E->>V: POST /internal/v1/requests/verify
-    V-->>E: deterministic request_id
-    E->>P: PRE-PREPARE / PREPARE
-    Note over E,P: Continue immediately at PREPARE quorum;<br/>abort and change view if the deadline expires first
-    E->>P: COMMIT
-    P-->>E: matching COMMIT votes
-    E->>E: verify decision signatures
-    E->>V: POST /internal/v1/proposals/verify
-    V-->>E: ordered request_ids
-    E->>V: POST /internal/v1/commits
-    V->>L: durable application-ledger append
-    V-->>E: HTTP 2xx
+    A->>V: POST /api/v1/qcs
+    V->>V: Authenticate, decode, canonicalize and check state
+    V->>V: Reserve request ID durably
+    V->>G: POST /v1/requests
+    G->>V: POST /internal/v1/requests/verify
+    V-->>G: Stable request ID
+    Note over G,P: Forward to the current leader if needed<br/>Leader distributes PRE-PREPARE
+    G->>V: POST /internal/v1/proposals/verify
+    V-->>G: Valid ordered request IDs
+    G->>P: PREPARE
+    P-->>G: Matching PREPARE votes
+    Note over G,P: Continue immediately at PREPARE quorum<br/>Abort and change view if the deadline expires first
+    G->>P: COMMIT
+    P-->>G: Matching COMMIT votes
+    G->>G: Verify decision signatures
+    G->>V: POST /internal/v1/commits with decision proof
+    V->>V: Append SQLite ledger record
+    V-->>G: HTTP 200 after persistence
+    A->>V: GET /api/v1/qcs/{request_id}
+    V-->>A: pending or committed
 ```
 
 An HTTP `202` from `/v1/requests` means only that SmartBFT accepted the request
 for processing. It is not proof of commitment. The client reads final state from
 the Python validator API.
 
+The diagram follows one paired validator and engine. Every engine verifies the
+proposal with its own Python validator before voting and delivers the decided
+record to that validator after consensus. Proposal verification therefore
+appears before PREPARE, rather than after the COMMIT votes.
+
 ### 4.3 Membership and transport
 
 At startup, `config.go` loads a strict JSON membership document containing:
 
 - a network ID and membership version;
-- exactly four validator IDs;
+- at least four validator IDs;
 - each engine's HTTP peer URL;
 - each engine's Ed25519 public key.
 
@@ -235,19 +273,48 @@ Enter PREPARE collection
 ```
 
 The deadline does not apply to COMMIT collection. It does not change quorum
-calculation, request batching, heartbeats, signatures, message formats, or the
-existing view-change safety rules.
+calculation, request batching, signatures, message formats, or the existing
+view-change safety rules. It coordinates request-driven timers with the active
+PREPARE buffer, but it does not disable heartbeat failure detection.
 
-### 5.2 Code path
+### 5.2 Timer coordination
+
+The original implementation had an interaction bug: a request complaint could
+make the leader stop sending heartbeats while the proposal was legitimately
+waiting for PREPARE votes. Followers could then change view before the PREPARE
+deadline. The correction uses two complementary controls:
+
+1. `mwvn_bftnode` enables the opt-in
+   `RequestTimerGuardDuringPrepare` setting and derives its request timers from
+   the configured PREPARE timeout. With the normal `5m` value,
+   `RequestComplainTimeout` is `5m30s` and `RequestAutoRemoveTimeout` is `6m`.
+   The generic SmartBFT defaults are not changed.
+2. Each view publishes a thread-safe active-buffer record containing the exact
+   view, sequence, proposal digest, request identities, and deadline. If a
+   request timer still expires during that exact buffer, the controller keeps
+   leader heartbeats running, suppresses the request-driven complaint, and
+   postpones the normal auto-remove interval until after the buffer deadline.
+
+The guard is deliberately narrow. It does not match an unrelated request or a
+different proposal, and it is removed immediately when quorum arrives, the
+deadline expires, or the view aborts. `LeaderHeartbeatTimeout` remains active,
+so a genuinely crashed or disconnected leader can still be replaced before the
+PREPARE deadline. Once the PREPARE deadline expires, the normal SmartBFT
+complaint and view-change path runs; completion of the view change may take an
+additional configured view-change interval.
+
+### 5.3 Code path
 
 | File | Change |
 |---|---|
-| `pkg/types/config.go` | Defines the field, sets the five-minute default, and rejects zero/negative public configuration values. |
+| `pkg/types/config.go` | Defines the timeout and opt-in request-timer guard, sets the five-minute timeout default, and rejects zero/negative timeout values. The generic guard default remains disabled for compatibility. |
 | `pkg/consensus/consensus.go` | Copies the public setting into internal protocol parameters. |
 | `internal/bft/util.go` | Propagates the setting when constructing a view. |
-| `internal/bft/view.go` | Starts the timer in `processPrepares`; quorum stops the timer and proceeds, expiry complains and aborts. |
+| `internal/bft/view.go` | Starts the timer in `processPrepares`, publishes the exact active-buffer identity, and clears it on every exit; quorum proceeds immediately and expiry complains and aborts. |
+| `internal/bft/controller.go` | Suppresses only request-driven complaints for the exact active buffer and keeps leader heartbeats running. Heartbeat failure detection is unchanged. |
+| `internal/bft/requestpool.go` | Starts the normal auto-remove interval after any active-buffer postponement instead of allowing request removal during the buffer. |
 | `cmd/mwvn_bftnode/main.go` | Exposes `-prepare-timeout`, default `5m`. |
-| `cmd/mwvn_bftnode/node.go` | Assigns the command-line value to the SmartBFT configuration. |
+| `cmd/mwvn_bftnode/node.go` | Assigns the command-line value and derives MWVN request complaint/removal timers from it. |
 
 Configuration example:
 
@@ -263,10 +330,31 @@ mwvn_bftnode \
 ```
 
 Tests use short deadlines so failure/recovery scenarios finish quickly. The
-normal four-node test retains the real `5m` configuration and proves consensus
-completes as soon as quorum is available rather than waiting five minutes. The
-relevant tests are `internal/bft/prepare_timeout_test.go`,
-`test/prepare_timeout_test.go`, and `pkg/types/config_test.go`.
+normal cluster test retains the real `5m` configuration and proves consensus
+completes as soon as quorum is available rather than waiting five minutes.
+`test/strict_prepare_buffer_test.go` additionally proves that delayed PREPARE
+votes do not trigger the old request/heartbeat view change, expiry occurs before
+view-change recovery, and a real leader failure is still detected before the
+PREPARE deadline. The focused unit tests also verify exact request/proposal
+matching and auto-remove postponement.
+
+### 5.4 Real-process verification
+
+The correction was also verified with four independent Go engines, four paired
+Python validators, signed HTTP peer relays, separate WAL directories, and
+separate SQLite ledgers:
+
+| Scenario | Observed result |
+|---|---|
+| PREPARE messages held for 3 seconds | No COMMIT while held; release produced a common four-ledger commit in 3.37 seconds, without waiting for the five-minute deadline. |
+| PREPARE messages held through the deadline | No COMMIT or ledger append during the hold. All four engines logged the `5m0s` PREPARE timeout before their first view change. Release recovered and committed a common record in 304.42 seconds. |
+| Leader disconnected during an active scaled buffer | The independent heartbeat detector changed view before the PREPARE deadline. |
+
+In the full five-minute run, node 1 entered PREPARE collection at
+`08:33:56.926`, timed out at `08:38:56.930`, and changed view at
+`08:38:56.984`. This confirms that a healthy view no longer changes because a
+request timer stopped its heartbeats. It does not change the separate rule that
+a genuinely unavailable leader may be replaced earlier.
 
 ## 6. HTTP API summary
 

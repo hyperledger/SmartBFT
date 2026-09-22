@@ -30,6 +30,10 @@ type Configuration struct {
 	// proposal. A replica proceeds immediately when the quorum is reached. If the timeout expires first, the replica
 	// complains about the current view and stops participating in it.
 	PrepareVoteCollectionTimeout time.Duration
+	// RequestTimerGuardDuringPrepare coordinates request complaint and auto-remove timers with the exact proposal
+	// currently collecting PREPARE votes. It is opt-in so existing SmartBFT applications retain their historical
+	// request-timeout behavior. Heartbeat failure detection is never suppressed by this setting.
+	RequestTimerGuardDuringPrepare bool
 
 	// IncomingMessageBufferSize is the size of the buffer holding incoming messages before they are processed.
 	IncomingMessageBufferSize uint64

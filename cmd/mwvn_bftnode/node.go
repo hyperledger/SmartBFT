@@ -44,6 +44,33 @@ type bftNode struct {
 	stopOnce   sync.Once
 }
 
+const (
+	mwvnPrepareComplaintGrace  = 30 * time.Second
+	mwvnPrepareAutoRemoveGrace = time.Minute
+)
+
+// mwvnConsensusConfig keeps the generic SmartBFT defaults unchanged while
+// aligning the MWVN adapter's request lifecycle with its long PREPARE window.
+// The engine-level active-buffer guard remains the final authority when a
+// request timer races with an in-flight proposal.
+func mwvnConsensusConfig(id uint64, prepareTimeout time.Duration) types.Configuration {
+	config := types.DefaultConfig
+	config.SelfID = id
+	config.RequestBatchMaxCount = 1
+	config.RequestBatchMaxBytes = 1024 * 1024
+	config.RequestBatchMaxInterval = 25 * time.Millisecond
+	config.RequestMaxBytes = 64 * 1024
+	config.RequestPoolSize = 100
+	config.SyncOnStart = false
+	config.LeaderRotation = false
+	config.DecisionsPerLeader = 0
+	config.PrepareVoteCollectionTimeout = prepareTimeout
+	config.RequestTimerGuardDuringPrepare = true
+	config.RequestComplainTimeout = prepareTimeout + mwvnPrepareComplaintGrace
+	config.RequestAutoRemoveTimeout = prepareTimeout + mwvnPrepareAutoRemoveGrace
+	return config
+}
+
 func newBFTNode(id uint64, config membership, publicKeys map[uint64]ed25519.PublicKey, privateKey ed25519.PrivateKey, coreURL, dataDir string, prepareTimeout time.Duration, logger api.Logger) (*bftNode, error) {
 	if err := os.MkdirAll(dataDir, 0o700); err != nil {
 		return nil, fmt.Errorf("create node data directory: %w", err)
@@ -81,17 +108,7 @@ func newBFTNode(id uint64, config membership, publicKeys map[uint64]ed25519.Publ
 		clock:      time.NewTicker(time.Second),
 		viewClock:  time.NewTicker(time.Second),
 	}
-	consensusConfig := types.DefaultConfig
-	consensusConfig.SelfID = id
-	consensusConfig.RequestBatchMaxCount = 1
-	consensusConfig.RequestBatchMaxBytes = 1024 * 1024
-	consensusConfig.RequestBatchMaxInterval = 25 * time.Millisecond
-	consensusConfig.RequestMaxBytes = 64 * 1024
-	consensusConfig.RequestPoolSize = 100
-	consensusConfig.SyncOnStart = false
-	consensusConfig.LeaderRotation = false
-	consensusConfig.DecisionsPerLeader = 0
-	consensusConfig.PrepareVoteCollectionTimeout = prepareTimeout
+	consensusConfig := mwvnConsensusConfig(id, prepareTimeout)
 	node.consensus = &consensus.Consensus{
 		Config:             consensusConfig,
 		ViewChangerTicker:  node.viewClock.C,

@@ -128,3 +128,52 @@ func TestPrepareVoteCollectionStopsWhenViewIsAborted(t *testing.T) {
 	default:
 	}
 }
+
+func TestPrepareBufferStateIsBoundToExactProposalAndRequest(t *testing.T) {
+	const timeout = time.Second
+	v, _ := newPrepareTimeoutView(timeout)
+	requestInfo := types.RequestInfo{ClientID: "mwvn-ingress", ID: "approved-qc-1"}
+	v.inFlightRequests = []types.RequestInfo{requestInfo}
+
+	result := make(chan Phase, 1)
+	go func() {
+		result <- v.processPrepares()
+	}()
+
+	var buffer PrepareBufferInfo
+	deadline := time.Now().Add(250 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		var active bool
+		buffer, active = v.PrepareBufferInfo(requestInfo)
+		if active {
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if buffer.Digest == "" {
+		t.Fatal("active PREPARE buffer was not published")
+	}
+	if buffer.View != v.Number || buffer.Sequence != v.ProposalSequence || buffer.Digest != v.inFlightProposal.Digest() {
+		t.Fatalf("buffer is not bound to the active proposal: %+v", buffer)
+	}
+	if !buffer.Deadline.After(time.Now()) {
+		t.Fatalf("buffer deadline is not in the future: %s", buffer.Deadline)
+	}
+	if _, active := v.PrepareBufferInfo(types.RequestInfo{ClientID: requestInfo.ClientID, ID: "different-qc"}); active {
+		t.Fatal("unrelated request matched the active PREPARE buffer")
+	}
+
+	v.prepares.registerVote(2, prepareVote(v))
+	v.prepares.registerVote(3, prepareVote(v))
+	select {
+	case phase := <-result:
+		if phase != PREPARED {
+			t.Fatalf("expected PREPARED, got %s", phase.String())
+		}
+	case <-time.After(time.Second):
+		t.Fatal("PREPARE quorum did not release the buffer")
+	}
+	if _, active := v.PrepareBufferInfo(requestInfo); active {
+		t.Fatal("PREPARE buffer remained active after quorum")
+	}
+}

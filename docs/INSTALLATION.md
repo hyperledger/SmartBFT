@@ -4,7 +4,7 @@
 
 This repository contains the SmartBFT library and the MWVN Go consensus-engine
 adapter, `mwvn_bftnode`. It does not contain the Python MWVN validation logic or
-the four-node deployment configuration.
+the generated multi-node deployment configuration.
 
 For the simplest complete demonstration, use the separate
 `mwvn-regional-deployment` repository. Use the instructions below when working
@@ -66,19 +66,38 @@ Run the focused five-minute PREPARE-deadline tests:
 make test-prepare-timeout
 ```
 
-The timeout tests use short deadlines for failure scenarios. The normal
-four-node test configures the real five-minute maximum and verifies that the
-protocol proceeds immediately when the PREPARE quorum arrives.
+The test target covers both the deadline itself and its interaction with the
+other SmartBFT timers. It verifies:
 
-## Run a complete four-node system
+- a real `5m` configuration proceeds immediately when quorum is already
+  available;
+- delayed PREPARE votes reach quorum before the deadline without changing
+  view;
+- a missing quorum expires first and then uses normal view-change recovery;
+- request auto-removal is postponed for the exact active proposal;
+- a disconnected leader is still detected by the independent heartbeat timer.
+
+The long-window success test does not sleep for five minutes. Failure and
+leader-loss cases use proportionally shorter deadlines so the test suite stays
+fast. To include the race detector for the coordinated state:
+
+```bash
+go test -race -mod=vendor -count=1 ./internal/bft \
+  -run 'Test(PrepareQuorumContinuesWithoutWaitingForTimeout|PrepareVoteCollectionTimeoutComplainsAndAborts|PrepareVoteCollectionStopsWhenViewIsAborted|PrepareBufferStateIsBoundToExactProposalAndRequest|ReqPoolTimeout)$'
+
+go test -race -mod=vendor -count=1 ./test \
+  -run 'Test(FourNodePrepare|StrictPrepareBuffer)'
+```
+
+## Run a complete generated cluster
 
 Do not start `mwvn_bftnode` by itself for the normal demonstration. Every engine
 requires:
 
-- a shared four-node membership file;
+- a shared membership file containing at least four validators;
 - its own Ed25519 private key;
 - its own data directory;
-- three reachable peer engines;
+- enough reachable peer engines to satisfy the calculated quorum;
 - one reachable paired Python MWVN Regional Validator.
 
 The deployment repository supplies these dependencies:
@@ -86,6 +105,7 @@ The deployment repository supplies these dependencies:
 ```bash
 git clone --recurse-submodules https://github.com/ssais-2025/mwvn-regional-deployment.git
 cd mwvn-regional-deployment
+make configure N=4
 make up
 make test
 make status
@@ -116,6 +136,13 @@ validator and the other engines are available:
   -data-dir /absolute/path/to/node-1-data \
   -prepare-timeout 5m
 ```
+
+For this `5m` setting, the MWVN adapter automatically configures the request
+complaint interval to `5m30s` and the request auto-remove interval to `6m`.
+It also enables SmartBFT's opt-in `RequestTimerGuardDuringPrepare`; generic
+SmartBFT applications keep their historical behavior unless they explicitly
+enable that setting. Heartbeat failure detection remains at its independent
+configured value, so a dead leader is not protected by the PREPARE buffer.
 
 The engine stops if the paired validator is unavailable, reports a different
 node ID, or already has a non-empty application ledger. Restart and application

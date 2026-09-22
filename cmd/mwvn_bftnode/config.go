@@ -53,8 +53,8 @@ func loadMembership(path string, selfID uint64) (membership, map[uint64]ed25519.
 	if strings.TrimSpace(result.NetworkID) == "" || result.Version == 0 {
 		return membership{}, nil, errors.New("membership requires network_id and positive version")
 	}
-	if len(result.Nodes) != 4 {
-		return membership{}, nil, fmt.Errorf("local demo requires exactly 4 nodes, got %d", len(result.Nodes))
+	if len(result.Nodes) < 4 {
+		return membership{}, nil, fmt.Errorf("local BFT membership requires at least 4 nodes, got %d", len(result.Nodes))
 	}
 	keys := make(map[uint64]ed25519.PublicKey, len(result.Nodes))
 	endpoints := make(map[string]struct{}, len(result.Nodes))

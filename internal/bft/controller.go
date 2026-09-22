@@ -75,6 +75,7 @@ type Proposer interface {
 	AbortChan() <-chan struct{}
 	GetLeaderID() uint64
 	GetMetadata() []byte
+	PrepareBufferInfo(requestInfo types.RequestInfo) (PrepareBufferInfo, bool)
 	HandleMessage(sender uint64, m *protos.Message)
 }
 
@@ -89,32 +90,33 @@ type ProposerBuilder interface {
 type Controller struct {
 	api.Comm
 	// configuration
-	ID                 uint64
-	N                  uint64
-	NodesList          []uint64
-	LeaderRotation     bool
-	DecisionsPerLeader uint64
-	RequestPool        RequestPool
-	Batcher            Batcher
-	LeaderMonitor      LeaderMonitor
-	Verifier           api.Verifier
-	Logger             api.Logger
-	Assembler          api.Assembler
-	Application        api.Application
-	Deliver            api.Application
-	FailureDetector    FailureDetector
-	Synchronizer       api.Synchronizer
-	Signer             api.Signer
-	RequestInspector   api.RequestInspector
-	WAL                api.WriteAheadLog
-	ProposerBuilder    ProposerBuilder
-	Checkpoint         *types.Checkpoint
-	ViewChanger        *ViewChanger
-	Collector          *StateCollector
-	State              State
-	InFlight           *InFlightData
-	MetricsView        *api.MetricsView
-	quorum             int
+	ID                             uint64
+	N                              uint64
+	NodesList                      []uint64
+	LeaderRotation                 bool
+	DecisionsPerLeader             uint64
+	RequestTimerGuardDuringPrepare bool
+	RequestPool                    RequestPool
+	Batcher                        Batcher
+	LeaderMonitor                  LeaderMonitor
+	Verifier                       api.Verifier
+	Logger                         api.Logger
+	Assembler                      api.Assembler
+	Application                    api.Application
+	Deliver                        api.Application
+	FailureDetector                FailureDetector
+	Synchronizer                   api.Synchronizer
+	Signer                         api.Signer
+	RequestInspector               api.RequestInspector
+	WAL                            api.WriteAheadLog
+	ProposerBuilder                ProposerBuilder
+	Checkpoint                     *types.Checkpoint
+	ViewChanger                    *ViewChanger
+	Collector                      *StateCollector
+	State                          State
+	InFlight                       *InFlightData
+	MetricsView                    *api.MetricsView
+	quorum                         int
 
 	currView Proposer
 
@@ -285,18 +287,49 @@ func (c *Controller) OnRequestTimeout(request []byte, info types.RequestInfo) {
 	c.Comm.SendTransaction(leaderID, request)
 }
 
-// OnLeaderFwdRequestTimeout is called when the leader-forward timeout expires, and complains about the leader.
-// Called by the request-pool timeout goroutine. Upon return, the auto-remove timeout is started.
-func (c *Controller) OnLeaderFwdRequestTimeout(request []byte, info types.RequestInfo) {
+func (c *Controller) activePrepareBuffer(info types.RequestInfo) (PrepareBufferInfo, bool) {
+	c.currViewLock.RLock()
+	view := c.currView
+	viewNumber := c.currViewNumber
+	c.currViewLock.RUnlock()
+	if view == nil {
+		return PrepareBufferInfo{}, false
+	}
+
+	buffer, active := view.PrepareBufferInfo(info)
+	if !active || buffer.View != viewNumber || time.Until(buffer.Deadline) <= 0 {
+		return PrepareBufferInfo{}, false
+	}
+	return buffer, true
+}
+
+// OnLeaderFwdRequestTimeout is called when the leader-forward timeout expires.
+// It returns how much additional time the request pool should wait before
+// starting its normal auto-remove interval. An active PREPARE buffer suppresses
+// request-driven complaints only for requests in that exact proposal. Heartbeat
+// failure detection remains active and can still replace a crashed leader.
+func (c *Controller) OnLeaderFwdRequestTimeout(request []byte, info types.RequestInfo) time.Duration {
+	if buffer, active := c.activePrepareBuffer(info); c.RequestTimerGuardDuringPrepare && active {
+		remaining := time.Until(buffer.Deadline)
+		iAm, leaderID := c.iAmTheLeader()
+		if iAm {
+			c.Logger.Infof("Request %s leader-forwarding timeout reached while view %d sequence %d is buffering PREPARE votes; continuing leader heartbeats until %s", info, buffer.View, buffer.Sequence, buffer.Deadline.Format(time.RFC3339Nano))
+		} else {
+			c.Logger.Infof("Request %s leader-forwarding timeout reached while view %d sequence %d is buffering PREPARE votes; suppressing complaint about leader %d until %s", info, buffer.View, buffer.Sequence, leaderID, buffer.Deadline.Format(time.RFC3339Nano))
+		}
+		return remaining
+	}
+
 	iAm, leaderID := c.iAmTheLeader()
 	if iAm {
 		c.Logger.Infof("Request %s leader-forwarding timeout expired, this node is the leader, stop send heartbeat message", info)
 		c.LeaderMonitor.StopLeaderSendMsg()
-		return
+		return 0
 	}
 
 	c.Logger.Warnf("Request %s leader-forwarding timeout expired, complaining about leader: %d", info, leaderID)
 	c.FailureDetector.Complain(c.getCurrentViewNumber(), true)
+	return 0
 }
 
 // OnAutoRemoveTimeout is called when the auto-remove timeout expires.

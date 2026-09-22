@@ -16,9 +16,9 @@ import (
 
 func TestLoadMembershipAndPrivateKey(t *testing.T) {
 	directory := t.TempDir()
-	members := make([]member, 0, 4)
+	members := make([]member, 0, 7)
 	seeds := make(map[uint64][]byte)
-	for id := uint64(1); id <= 4; id++ {
+	for id := uint64(1); id <= 7; id++ {
 		public, private, err := ed25519.GenerateKey(rand.Reader)
 		if err != nil {
 			t.Fatal(err)
@@ -36,7 +36,7 @@ func TestLoadMembershipAndPrivateKey(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(loaded.Nodes) != 4 || len(keys) != 4 {
+	if len(loaded.Nodes) != 7 || len(keys) != 7 {
 		t.Fatalf("unexpected membership sizes: nodes=%d keys=%d", len(loaded.Nodes), len(keys))
 	}
 	keyPath := filepath.Join(directory, "node-1.seed")
@@ -61,5 +61,26 @@ func TestTransportSigningPayloadDetectsChanges(t *testing.T) {
 	changed := transportSigningPayload("network", "/internal/v1/consensus", []byte("changed"))
 	if ed25519.Verify(public, changed, signature) {
 		t.Fatal("changed transport body accepted the old signature")
+	}
+}
+
+func TestLoadMembershipRejectsFewerThanFourNodes(t *testing.T) {
+	directory := t.TempDir()
+	members := make([]member, 0, 3)
+	for id := uint64(1); id <= 3; id++ {
+		public, _, err := ed25519.GenerateKey(rand.Reader)
+		if err != nil {
+			t.Fatal(err)
+		}
+		members = append(members, member{ID: id, PeerURL: "http://node-" + string(rune('0'+id)) + ":8200", PublicKey: base64.StdEncoding.EncodeToString(public)})
+	}
+	config := membership{SchemaVersion: membershipSchema, NetworkID: "test-network", Version: 1, Nodes: members}
+	raw, _ := json.Marshal(config)
+	membershipPath := filepath.Join(directory, "membership.json")
+	if err := os.WriteFile(membershipPath, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := loadMembership(membershipPath, 1); err == nil {
+		t.Fatal("membership with fewer than four nodes was accepted")
 	}
 }
