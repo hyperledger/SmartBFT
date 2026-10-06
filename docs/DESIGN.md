@@ -277,7 +277,135 @@ calculation, request batching, signatures, message formats, or the existing
 view-change safety rules. It coordinates request-driven timers with the active
 PREPARE buffer, but it does not disable heartbeat failure detection.
 
-### 5.2 Timer coordination
+### 5.2 Updated consensus algorithm
+
+The change is implemented inside every replica's existing SmartBFT view. Let
+`Q` be the quorum size calculated by SmartBFT. The replica's own PREPARE counts
+toward `Q`, so `processPrepares` waits for `Q - 1` matching remote PREPARE votes.
+For the deployment configurations used by this project, `N=4` gives `Q=3` and
+`N=7` gives `Q=5`.
+
+```text
+Algorithm: PREPARE collection with a configurable maximum deadline
+
+Input:
+    current view v
+    proposal sequence s
+    accepted proposal p
+    proposal digest d = Digest(p)
+    requests R contained in p
+    quorum size Q
+    configured timeout T_prepare
+
+1. Validate and accept PRE-PREPARE using the existing SmartBFT rules.
+2. Create and broadcast this replica's PREPARE(v, s, d).
+3. Publish ActivePrepare = {
+       view: v,
+       sequence: s,
+       digest: d,
+       requests: R,
+       deadline: now + T_prepare
+   }.
+4. Start a one-shot timer for T_prepare.
+5. While fewer than Q - 1 valid remote PREPARE votes have been collected:
+       a. If the view is externally aborted:
+              return ABORT.
+       b. If the PREPARE timer expires:
+              complain about view v;
+              return ABORT so the existing view-change path can recover.
+       c. If another protocol message arrives:
+              process it using the existing SmartBFT message dispatcher.
+       d. If a PREPARE vote arrives:
+              accept it only for the current view, sequence and digest;
+              rely on the existing vote set to reject duplicate voters;
+              count the valid voter.
+6. Quorum was reached before the deadline:
+       stop the PREPARE timer;
+       build the existing prepared record;
+       broadcast COMMIT immediately;
+       continue through the unchanged SmartBFT COMMIT phase.
+7. On every exit, clear ActivePrepare only if its view, sequence and digest
+   still identify this exact proposal.
+```
+
+The algorithm therefore has no successful path containing `sleep(5 minutes)`.
+With all required votes available, the transition from PREPARE to COMMIT is
+immediate. Five minutes is the failure deadline for missing PREPARE votes.
+
+The following state transition summarizes the behavior:
+
+```text
+PRE-PREPARE accepted
+        |
+        v
+PREPARE_COLLECTING -- Q reached --> PREPARED --> COMMIT_COLLECTING
+        |                                      |
+        |                                      +-- commit quorum --> DECIDED
+        |
+        +-- T_prepare expired --> ABORT --> existing VIEW_CHANGE
+        |
+        +-- leader heartbeat failed ------> existing VIEW_CHANGE
+```
+
+COMMIT collection is intentionally outside the five-minute PREPARE deadline.
+It retains the existing SmartBFT behavior and safety checks.
+
+### 5.3 Coordinated request-timer algorithm
+
+SmartBFT also has request-pool timers that are independent of the consensus
+phase timer. The fork coordinates them with the exact active proposal:
+
+```text
+Algorithm: handle leader-forwarding timeout for request r
+
+1. Read the current view and its ActivePrepare record.
+2. A match exists only when all of the following are true:
+       - RequestTimerGuardDuringPrepare is enabled;
+       - ActivePrepare belongs to the current view;
+       - r is one of the requests in that proposal;
+       - the ActivePrepare deadline is still in the future.
+3. If there is no exact match, execute the original SmartBFT behavior:
+       - the leader stops its request-driven heartbeat sending; or
+       - a follower complains about the current leader.
+4. If there is an exact match:
+       - do not generate a request-driven leader complaint;
+       - if this replica is the leader, keep its heartbeats running;
+       - return the remaining PREPARE-buffer duration to the request pool;
+       - postpone the start of the normal auto-remove interval by that
+         remaining duration.
+5. Do not suppress the independent heartbeat failure detector. A silent or
+   disconnected leader can still be replaced before T_prepare expires.
+```
+
+The request identity check is important: a long-running proposal cannot protect
+an unrelated request from its normal timeout behavior. The view, sequence and
+digest checks similarly prevent stale buffer state from affecting a later
+proposal.
+
+### 5.4 Timer values and precedence
+
+The MWVN adapter derives its request timers from the configured PREPARE
+deadline. These are durations for their respective timer stages, not timestamps
+measured from initial submission.
+
+| Timer or guard | MWVN value with `-prepare-timeout 5m` | Behavior |
+|---|---:|---|
+| `PrepareVoteCollectionTimeout` | `5m` | Maximum time to obtain the PREPARE quorum. Quorum ends the wait immediately. |
+| `RequestComplainTimeout` | `5m30s` | Provides 30 seconds of grace beyond the configured PREPARE deadline. |
+| `RequestAutoRemoveTimeout` | `6m` | Provides one minute of grace; its normal interval starts only after any active-buffer postponement. |
+| `RequestTimerGuardDuringPrepare` | `true` in `mwvn_bftnode` | Suppresses only request-driven complaints matching the active proposal. The generic library default remains `false`. |
+| `LeaderHeartbeatTimeout` | `1m` | Remains independent and can replace a genuinely failed leader before five minutes. |
+
+Precedence is intentional:
+
+1. A PREPARE quorum wins immediately and advances to COMMIT.
+2. A real heartbeat failure can trigger view change early.
+3. A matching request-pool complaint cannot interrupt a healthy active PREPARE
+   buffer.
+4. If neither quorum nor an independent failure occurs, the PREPARE deadline
+   aborts the view and invokes normal recovery.
+
+### 5.5 Timer coordination rationale
 
 The original implementation had an interaction bug: a request complaint could
 make the leader stop sending heartbeats while the proposal was legitimately
@@ -303,7 +431,7 @@ PREPARE deadline. Once the PREPARE deadline expires, the normal SmartBFT
 complaint and view-change path runs; completion of the view change may take an
 additional configured view-change interval.
 
-### 5.3 Code path
+### 5.6 Implementation changes
 
 | File | Change |
 |---|---|
@@ -315,6 +443,12 @@ additional configured view-change interval.
 | `internal/bft/requestpool.go` | Starts the normal auto-remove interval after any active-buffer postponement instead of allowing request removal during the buffer. |
 | `cmd/mwvn_bftnode/main.go` | Exposes `-prepare-timeout`, default `5m`. |
 | `cmd/mwvn_bftnode/node.go` | Assigns the command-line value and derives MWVN request complaint/removal timers from it. |
+
+The same change set also removed the four-node-only restriction in the MWVN
+adapter. Membership now requires at least four distinct nodes, and SmartBFT
+continues to compute the quorum from the configured membership. This is why the
+same engine image was tested successfully with both four and seven validators;
+the consensus node count is not hard-coded in the PREPARE algorithm.
 
 Configuration example:
 
@@ -338,7 +472,41 @@ view-change recovery, and a real leader failure is still detected before the
 PREPARE deadline. The focused unit tests also verify exact request/proposal
 matching and auto-remove postponement.
 
-### 5.4 Real-process verification
+### 5.7 Relationship to MWVN Algorithm 3
+
+This fork is an adaptation of the paper's latency-buffered PREPARE step to the
+studied SmartBFT PBFT-family implementation; it is not a literal replacement of
+SmartBFT with the paper's pseudocode.
+
+| MWVN Algorithm 3 concept | SmartBFT implementation in this fork |
+|---|---|
+| Broadcast PREPARE | Existing signed SmartBFT PREPARE broadcast. |
+| Buffer votes over a five-minute window | Maximum `PrepareVoteCollectionTimeout`; the implementation exits early at quorum. It is not a mandatory or rolling five-minute delay. |
+| Wait for matching PREPARE votes | Existing per-view vote set plus digest/view/sequence checks; the local vote counts, so the loop waits for `Q - 1` remote votes. |
+| Broadcast COMMIT | Existing SmartBFT COMMIT transition, reached immediately after PREPARE quorum. |
+| Decide after COMMIT quorum | Existing SmartBFT decision and delivery path. |
+| Aggregate validator signatures via BLS | Not added by this change. The demo retains SmartBFT's existing decision-proof representation; BLS aggregation remains separate work if required. |
+
+The modification does not move PBFT traffic onto AIS or VDES. The regional
+validators and SmartBFT engines communicate over the configured IP transport.
+The proposal entering this algorithm is an already admitted regional-validator
+record; witness collection and Local QC construction happen before this stage.
+
+### 5.8 Safety and liveness properties preserved
+
+- Only votes matching the current view, sequence and proposal digest count.
+- The existing vote set prevents one validator from being counted repeatedly.
+- No COMMIT is sent until the configured PREPARE quorum is reached.
+- Timeout causes abort and view change; it never converts a partial vote set
+  into a decision.
+- The timer guard changes liveness coordination only. It does not change quorum
+  size, authentication, proposal verification or decision validity.
+- The active-buffer record is cleared on success, timeout, external abort and
+  view termination, preventing it from leaking into a later proposal.
+- Independent heartbeat monitoring remains active, preserving early recovery
+  from a genuinely unavailable leader.
+
+### 5.9 Real-process verification
 
 The correction was also verified with four independent Go engines, four paired
 Python validators, signed HTTP peer relays, separate WAL directories, and
@@ -355,6 +523,18 @@ In the full five-minute run, node 1 entered PREPARE collection at
 `08:38:56.984`. This confirms that a healthy view no longer changes because a
 request timer stopped its heartbeats. It does not change the separate rule that
 a genuinely unavailable leader may be replaced earlier.
+
+The generated deployment was additionally exercised with both supported test
+sizes after this commit:
+
+| Membership | Fault bound | Quorum | Live result |
+|---:|---:|---:|---|
+| 4 | 1 | 3 | Four validators and four engines became healthy; all four ledgers committed the same record hash. |
+| 7 | 2 | 5 | Seven validators and seven engines became healthy; all seven ledgers committed the same record hash. |
+
+These runs verify dynamic membership and normal early-quorum operation. They do
+not replace the dedicated delayed-PREPARE and full five-minute tests described
+above.
 
 ## 6. HTTP API summary
 
