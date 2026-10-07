@@ -513,54 +513,6 @@ func TestReqPoolTimeout(t *testing.T) {
 		assert.Equal(t, 0, pool.Size())
 	})
 
-	t.Run("active prepare buffer postpones auto remove", func(t *testing.T) {
-		timeoutHandler := &mocks.RequestTimeoutHandler{}
-		const postpone = 80 * time.Millisecond
-		const autoRemove = 20 * time.Millisecond
-
-		timeoutHandler.On("OnRequestTimeout", byteReq1, insp.RequestID(byteReq1)).Return()
-		leaderTimeout := make(chan time.Time, 1)
-		timeoutHandler.On("OnLeaderFwdRequestTimeout", byteReq1, insp.RequestID(byteReq1)).Run(func(args mock.Arguments) {
-			leaderTimeout <- time.Now()
-		}).Return(postpone)
-		autoRemoved := make(chan time.Time, 1)
-		timeoutHandler.On("OnAutoRemoveTimeout", insp.RequestID(byteReq1)).Run(func(args mock.Arguments) {
-			autoRemoved <- time.Now()
-		}).Return()
-
-		pool := bft.NewPool(log, insp, timeoutHandler,
-			bft.PoolOptions{
-				QueueSize:         3,
-				ForwardTimeout:    10 * time.Millisecond,
-				ComplainTimeout:   10 * time.Millisecond,
-				AutoRemoveTimeout: autoRemove,
-			},
-			submittedChan,
-		)
-		defer pool.Close()
-
-		err = pool.Submit(byteReq1)
-		assert.NoError(t, err)
-		complainedAt := <-leaderTimeout
-
-		select {
-		case removedAt := <-autoRemoved:
-			t.Fatalf("request was auto-removed before the active buffer elapsed: %s", removedAt.Sub(complainedAt))
-		case <-time.After(postpone / 2):
-		}
-
-		select {
-		case removedAt := <-autoRemoved:
-			minimum := postpone + autoRemove
-			if elapsed := removedAt.Sub(complainedAt); elapsed < minimum-10*time.Millisecond {
-				t.Fatalf("auto-remove elapsed after %s; expected approximately %s", elapsed, minimum)
-			}
-		case <-time.After(3 * (postpone + autoRemove)):
-			t.Fatal("postponed auto-remove did not fire")
-		}
-		assert.Equal(t, 0, pool.Size())
-	})
-
 	t.Run("stop restart", func(t *testing.T) {
 		timeoutHandler := &mocks.RequestTimeoutHandler{}
 

@@ -32,6 +32,7 @@ func newNodeServer(node *bftNode) *nodeServer {
 	server.mux.HandleFunc("/v1/trace", server.trace)
 	server.mux.HandleFunc("/internal/v1/consensus", server.consensusMessage)
 	server.mux.HandleFunc("/internal/v1/transaction", server.forwardedRequest)
+	server.mux.HandleFunc("/internal/v1/decisions", server.decisions)
 	return server
 }
 
@@ -64,20 +65,24 @@ func (s *nodeServer) status(writer http.ResponseWriter, request *http.Request) {
 		return
 	}
 	writeJSON(writer, http.StatusOK, map[string]any{
-		"status":                       "ok",
-		"node_id":                      s.node.id,
-		"leader_id":                    s.node.consensus.GetLeaderID(),
-		"membership_version":           s.node.membership.Version,
-		"network_id":                   s.node.membership.NetworkID,
-		"peer_count":                   len(s.node.membership.Nodes),
-		"ledger_height":                state.Height,
-		"ledger_head":                  state.LedgerHead,
-		"prepare_vote_timeout_seconds": int64(s.node.consensus.Config.PrepareVoteCollectionTimeout.Seconds()),
-		"process_model":                "one independent SmartBFT consensus-engine process",
+		"status":                      map[bool]string{true: "ok", false: "recovering"}[s.node.started.Load()],
+		"application_command_version": 1,
+		"node_id":                     s.node.id,
+		"leader_id":                   s.node.consensus.GetLeaderID(),
+		"membership_version":          s.node.membership.Version,
+		"network_id":                  s.node.membership.NetworkID,
+		"peer_count":                  len(s.node.membership.Nodes),
+		"ledger_height":               state.Height,
+		"ledger_head":                 state.LedgerHead,
+		"process_model":               "one independent SmartBFT consensus-engine process",
 	})
 }
 
 func (s *nodeServer) submit(writer http.ResponseWriter, request *http.Request) {
+	if !s.node.started.Load() {
+		writeError(writer, 503, "engine recovering")
+		return
+	}
 	if request.Method != http.MethodPost {
 		methodNotAllowed(writer, http.MethodPost)
 		return

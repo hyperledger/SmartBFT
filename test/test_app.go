@@ -29,7 +29,6 @@ var fastConfig = types.Configuration{
 	RequestBatchMaxCount:          10,
 	RequestBatchMaxBytes:          10 * 1024 * 1024,
 	RequestBatchMaxInterval:       10 * time.Millisecond,
-	PrepareVoteCollectionTimeout:  5 * time.Minute,
 	IncomingMessageBufferSize:     200,
 	RequestPoolSize:               40,
 	RequestForwardTimeout:         500 * time.Millisecond,

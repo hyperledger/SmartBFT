@@ -149,5 +149,13 @@ type proposalHeader struct {
 }
 
 type proposalPayload struct {
-	ApprovedQCs []json.RawMessage `json:"approved_qcs"`
+	ApprovedQCs []json.RawMessage `json:"approved_qcs,omitempty"`
+	Commands    []json.RawMessage `json:"commands,omitempty"`
+}
+
+func (p proposalPayload) items() []json.RawMessage {
+	if len(p.Commands) > 0 {
+		return p.Commands
+	}
+	return p.ApprovedQCs
 }

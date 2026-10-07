@@ -42,18 +42,14 @@ type bftNode struct {
 	latest     types.Decision
 	started    atomic.Bool
 	stopOnce   sync.Once
+	dataDir    string
+	deliveryMu sync.Mutex
 }
 
-const (
-	mwvnPrepareComplaintGrace  = 30 * time.Second
-	mwvnPrepareAutoRemoveGrace = time.Minute
-)
-
-// mwvnConsensusConfig keeps the generic SmartBFT defaults unchanged while
-// aligning the MWVN adapter's request lifecycle with its long PREPARE window.
-// The engine-level active-buffer guard remains the final authority when a
-// request timer races with an in-flight proposal.
-func mwvnConsensusConfig(id uint64, prepareTimeout time.Duration) types.Configuration {
+// mwvnConsensusConfig configures the adapter without changing SmartBFT's
+// ordinary protocol timers. Evidence-window timing belongs to the application
+// state machine, not to the engine's PREPARE phase.
+func mwvnConsensusConfig(id uint64) types.Configuration {
 	config := types.DefaultConfig
 	config.SelfID = id
 	config.RequestBatchMaxCount = 1
@@ -64,14 +60,10 @@ func mwvnConsensusConfig(id uint64, prepareTimeout time.Duration) types.Configur
 	config.SyncOnStart = false
 	config.LeaderRotation = false
 	config.DecisionsPerLeader = 0
-	config.PrepareVoteCollectionTimeout = prepareTimeout
-	config.RequestTimerGuardDuringPrepare = true
-	config.RequestComplainTimeout = prepareTimeout + mwvnPrepareComplaintGrace
-	config.RequestAutoRemoveTimeout = prepareTimeout + mwvnPrepareAutoRemoveGrace
 	return config
 }
 
-func newBFTNode(id uint64, config membership, publicKeys map[uint64]ed25519.PublicKey, privateKey ed25519.PrivateKey, coreURL, dataDir string, prepareTimeout time.Duration, logger api.Logger) (*bftNode, error) {
+func newBFTNode(id uint64, config membership, publicKeys map[uint64]ed25519.PublicKey, privateKey ed25519.PrivateKey, coreURL, dataDir string, logger api.Logger) (*bftNode, error) {
 	if err := os.MkdirAll(dataDir, 0o700); err != nil {
 		return nil, fmt.Errorf("create node data directory: %w", err)
 	}
@@ -83,21 +75,16 @@ func newBFTNode(id uint64, config membership, publicKeys map[uint64]ed25519.Publ
 	if state.NodeID != id {
 		return nil, fmt.Errorf("Python core node ID %d does not match engine ID %d", state.NodeID, id)
 	}
-	if state.Height != 0 {
-		return nil, errors.New("restart from an existing application ledger is not implemented; use a fresh demo data directory")
-	}
 	provider := &disabled.Provider{}
 	writeAheadLog, initialEntries, err := wal.InitializeAndReadAll(logger, filepath.Join(dataDir, "wal"), &wal.Options{Metrics: wal.NewMetrics(provider, "bftnode").With(fmt.Sprint(id))})
 	if err != nil {
 		return nil, fmt.Errorf("initialize WAL: %w", err)
 	}
-	if len(initialEntries) != 0 {
-		return nil, errors.New("restart from an existing SmartBFT WAL is not implemented; run make demo-clean")
-	}
 	trace := &traceStore{}
 	comm := newHTTPComm(id, config, privateKey, trace)
 	node := &bftNode{
 		id:         id,
+		dataDir:    dataDir,
 		membership: config,
 		publicKeys: publicKeys,
 		privateKey: privateKey,
@@ -108,7 +95,7 @@ func newBFTNode(id uint64, config membership, publicKeys map[uint64]ed25519.Publ
 		clock:      time.NewTicker(time.Second),
 		viewClock:  time.NewTicker(time.Second),
 	}
-	consensusConfig := mwvnConsensusConfig(id, prepareTimeout)
+	consensusConfig := mwvnConsensusConfig(id)
 	node.consensus = &consensus.Consensus{
 		Config:             consensusConfig,
 		ViewChangerTicker:  node.viewClock.C,
@@ -127,10 +114,19 @@ func newBFTNode(id uint64, config membership, publicKeys map[uint64]ed25519.Publ
 		WALInitialContent:  initialEntries,
 		Metadata:           &smartbftprotos.ViewMetadata{},
 	}
+	if err := node.restoreArchive(state.Height); err != nil {
+		return nil, err
+	}
 	return node, nil
 }
 
 func (n *bftNode) start() error {
+	// HTTP is already listening, so peers can serve certified history even
+	// while all engines are recovering concurrently.
+	if err := n.catchUp(); err != nil {
+		return err
+	}
+	n.restoreCheckpoint()
 	if err := n.consensus.Start(); err != nil {
 		return err
 	}
@@ -149,6 +145,9 @@ func (n *bftNode) stop() {
 }
 
 func (n *bftNode) Sync() types.SyncResponse {
+	if err := n.catchUp(); err != nil {
+		n.logger.Warnf("state catch-up: %v", err)
+	}
 	n.mu.RLock()
 	defer n.mu.RUnlock()
 	return types.SyncResponse{Latest: n.latest}
@@ -172,7 +171,8 @@ func (n *bftNode) VerifyRequest(raw []byte) (types.RequestInfo, error) {
 
 type proposalVerificationRequest struct {
 	Header      proposalHeader    `json:"header"`
-	ApprovedQCs []json.RawMessage `json:"approved_qcs"`
+	ApprovedQCs []json.RawMessage `json:"approved_qcs,omitempty"`
+	Commands    []json.RawMessage `json:"commands,omitempty"`
 }
 
 func parseProposal(proposal types.Proposal) (proposalHeader, proposalPayload, *smartbftprotos.ViewMetadata, error) {
@@ -180,15 +180,16 @@ func parseProposal(proposal types.Proposal) (proposalHeader, proposalPayload, *s
 	if err := decodeStrictJSON(proposal.Header, &header); err != nil {
 		return header, proposalPayload{}, nil, fmt.Errorf("decode proposal header: %w", err)
 	}
-	if header.SchemaVersion != proposalSchema {
+	if header.SchemaVersion != proposalSchema && header.SchemaVersion != "mwvn-smartbft-proposal/v2" {
 		return header, proposalPayload{}, nil, errors.New("invalid proposal schema_version")
 	}
 	var payload proposalPayload
 	if err := decodeStrictJSON(proposal.Payload, &payload); err != nil {
 		return header, payload, nil, fmt.Errorf("decode proposal payload: %w", err)
 	}
-	if len(payload.ApprovedQCs) == 0 {
-		return header, payload, nil, errors.New("proposal contains no approved QCs")
+	if (header.SchemaVersion == proposalSchema && (len(payload.ApprovedQCs) == 0 || len(payload.Commands) != 0)) ||
+		(header.SchemaVersion != proposalSchema && (len(payload.Commands) != 1 || len(payload.ApprovedQCs) != 0)) {
+		return header, payload, nil, errors.New("invalid versioned proposal contents")
 	}
 	if header.DataHash != digestBytes(proposal.Payload) {
 		return header, payload, nil, errors.New("proposal data hash mismatch")
@@ -208,7 +209,7 @@ func (n *bftNode) VerifyProposal(proposal types.Proposal) ([]types.RequestInfo, 
 	if err != nil {
 		return nil, err
 	}
-	raw, err := canonicalJSON(proposalVerificationRequest{Header: header, ApprovedQCs: payload.ApprovedQCs})
+	raw, err := canonicalJSON(proposalVerificationRequest{Header: header, ApprovedQCs: payload.ApprovedQCs, Commands: payload.Commands})
 	if err != nil {
 		return nil, err
 	}
@@ -216,7 +217,7 @@ func (n *bftNode) VerifyProposal(proposal types.Proposal) ([]types.RequestInfo, 
 	if err != nil {
 		return nil, err
 	}
-	if len(ids) != len(payload.ApprovedQCs) {
+	if len(ids) != len(payload.items()) {
 		return nil, errors.New("Python core returned the wrong number of request identities")
 	}
 	result := make([]types.RequestInfo, 0, len(ids))
@@ -231,15 +232,24 @@ func (n *bftNode) RequestsFromProposal(proposal types.Proposal) []types.RequestI
 	if err != nil {
 		return nil
 	}
-	result := make([]types.RequestInfo, 0, len(payload.ApprovedQCs))
-	for _, raw := range payload.ApprovedQCs {
+	result := make([]types.RequestInfo, 0, len(payload.items()))
+	for _, raw := range payload.items() {
 		result = append(result, types.RequestInfo{ClientID: "mwvn-approved-qc", ID: requestID(raw)})
 	}
 	return result
 }
 
-func (*bftNode) VerificationSequence() uint64 {
-	return 0
+func (n *bftNode) VerificationSequence() uint64 {
+	n.mu.RLock()
+	defer n.mu.RUnlock()
+	if len(n.latest.Proposal.Header) == 0 {
+		return 0
+	}
+	header, _, _, err := parseProposal(n.latest.Proposal)
+	if err != nil {
+		return 0
+	}
+	return header.Sequence
 }
 
 func (n *bftNode) Sign(message []byte) []byte {
@@ -288,10 +298,22 @@ func (n *bftNode) AssembleProposal(metadata []byte, requests [][]byte) types.Pro
 	if err != nil {
 		n.logger.Panicf("read Python core state: %v", err)
 	}
-	payload := proposalPayload{ApprovedQCs: make([]json.RawMessage, 0, len(requests))}
+	payload := proposalPayload{}
+	schema := proposalSchema
 	for _, request := range requests {
 		copy := append(json.RawMessage(nil), request...)
-		payload.ApprovedQCs = append(payload.ApprovedQCs, copy)
+		var envelope struct {
+			SchemaVersion string `json:"schema_version"`
+		}
+		if err := json.Unmarshal(request, &envelope); err != nil {
+			n.logger.Panicf("invalid request: %v", err)
+		}
+		if envelope.SchemaVersion == "mwvn-command/v1" {
+			schema = "mwvn-smartbft-proposal/v2"
+			payload.Commands = append(payload.Commands, copy)
+		} else {
+			payload.ApprovedQCs = append(payload.ApprovedQCs, copy)
+		}
 	}
 	payloadBytes, err := canonicalJSON(payload)
 	if err != nil {
@@ -305,11 +327,11 @@ func (n *bftNode) AssembleProposal(metadata []byte, requests [][]byte) types.Pro
 	if previousHash == "" {
 		previousHash = fmt.Sprintf("%064x", 0)
 	}
-	header, err := canonicalJSON(proposalHeader{SchemaVersion: proposalSchema, Sequence: viewMetadata.LatestSequence, PreviousHash: previousHash, DataHash: digestBytes(payloadBytes)})
+	header, err := canonicalJSON(proposalHeader{SchemaVersion: schema, Sequence: viewMetadata.LatestSequence, PreviousHash: previousHash, DataHash: digestBytes(payloadBytes)})
 	if err != nil {
 		n.logger.Panicf("encode proposal header: %v", err)
 	}
-	return types.Proposal{Header: header, Payload: payloadBytes, Metadata: metadata}
+	return types.Proposal{Header: header, Payload: payloadBytes, Metadata: metadata, VerificationSequence: int64(state.Height)}
 }
 
 func (*bftNode) MembershipChange() bool {
@@ -329,41 +351,54 @@ type commitRequest struct {
 	View           uint64            `json:"view"`
 	PreviousHash   string            `json:"previous_hash"`
 	ProposalDigest string            `json:"proposal_digest"`
-	ApprovedQCs    []json.RawMessage `json:"approved_qcs"`
+	ApprovedQCs    []json.RawMessage `json:"approved_qcs,omitempty"`
+	Commands       []json.RawMessage `json:"commands,omitempty"`
 	DecisionProof  []proofSignature  `json:"decision_proof"`
 }
 
 func (n *bftNode) Deliver(proposal types.Proposal, signatures []types.Signature) types.Reconfig {
+	n.deliveryMu.Lock()
+	defer n.deliveryMu.Unlock()
+	decision := types.Decision{Proposal: proposal, Signatures: signatures}
+	if err := n.persistAndApply(decision); err != nil {
+		n.logger.Panicf("durable decision delivery failed (restart to retry): %v", err)
+	}
+	return types.Reconfig{InLatestDecision: false}
+}
+
+func (n *bftNode) decisionCallback(proposal types.Proposal, signatures []types.Signature) ([]byte, error) {
 	header, payload, metadata, err := parseProposal(proposal)
 	if err != nil {
-		n.logger.Panicf("deliver invalid proposal: %v", err)
+		return nil, err
 	}
-	quorum := 2*((len(n.membership.Nodes)-1)/3) + 1
+	for _, command := range payload.Commands {
+		var identity struct {
+			Network    string `json:"network_id"`
+			Membership uint64 `json:"membership_version"`
+		}
+		if err := json.Unmarshal(command, &identity); err != nil || identity.Network != n.membership.NetworkID || identity.Membership != n.membership.Version {
+			return nil, errors.New("command decision network or membership mismatch")
+		}
+	}
+	quorum := (len(n.membership.Nodes) + (len(n.membership.Nodes)-1)/3 + 2) / 2
 	if len(signatures) < quorum {
-		n.logger.Panicf("decision proof has %d signatures, need %d", len(signatures), quorum)
+		return nil, fmt.Errorf("decision proof has %d signatures, need %d", len(signatures), quorum)
 	}
 	seen := make(map[uint64]struct{}, len(signatures))
 	proof := make([]proofSignature, 0, len(signatures))
 	for _, signature := range signatures {
 		if _, duplicate := seen[signature.ID]; duplicate {
-			n.logger.Panicf("decision proof repeats validator %d", signature.ID)
+			return nil, fmt.Errorf("decision proof repeats validator %d", signature.ID)
 		}
 		seen[signature.ID] = struct{}{}
 		if _, err := n.VerifyConsenterSig(signature, proposal); err != nil {
-			n.logger.Panicf("invalid decision proof: %v", err)
+			return nil, fmt.Errorf("invalid decision proof: %w", err)
 		}
 		proof = append(proof, proofSignature{ValidatorID: signature.ID, Value: base64.StdEncoding.EncodeToString(signature.Value), Auxiliary: base64.StdEncoding.EncodeToString(signature.Msg)})
 	}
-	raw, err := canonicalJSON(commitRequest{SchemaVersion: "mwvn-bft-commit/v1", NodeID: n.id, Sequence: header.Sequence, View: metadata.ViewId, PreviousHash: header.PreviousHash, ProposalDigest: proposal.Digest(), ApprovedQCs: payload.ApprovedQCs, DecisionProof: proof})
-	if err != nil {
-		n.logger.Panicf("encode commit callback: %v", err)
+	schema := "mwvn-bft-commit/v1"
+	if len(payload.Commands) > 0 {
+		schema = "mwvn-bft-commit/v2"
 	}
-	if err := n.core.commit(raw); err != nil {
-		n.logger.Panicf("Python core rejected commit: %v", err)
-	}
-	n.mu.Lock()
-	n.latest = types.Decision{Proposal: proposal, Signatures: signatures}
-	n.mu.Unlock()
-	n.trace.add(traceEvent{NodeID: n.id, Direction: "commit", Sender: n.id, Receiver: n.id, MessageType: "LEDGER-APPEND", Sequence: &header.Sequence, ProposalDigest: proposal.Digest(), SizeBytes: len(raw), Outcome: "python_core_durable"})
-	return types.Reconfig{InLatestDecision: false}
+	return canonicalJSON(commitRequest{SchemaVersion: schema, NodeID: n.id, Sequence: header.Sequence, View: metadata.ViewId, PreviousHash: header.PreviousHash, ProposalDigest: proposal.Digest(), ApprovedQCs: payload.ApprovedQCs, Commands: payload.Commands, DecisionProof: proof})
 }

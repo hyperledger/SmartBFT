@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 )
@@ -73,6 +74,7 @@ func (c *coreClient) state() (coreState, error) {
 	if err != nil {
 		return result, err
 	}
+	request.Header.Set("X-MWVN-Internal-Key", os.Getenv("MWVN_INTERNAL_API_KEY"))
 	response, err := c.client.Do(request)
 	if err != nil {
 		return result, fmt.Errorf("call Python core state: %w", err)
@@ -97,6 +99,7 @@ func (c *coreClient) post(path string, raw []byte, target any) error {
 		return err
 	}
 	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("X-MWVN-Internal-Key", os.Getenv("MWVN_INTERNAL_API_KEY"))
 	response, err := c.client.Do(request)
 	if err != nil {
 		return fmt.Errorf("call Python core %s: %w", path, err)

@@ -41,8 +41,7 @@ type RequestTimeoutHandler interface {
 	// OnRequestTimeout is called when a request timeout expires.
 	OnRequestTimeout(request []byte, requestInfo types.RequestInfo)
 	// OnLeaderFwdRequestTimeout is called when a leader forwarding timeout expires.
-	// The returned duration postpones the start of the normal auto-remove interval.
-	OnLeaderFwdRequestTimeout(request []byte, requestInfo types.RequestInfo) time.Duration
+	OnLeaderFwdRequestTimeout(request []byte, requestInfo types.RequestInfo)
 	// OnAutoRemoveTimeout is called when a auto-remove timeout expires.
 	OnAutoRemoveTimeout(requestInfo types.RequestInfo)
 }
@@ -540,36 +539,20 @@ func (rp *Pool) onLeaderFwdRequestTO(request []byte, reqInfo types.RequestInfo) 
 		return
 	}
 
+	// start a third timeout
+	item := element.Value.(*requestItem)
+	item.timeout = time.AfterFunc(
+		rp.options.AutoRemoveTimeout,
+		func() { rp.onAutoRemoveTO(reqInfo) },
+	)
+	rp.logger.Debugf("Request %s; started auto-remove timeout: %s", reqInfo, rp.options.AutoRemoveTimeout)
+
 	rp.lock.Unlock()
 
 	// may take time, in case Comm channel is full; hence w/o the lock.
 	rp.logger.Debugf("Request %s leader-forwarding timeout expired, going to complain on leader", reqInfo)
 	rp.metrics.CountTimeoutTwoStep.Add(1)
-	postpone := rp.timeoutHandler.OnLeaderFwdRequestTimeout(request, reqInfo)
-	if postpone < 0 {
-		postpone = 0
-	}
-
-	rp.lock.Lock()
-	defer rp.lock.Unlock()
-	element, contains = rp.existMap[reqInfo]
-	if !contains {
-		rp.logger.Debugf("Request %s no longer in pool after leader-forwarding timeout handling", reqInfo)
-		return
-	}
-	if rp.closed || rp.stopped {
-		rp.logger.Debugf("Pool stopped, will NOT start auto-remove timeout")
-		return
-	}
-
-	autoRemoveDelay := rp.options.AutoRemoveTimeout + postpone
-	item := element.Value.(*requestItem)
-	item.timeout = time.AfterFunc(autoRemoveDelay, func() { rp.onAutoRemoveTO(reqInfo) })
-	if postpone > 0 {
-		rp.logger.Infof("Request %s; postponed auto-remove by %s for active PREPARE buffer; auto-remove timeout: %s", reqInfo, postpone, autoRemoveDelay)
-	} else {
-		rp.logger.Debugf("Request %s; started auto-remove timeout: %s", reqInfo, autoRemoveDelay)
-	}
+	rp.timeoutHandler.OnLeaderFwdRequestTimeout(request, reqInfo)
 }
 
 // called by the goroutine spawned by time.AfterFunc

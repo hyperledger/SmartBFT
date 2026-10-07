@@ -25,10 +25,10 @@ func main() {
 	privateKeyPath := flag.String("private-key", "", "base64 Ed25519 seed file for this node")
 	coreURL := flag.String("core-url", "", "paired Python validator callback URL")
 	dataDirectory := flag.String("data-dir", "/data", "SmartBFT WAL directory")
-	prepareTimeout := flag.Duration("prepare-timeout", 5*time.Minute, "maximum PREPARE vote collection time")
+	applicationWatchdog := flag.Bool("application-watchdog", false, "fail-stop when the paired evidence-window application is unhealthy")
 	flag.Parse()
 
-	if *nodeID == 0 || *membershipPath == "" || *privateKeyPath == "" || *coreURL == "" || *prepareTimeout <= 0 {
+	if *nodeID == 0 || *membershipPath == "" || *privateKeyPath == "" || *coreURL == "" {
 		flag.Usage()
 		os.Exit(2)
 	}
@@ -47,7 +47,7 @@ func main() {
 	if err != nil {
 		sugar.Fatalf("load private key: %v", err)
 	}
-	node, err := newBFTNode(*nodeID, config, publicKeys, privateKey, *coreURL, *dataDirectory, *prepareTimeout, sugar)
+	node, err := newBFTNode(*nodeID, config, publicKeys, privateKey, *coreURL, *dataDirectory, sugar)
 	if err != nil {
 		sugar.Fatalf("create consensus engine: %v", err)
 	}
@@ -61,6 +61,11 @@ func main() {
 		sugar.Fatalf("start consensus engine: %v", err)
 	}
 	sugar.Infof("MWVN SmartBFT engine ready: id=%d listen=%s network=%s core=%s", *nodeID, *listenAddress, config.NetworkID, *coreURL)
+	watchdogStop := make(chan struct{})
+	defer close(watchdogStop)
+	if *applicationWatchdog {
+		go node.watchApplication(watchdogStop)
+	}
 
 	interrupts := make(chan os.Signal, 1)
 	signal.Notify(interrupts, os.Interrupt, syscall.SIGTERM)

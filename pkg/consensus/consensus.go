@@ -315,9 +315,7 @@ func (c *Consensus) SubmitRequest(req []byte) error {
 
 func (c *Consensus) proposalMaker() *algorithm.ProposalMaker {
 	return &algorithm.ProposalMaker{
-		DecisionsPerLeader:           c.Config.DecisionsPerLeader,
-		PrepareVoteCollectionTimeout: c.Config.PrepareVoteCollectionTimeout,
-
+		DecisionsPerLeader: c.Config.DecisionsPerLeader,
 		Checkpoint:         c.checkpoint,
 		State:              c.state,
 		Comm:               c.controller,
@@ -414,29 +412,28 @@ func (c *Consensus) createComponents() {
 	}
 
 	c.controller = &algorithm.Controller{
-		Checkpoint:                     c.checkpoint,
-		WAL:                            c.WAL,
-		ID:                             c.Config.SelfID,
-		N:                              c.numberOfNodes,
-		NodesList:                      c.nodes,
-		LeaderRotation:                 c.Config.LeaderRotation,
-		DecisionsPerLeader:             c.Config.DecisionsPerLeader,
-		RequestTimerGuardDuringPrepare: c.Config.RequestTimerGuardDuringPrepare,
-		Verifier:                       c.Verifier,
-		Logger:                         c.Logger,
-		Assembler:                      c.Assembler,
-		Application:                    c,
-		FailureDetector:                c,
-		Synchronizer:                   c,
-		Comm:                           c.Comm,
-		Signer:                         c.Signer,
-		RequestInspector:               c.RequestInspector,
-		ViewChanger:                    c.viewChanger,
-		ViewSequences:                  &atomic.Value{},
-		Collector:                      c.collector,
-		State:                          c.state,
-		InFlight:                       c.inFlight,
-		MetricsView:                    c.Metrics.MetricsView,
+		Checkpoint:         c.checkpoint,
+		WAL:                c.WAL,
+		ID:                 c.Config.SelfID,
+		N:                  c.numberOfNodes,
+		NodesList:          c.nodes,
+		LeaderRotation:     c.Config.LeaderRotation,
+		DecisionsPerLeader: c.Config.DecisionsPerLeader,
+		Verifier:           c.Verifier,
+		Logger:             c.Logger,
+		Assembler:          c.Assembler,
+		Application:        c,
+		FailureDetector:    c,
+		Synchronizer:       c,
+		Comm:               c.Comm,
+		Signer:             c.Signer,
+		RequestInspector:   c.RequestInspector,
+		ViewChanger:        c.viewChanger,
+		ViewSequences:      &atomic.Value{},
+		Collector:          c.collector,
+		State:              c.state,
+		InFlight:           c.inFlight,
+		MetricsView:        c.Metrics.MetricsView,
 	}
 	c.controller.Deliver = &algorithm.MutuallyExclusiveDeliver{C: c.controller}
 
