@@ -40,12 +40,16 @@ const (
 )
 
 var (
-	ErrCRC                 = errors.New("wal: crc verification failed")
-	ErrWALUnmarshalPayload = errors.New("wal: failed to unmarshal payload")
-	ErrWriteOnly           = errors.New("wal: in WRITE mode")
-	ErrReadOnly            = errors.New("wal: in READ mode")
+	ErrCRC                  = errors.New("wal: crc verification failed")
+	ErrWALUnmarshalPayload  = errors.New("wal: failed to unmarshal payload")
+	ErrUnexpectedRecordType = errors.New("wal: unexpected LogRecord_Type")
+	ErrRecordTooBig         = errors.New("wal: record too big")
+	ErrWriteOnly            = errors.New("wal: in WRITE mode")
+	ErrReadOnly             = errors.New("wal: in READ mode")
 
 	ErrWALAlreadyExists = errors.New("wal: is already exists")
+
+	ErrNotRepairable = errors.New("wal: corruption is not in the last record, not repairable")
 
 	crcTable = crc32.MakeTable(crc32.Castagnoli)
 )
@@ -278,11 +282,13 @@ func Open(logger api.Logger, dirPath string, options *Options) (*WriteAheadLogFi
 // Repair tries to repair the last file of a WAL, in case an Open() comes back with a io.ErrUnexpectedEOF,
 // which indicates the possibility to fix the WAL.
 //
-// After a crash, the last log file in the WAL may be left in a state where an attempt tp reopen will result in
-// the last Read() returning an error. This is because of several reasons:
-// - we use pre-allocated / recycled files, the files have a "garbage" tail
-// - the last write may have been torn
+// After a crash, the last log file in the WAL may be left in a state where an attempt to reopen will result in
+// the last Read() returning an error. This is because of two reasons:
+// - the last write may have been torn, which is the only expected source of a corrupt tail
 // - the failure might have occurred when the log file was being prepared (no anchor)
+//
+// Files are created with O_CREATE and truncated to their used size on close, so a file holds no stale bytes
+// beyond the last record, and a torn last write - not a "garbage" tail - is what repair has to deal with.
 //
 // The Repair() tries to repair the last file of the wal by truncating after the last good record.
 // Before doing so it copies the bad file to a side location for later analysis by operators.
@@ -443,7 +449,7 @@ func (w *WriteAheadLogFile) append(record *protos.LogRecord) error {
 
 	recordLength := len(payloadBuff)
 	if (uint64(recordLength) & recordCRCMask) != 0 {
-		return fmt.Errorf("wal: record too big, length does not fit in uint32: %d", recordLength)
+		return fmt.Errorf("%w, length does not fit in uint32: %d", ErrRecordTooBig, recordLength)
 	}
 
 	padSize, padBytes := getPadBytes(recordLength)
@@ -574,7 +580,9 @@ FileLoop:
 		if index == lastIndex &&
 			(errors.Is(readErr, io.ErrUnexpectedEOF) ||
 				errors.Is(readErr, ErrCRC) ||
-				errors.Is(readErr, ErrWALUnmarshalPayload)) {
+				errors.Is(readErr, ErrWALUnmarshalPayload) ||
+				errors.Is(readErr, ErrUnexpectedRecordType) ||
+				errors.Is(readErr, ErrRecordTooBig)) {
 			w.logger.Warnf(
 				"Received an error in the last file, this can possibly be repaired; file: %s; error: %s",
 				r.fileName,
@@ -775,7 +783,25 @@ func InitializeAndReadAll(
 
 		writeAheadLog, err = Open(logger, walDir, options)
 		if err != nil {
-			return nil, nil, fmt.Errorf("Cannot open Write-Ahead-Log: %w", err)
+			// A torn CRC-Anchor in the last file surfaces here, on Open, not on
+			// ReadAll. It is the same repairable condition - the failure happened
+			// while the last file was being prepared - so repair it before giving up.
+			if !errors.Is(err, io.ErrUnexpectedEOF) {
+				return nil, nil, fmt.Errorf("Cannot open Write-Ahead-Log: %w", err)
+			}
+
+			logger.Infof("Received io.ErrUnexpectedEOF on open, trying to repair Write-Ahead-Log at dir: %s", walDir)
+
+			if err = Repair(logger, walDir); err != nil {
+				return nil, nil, fmt.Errorf("Cannot repair Write-Ahead-Log: %w", err)
+			}
+
+			logger.Infof("Opening Write-Ahead-Log, after repair")
+
+			writeAheadLog, err = Open(logger, walDir, options)
+			if err != nil {
+				return nil, nil, fmt.Errorf("Cannot open Write-Ahead-Log, after repair: %w", err)
+			}
 		}
 
 		initialState, err = writeAheadLog.ReadAll()

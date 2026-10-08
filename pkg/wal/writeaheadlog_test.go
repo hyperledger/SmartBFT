@@ -7,6 +7,7 @@ package wal
 
 import (
 	"bytes"
+	"encoding/binary"
 	"fmt"
 	"io"
 	"os"
@@ -17,6 +18,7 @@ import (
 	"github.com/hyperledger/SmartBFT/smartbftprotos"
 	"github.com/stretchr/testify/assert"
 	"go.uber.org/zap"
+	"google.golang.org/protobuf/proto"
 )
 
 func TestWriteAheadLogFile_Create(t *testing.T) {
@@ -658,6 +660,60 @@ func TestWriteAheadLogFile_Repair(t *testing.T) {
 
 		assertTestRepair(t, logger, dirPath, NumRec-1)
 	})
+
+	t.Run("unknown record type at the tail", func(t *testing.T) {
+		dirPath := filepath.Join(testDir, "unknown-type")
+		err := os.MkdirAll(dirPath, walDirPermPrivateRWX)
+		assert.NoError(t, err)
+
+		wal, err := Create(logger, dirPath, &Options{FileSizeBytes: 10 * 1024, BufferSizeBytes: 2048})
+		assert.NoError(t, err)
+		assert.NotNil(t, wal)
+		if wal == nil {
+			return
+		}
+
+		const NumBytes = 1024
+		const NumRec = 5
+		data1 := make([]byte, NumBytes)
+		for m := range NumRec {
+			for n := range NumBytes {
+				data1[n] = byte(m)
+			}
+			err = wal.Append(data1, false)
+			assert.NoError(t, err)
+		}
+
+		err = wal.Close()
+		assert.NoError(t, err)
+
+		// append a well-formed record whose type the reader does not know
+		names, err := dirReadWalNames(dirPath)
+		assert.NoError(t, err)
+		lastFile := filepath.Join(dirPath, names[len(names)-1])
+
+		rec, err := proto.Marshal(&smartbftprotos.LogRecord{Type: smartbftprotos.LogRecord_Type(7), Data: []byte{1, 2, 3}})
+		assert.NoError(t, err)
+		_, pad := getPadBytes(len(rec))
+		header := make([]byte, recordHeaderSize)
+		binary.LittleEndian.PutUint64(header, uint64(len(rec)))
+
+		f, err := os.OpenFile(lastFile, os.O_RDWR, walFilePermPrivateRW)
+		assert.NoError(t, err)
+		_, err = f.Seek(0, io.SeekEnd)
+		assert.NoError(t, err)
+		_, err = f.Write(append(append(header, rec...), pad...))
+		assert.NoError(t, err)
+		assert.NoError(t, f.Close())
+
+		wal, err = Open(logger, dirPath, &Options{FileSizeBytes: 10 * 1024, BufferSizeBytes: 2048})
+		assert.NoError(t, err)
+		_, err = wal.ReadAll()
+		assert.ErrorIs(t, err, io.ErrUnexpectedEOF)
+		assert.NoError(t, wal.Close())
+
+		assertTestRepair(t, logger, dirPath, NumRec)
+	})
 }
 
 func TestWriteAheadLogFile_InitializeAndReadAll(t *testing.T) {
@@ -757,6 +813,96 @@ func TestWriteAheadLogFile_InitializeAndReadAll(t *testing.T) {
 
 	err = wal.Close()
 	assert.NoError(t, err)
+}
+
+func TestWriteAheadLogFile_InitializeAndReadAll_TornLastAnchor(t *testing.T) {
+	testDir := t.TempDir()
+
+	basicLog, err := zap.NewDevelopment()
+	assert.NoError(t, err)
+
+	logger := basicLog.Sugar()
+
+	options := &Options{FileSizeBytes: 10 * 1024, BufferSizeBytes: 2048}
+
+	wal, _, err := InitializeAndReadAll(logger, testDir, options)
+	assert.NoError(t, err)
+
+	const NumRec = 5
+	for m := range NumRec {
+		err = wal.Append([]byte{byte(m), 1, 2, 3}, false)
+		assert.NoError(t, err)
+	}
+	assert.NoError(t, wal.Close())
+
+	// Simulate a crash while the next file was being prepared: the new last file
+	// exists but its CRC-Anchor was never written.
+	names, err := dirReadWalNames(testDir)
+	assert.NoError(t, err)
+	lastIndex, err := parseWalFileName(names[len(names)-1])
+	assert.NoError(t, err)
+	tornFile := filepath.Join(testDir, fmt.Sprintf(walFileTemplate, lastIndex+1))
+	assert.NoError(t, os.WriteFile(tornFile, nil, walFilePermPrivateRW))
+
+	// Open surfaces the repairable error, instead of reading the state.
+	_, err = Open(logger, testDir, options)
+	assert.ErrorIs(t, err, io.ErrUnexpectedEOF)
+
+	wal, entries, err := InitializeAndReadAll(logger, testDir, options)
+	assert.NoError(t, err)
+	assert.NotNil(t, wal)
+	assert.Equal(t, NumRec, len(entries))
+	for i, e := range entries {
+		assert.Equal(t, byte(i), e[0])
+	}
+	assert.NoError(t, wal.Close())
+
+	// the torn file was removed by the repair (a copy is kept for operators),
+	// and ReadAll then created a fresh file for writing.
+	_, err = os.Stat(tornFile + ".copy")
+	assert.NoError(t, err, "the repair must keep a copy of the torn file")
+}
+
+func TestRepairCorruptAnchorOfNonEmptyLastFile(t *testing.T) {
+	basicLog, err := zap.NewDevelopment()
+	assert.NoError(t, err)
+
+	logger := basicLog.Sugar()
+	dir := t.TempDir()
+	options := &Options{FileSizeBytes: 64 * 1024}
+
+	wal, err := Create(logger, dir, options)
+	assert.NoError(t, err)
+	for range 100 {
+		assert.NoError(t, wal.Append(make([]byte, 1024), false))
+	}
+	assert.NoError(t, wal.Close())
+
+	names, err := dirReadWalNames(dir)
+	assert.NoError(t, err)
+	assert.Len(t, names, 2)
+	lastFile := filepath.Join(dir, names[len(names)-1])
+
+	// Corrupt the CRC-Anchor of a file that holds records.
+	f, err := os.OpenFile(lastFile, os.O_RDWR, walFilePermPrivateRW)
+	assert.NoError(t, err)
+	b := make([]byte, 1)
+	_, err = f.ReadAt(b, int64(recordHeaderSize))
+	assert.NoError(t, err)
+	b[0] ^= 0xFF
+	_, err = f.WriteAt(b, int64(recordHeaderSize))
+	assert.NoError(t, err)
+	assert.NoError(t, f.Close())
+
+	sizeBefore, err := os.Stat(lastFile)
+	assert.NoError(t, err)
+
+	_, _, err = InitializeAndReadAll(logger, dir, options)
+	assert.ErrorIs(t, err, ErrNotRepairable)
+
+	fi, err := os.Stat(lastFile)
+	assert.NoError(t, err)
+	assert.Equal(t, sizeBefore.Size(), fi.Size(), "the file must be left untouched")
 }
 
 func assertTestRepair(t *testing.T, logger api.Logger, dirPath string, numRec int) {
