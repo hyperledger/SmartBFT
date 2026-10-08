@@ -23,6 +23,10 @@ type LogRecordReader struct {
 	logger   api.Logger
 	logFile  *os.File
 	crc      uint32
+	// fileSizeBytes is the size of the log file. A record never spans beyond
+	// the file it is in, so it bounds the length declared in a record header
+	// and prevents a corrupted or forged header from driving a huge allocation.
+	fileSizeBytes int64
 }
 
 func NewLogRecordReader(logger api.Logger, fileName string) (*LogRecordReader, error) {
@@ -41,6 +45,15 @@ func NewLogRecordReader(logger api.Logger, fileName string) (*LogRecordReader, e
 	if err != nil {
 		return nil, err
 	}
+
+	fileInfo, err := r.logFile.Stat()
+	if err != nil {
+		_ = r.Close()
+
+		return nil, err
+	}
+
+	r.fileSizeBytes = fileInfo.Size()
 
 	_, err = r.logFile.Seek(0, io.SeekStart)
 	if err != nil {
@@ -158,12 +171,24 @@ func (r *LogRecordReader) readHeader() (length, crc uint32, err error) {
 	length = uint32(header & recordLengthMask)
 	crc = uint32((header & recordCRCMask) >> 32)
 
+	// A record, together with its header, must fit in the file it is read from.
+	// Otherwise a corrupted header makes us allocate up to 4GB.
+	if int64(length)+int64(getPadSize(int(length))) > r.fileSizeBytes-int64(recordHeaderSize) {
+		r.logger.Warnf("Record length %d in file: %s exceeds the file size %d", length, r.fileName, r.fileSizeBytes)
+
+		return 0, 0, fmt.Errorf("%w: length=%d, file size=%d, file: %s", ErrRecordTooBig, length, r.fileSizeBytes, r.fileName)
+	}
+
 	return length, crc, nil
 }
 
 // readPayload attempts to read a payload in full.
 // If it fails, it fails like io.ReadFull().
 func (r *LogRecordReader) readPayload(len int) (payload []byte, err error) {
+	if int64(len) > r.fileSizeBytes {
+		return nil, fmt.Errorf("%w: length=%d, file size=%d, file: %s", ErrRecordTooBig, len, r.fileSizeBytes, r.fileName)
+	}
+
 	buff := make([]byte, len)
 
 	n, err := io.ReadFull(r.logFile, buff)

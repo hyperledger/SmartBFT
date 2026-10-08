@@ -6,6 +6,7 @@
 package wal
 
 import (
+	"encoding/binary"
 	"fmt"
 	"io"
 	"os"
@@ -269,6 +270,124 @@ func TestLogRecordReader(t *testing.T) {
 		record, err := r.Read()
 		assert.Contains(t, err.Error(), "wal: failed to unmarshal payload")
 		assert.Nil(t, record)
+	})
+
+	t.Run("record length in header is bounded", func(t *testing.T) {
+		fileName := filepath.Join(testDir, "test7.wal")
+		sourceName := filepath.Join(testDir, fmt.Sprintf(walFileTemplate, 1))
+		assert.NoError(t, copyFile(sourceName, fileName))
+
+		r, err := NewLogRecordReader(logger, fileName)
+		assert.NoError(t, err)
+		assertReadRecord(t, r, rec1, crc1)
+		assertReadRecord(t, r, rec2, crc2)
+		offset, err := r.logFile.Seek(0, io.SeekCurrent)
+		assert.NoError(t, err)
+		err = r.Close()
+		assert.NoError(t, err)
+
+		f, err := os.OpenFile(fileName, os.O_RDWR, walFilePermPrivateRW)
+		assert.NoError(t, err)
+		_, err = f.Seek(offset, io.SeekStart)
+		assert.NoError(t, err)
+		// a header claiming a record of 0xFFFFFFFF bytes, i.e. ~4GB
+		header := make([]byte, recordHeaderSize)
+		binary.LittleEndian.PutUint64(header, 0xFFFFFFFF)
+		_, err = f.Write(header)
+		assert.NoError(t, err)
+		err = f.Close()
+		assert.NoError(t, err)
+
+		r, err = NewLogRecordReader(logger, fileName)
+		assert.NoError(t, err)
+		assertReadRecord(t, r, rec1, crc1)
+		assertReadRecord(t, r, rec2, crc2)
+
+		record, err := r.Read()
+		assert.ErrorIs(t, err, ErrRecordTooBig)
+		assert.Nil(t, record)
+		assert.NoError(t, r.Close())
+	})
+
+	t.Run("oversized record header", func(t *testing.T) {
+		dirPath := filepath.Join(testDir, "oversized")
+		assert.NoError(t, os.MkdirAll(dirPath, walDirPermPrivateRWX))
+
+		wal, err := Create(logger, dirPath, &Options{FileSizeBytes: 10 * 1024, BufferSizeBytes: 2048})
+		assert.NoError(t, err)
+
+		const NumBytes = 1024
+		const NumRec = 102
+		data1 := make([]byte, NumBytes)
+		for m := range NumRec {
+			for n := range NumBytes {
+				data1[n] = byte(m)
+			}
+			assert.NoError(t, wal.Append(data1, false))
+		}
+		assert.NoError(t, wal.Close())
+
+		// append a header claiming a ~4GB record to the last file
+		names, err := dirReadWalNames(dirPath)
+		assert.NoError(t, err)
+		lastFile := filepath.Join(dirPath, names[len(names)-1])
+		f, err := os.OpenFile(lastFile, os.O_RDWR, walFilePermPrivateRW)
+		assert.NoError(t, err)
+		_, err = f.Seek(0, io.SeekEnd)
+		assert.NoError(t, err)
+		header := make([]byte, recordHeaderSize)
+		binary.LittleEndian.PutUint64(header, 0xFFFFFFFF)
+		_, err = f.Write(header)
+		assert.NoError(t, err)
+		assert.NoError(t, f.Close())
+
+		wal, err = Open(logger, dirPath, &Options{FileSizeBytes: 10 * 1024, BufferSizeBytes: 2048})
+		assert.NoError(t, err)
+		_, err = wal.ReadAll()
+		assert.ErrorIs(t, err, io.ErrUnexpectedEOF)
+		assert.NoError(t, wal.Close())
+
+		assertTestRepair(t, logger, dirPath, NumRec)
+	})
+
+	t.Run("record bound follows the file size, not the default", func(t *testing.T) {
+		fileName := filepath.Join(testDir, "test8.wal")
+		sourceName := filepath.Join(testDir, fmt.Sprintf(walFileTemplate, 1))
+		assert.NoError(t, copyFile(sourceName, fileName))
+
+		fileInfo, err := os.Stat(fileName)
+		assert.NoError(t, err)
+
+		r, err := NewLogRecordReader(logger, fileName)
+		assert.NoError(t, err)
+		assert.Equal(t, fileInfo.Size(), r.fileSizeBytes)
+
+		assertReadRecord(t, r, rec1, crc1)
+		assertReadRecord(t, r, rec2, crc2)
+		offset, err := r.logFile.Seek(0, io.SeekCurrent)
+		assert.NoError(t, err)
+		assert.NoError(t, r.Close())
+
+		// A header claiming more than the file holds, as after a torn write.
+		f, err := os.OpenFile(fileName, os.O_RDWR, walFilePermPrivateRW)
+		assert.NoError(t, err)
+		_, err = f.Seek(offset, io.SeekStart)
+		assert.NoError(t, err)
+		header := make([]byte, recordHeaderSize)
+		binary.LittleEndian.PutUint64(header, uint64(fileInfo.Size()))
+		_, err = f.Write(header)
+		assert.NoError(t, err)
+		assert.NoError(t, f.Close())
+
+		r, err = NewLogRecordReader(logger, fileName)
+		assert.NoError(t, err)
+		assertReadRecord(t, r, rec1, crc1)
+		assertReadRecord(t, r, rec2, crc2)
+
+		record, err := r.Read()
+		assert.ErrorIs(t, err, ErrRecordTooBig)
+		assert.Nil(t, record)
+		assert.NoError(t, r.Close())
 	})
 }
 
