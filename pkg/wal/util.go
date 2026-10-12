@@ -141,6 +141,24 @@ func checkWalFiles(logger api.Logger, dirName string, walNames []string) ([]uint
 	return indexes, nil
 }
 
+// isAnchorOnlyFile tells whether the given log file holds no record but its CRC-anchor, and so
+// stores nothing that could ever be read back.
+//
+// A file that cannot be read at all is not anchor-only: it is a file to repair, not one to throw
+// away, and a truncated record at its end reads back as io.ErrUnexpectedEOF rather than io.EOF.
+func isAnchorOnlyFile(logger api.Logger, filePath string) bool {
+	r, err := NewLogRecordReader(logger, filePath)
+	if err != nil {
+		return false
+	}
+
+	defer func() { _ = r.Close() }()
+
+	_, err = r.Read() // the CRC-anchor is the first record, and is read by the reader already
+
+	return errors.Is(err, io.EOF)
+}
+
 func getPadSize(recordLength int) int {
 	return (8 - recordLength%8) % 8
 }

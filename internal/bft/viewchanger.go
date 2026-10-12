@@ -22,10 +22,13 @@ import (
 
 // ViewController controls the view
 //
-//go:generate mockery -dir . -name ViewController -case underscore -output ./mocks/
+//go:generate mockery --dir . --name ViewController --case underscore --output ./mocks/
 type ViewController interface {
 	ViewChanged(newViewNumber uint64, newProposalSequence uint64)
-	AbortView(view uint64)
+	// AbortView aborts the given view and does not return until the view has
+	// stopped. It returns false when the view is already older than the current
+	// one or when the controller is stopping.
+	AbortView(view uint64) bool
 }
 
 // Pruner prunes revoked requests
@@ -441,6 +444,14 @@ func (v *ViewChanger) processViewChangeMsg(restore bool) {
 		v.Logger.Debugf("Node %d is joining view change, last view is %d", v.SelfID, v.currView)
 		v.startViewChange(&change{v.currView, true})
 	}
+	// Stop the current view before writing the view change record. The view may still
+	// append a commit after that record, which would leave the commit without its
+	// pre-prepare in the WAL. AbortView waits for the view to stop, and it also stops
+	// the view before the view data message is prepared below. If the controller has
+	// already moved to a newer view, this view change is stale.
+	if !v.Controller.AbortView(v.currView) {
+		return
+	}
 	if !restore {
 		msgToSave := &protos.SavedMessage{
 			Content: &protos.SavedMessage_ViewChange{
@@ -453,7 +464,6 @@ func (v *ViewChanger) processViewChangeMsg(restore bool) {
 			v.Logger.Panicf("Failed to save message to state, error: %v", err)
 		}
 	}
-	v.Controller.AbortView(v.currView) // before preparing the view data message abort the current view
 	v.currView = v.nextView
 	v.MetricsViewChange.CurrentView.Set(float64(v.currView))
 	v.viewChangeMsgs.clear(v.N)
@@ -1205,6 +1215,21 @@ func (v *ViewChanger) processNewViewMsg(msg *protos.NewView) {
 	if !noInFlight && !v.commitInFlightProposal(inFlightProposal) {
 		v.Logger.Warnf("Node %d was unable to commit the in flight proposal, not changing the view", v.SelfID)
 		return
+	}
+
+	// The record of the new view may truncate the WAL, so the current view has to be stopped
+	// first. Otherwise it can still append a commit after that record and leave a commit
+	// without its pre-prepare in the WAL. AbortView waits for the view to stop. If the
+	// controller has already moved to a newer view, this new view message is stale.
+	if !v.Controller.AbortView(v.currView) {
+		return
+	}
+
+	// The quorum has decided the fate of the proposal in flight: it is either committed or
+	// irrelevant, and either way there is nothing left to recover from it. Clearing it here
+	// makes the new view record a truncation point, by the rule PersistedState.Save applies.
+	if v.InFlight != nil {
+		v.InFlight.clear()
 	}
 
 	mySequence, _ := v.extractCurrentSequence()

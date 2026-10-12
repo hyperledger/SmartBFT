@@ -3,29 +3,40 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 
-package bft_test
+package bft
 
 import (
+	"os"
+	"runtime"
+	"strings"
 	"testing"
+	"time"
 
-	"github.com/hyperledger/SmartBFT/internal/bft"
-	"github.com/hyperledger/SmartBFT/internal/bft/mocks"
 	"github.com/hyperledger/SmartBFT/pkg/api"
 	"github.com/hyperledger/SmartBFT/pkg/metrics/disabled"
 	"github.com/hyperledger/SmartBFT/pkg/types"
+	"github.com/hyperledger/SmartBFT/pkg/wal"
 	protos "github.com/hyperledger/SmartBFT/smartbftprotos"
-	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 	"google.golang.org/protobuf/proto"
 )
+
+// requestsFromProposalVerifier returns no requests, which is all TestStateRestore needs from a verifier.
+type requestsFromProposalVerifier struct {
+	api.Verifier
+}
+
+func (v *requestsFromProposalVerifier) RequestsFromProposal(types.Proposal) []types.RequestInfo {
+	return nil
+}
 
 func TestStateRestore(t *testing.T) {
 	prePrepare := &protos.PrePrepare{
 		Proposal: &protos.Proposal{
 			Header:  []byte{1},
 			Payload: []byte{1},
-			Metadata: bft.MarshalOrPanic(&protos.ViewMetadata{
+			Metadata: MarshalOrPanic(&protos.ViewMetadata{
 				DecisionsInView: 0,
 				LatestSequence:  0,
 				ViewId:          1,
@@ -76,7 +87,7 @@ func TestStateRestore(t *testing.T) {
 		description                    string
 		WALContent                     [][]byte
 		expectedError                  string
-		expectedPhase                  bft.Phase
+		expectedPhase                  Phase
 		expectedViewNumber             uint64
 		expectedProposalSeq            uint64
 		expectedInFlightProposal       *types.Proposal
@@ -99,74 +110,74 @@ func TestStateRestore(t *testing.T) {
 		},
 		{
 			description:              "proposed",
-			expectedPhase:            bft.PROPOSED,
+			expectedPhase:            PROPOSED,
 			expectedViewNumber:       300,
 			expectedProposalSeq:      200,
-			WALContent:               [][]byte{bft.MarshalOrPanic(proposedRecord)},
+			WALContent:               [][]byte{MarshalOrPanic(proposedRecord)},
 			expectedInFlightProposal: expectedInFlightProposal,
 		},
 		{
 			description:   "commit persisted but pre-prepare nowhere to be found",
-			expectedPhase: bft.PREPARED,
+			expectedPhase: PREPARED,
 			WALContent: [][]byte{
-				bft.MarshalOrPanic(preparedProof),
+				MarshalOrPanic(preparedProof),
 			},
 			expectedError: "last message is a commit, but expected to also have a matching pre-prepare",
 		},
 		{
 			description:         "prepared but not committed",
-			expectedPhase:       bft.PREPARED,
+			expectedPhase:       PREPARED,
 			expectedViewNumber:  300,
 			expectedProposalSeq: 200,
 			// Metadata holds sequence 199, WAL has sequence 200
 			proposalSeqViewInitializedWith: 200,
 			WALContent: [][]byte{
-				bft.MarshalOrPanic(proposedRecord),
-				bft.MarshalOrPanic(preparedProof),
+				MarshalOrPanic(proposedRecord),
+				MarshalOrPanic(preparedProof),
 			},
 			expectedInFlightProposal: expectedInFlightProposal,
 			expectedInFlightPrepared: true,
 		},
 		{
 			description:         "prepared and committed",
-			expectedPhase:       bft.COMMITTED,
+			expectedPhase:       COMMITTED,
 			expectedViewNumber:  300,
 			expectedProposalSeq: 201,
 			// Metadata holds sequence 200 which is the same as WAL
 			proposalSeqViewInitializedWith: 201,
 			WALContent: [][]byte{
-				bft.MarshalOrPanic(proposedRecord),
-				bft.MarshalOrPanic(preparedProof),
+				MarshalOrPanic(proposedRecord),
+				MarshalOrPanic(preparedProof),
 			},
 		},
 		{
 			description:   "WAL out of sync",
-			expectedPhase: bft.COMMITTED,
+			expectedPhase: COMMITTED,
 			// Metadata holds sequence 198 but WAL has sequence 200
 			proposalSeqViewInitializedWith: 199,
 			WALContent: [][]byte{
-				bft.MarshalOrPanic(proposedRecord),
-				bft.MarshalOrPanic(preparedProof),
+				MarshalOrPanic(proposedRecord),
+				MarshalOrPanic(preparedProof),
 			},
 			expectedError: "last proposal sequence persisted into WAL is 200" +
 				" which is greater than last committed sequence is 199",
 		},
 		{
 			description:   "malformed prepared but valid commit",
-			expectedPhase: bft.COMMITTED,
+			expectedPhase: COMMITTED,
 			WALContent: [][]byte{
 				{1, 2, 3},
-				bft.MarshalOrPanic(preparedProof),
+				MarshalOrPanic(preparedProof),
 			},
 			expectedError: "failed unmarshaling last entry from WAL: " +
 				"proto:",
 		},
 		{
 			description:   "malformed prepared but empty commit",
-			expectedPhase: bft.COMMITTED,
+			expectedPhase: COMMITTED,
 			WALContent: [][]byte{
-				bft.MarshalOrPanic(&protos.SavedMessage{Content: nil}),
-				bft.MarshalOrPanic(preparedProof),
+				MarshalOrPanic(&protos.SavedMessage{Content: nil}),
+				MarshalOrPanic(preparedProof),
 			},
 			expectedError: "expected second last message to be a pre-prepare, but got '' instead",
 		},
@@ -176,15 +187,14 @@ func TestStateRestore(t *testing.T) {
 			require.NoError(t, err)
 			log := basicLog.Sugar()
 
-			state := &bft.PersistedState{
+			state := &PersistedState{
 				Entries:          testCase.WALContent,
 				Logger:           log,
-				InFlightProposal: &bft.InFlightData{},
+				InFlightProposal: &InFlightData{},
 			}
 
-			verifier := &mocks.VerifierMock{}
-			verifier.On("RequestsFromProposal", mock.Anything).Return(nil)
-			view := &bft.View{
+			verifier := &requestsFromProposalVerifier{}
+			view := &View{
 				Number:           300,
 				ProposalSequence: testCase.proposalSeqViewInitializedWith,
 				MetricsView:      api.NewMetricsView(&disabled.Provider{}),
@@ -252,16 +262,16 @@ func TestStateLoadIfApplicable(t *testing.T) {
 		},
 		{
 			description: "last record is a proposal",
-			WALContent:  [][]byte{bft.MarshalOrPanic(newView), bft.MarshalOrPanic(proposedRecord)},
+			WALContent:  [][]byte{MarshalOrPanic(newView), MarshalOrPanic(proposedRecord)},
 		},
 		{
 			description:        "last record is a new view",
-			WALContent:         [][]byte{bft.MarshalOrPanic(savedViewChange), bft.MarshalOrPanic(newView)},
+			WALContent:         [][]byte{MarshalOrPanic(savedViewChange), MarshalOrPanic(newView)},
 			expectedViewAndSeq: &types.ViewAndSeq{View: 5, Seq: 10},
 		},
 		{
 			description:        "last record is a view change",
-			WALContent:         [][]byte{bft.MarshalOrPanic(newView), bft.MarshalOrPanic(savedViewChange)},
+			WALContent:         [][]byte{MarshalOrPanic(newView), MarshalOrPanic(savedViewChange)},
 			expectedViewChange: viewChange,
 		},
 	} {
@@ -269,7 +279,7 @@ func TestStateLoadIfApplicable(t *testing.T) {
 			basicLog, err := zap.NewDevelopment()
 			require.NoError(t, err)
 
-			state := &bft.PersistedState{
+			state := &PersistedState{
 				Entries: testCase.WALContent,
 				Logger:  basicLog.Sugar(),
 			}
@@ -295,4 +305,253 @@ func TestStateLoadIfApplicable(t *testing.T) {
 			}
 		})
 	}
+}
+
+// recordingWAL stands in for the write ahead log at the api.WriteAheadLog seam
+// and keeps, in order, every appended record together with its truncation flag.
+type recordingWAL struct {
+	appended   [][]byte
+	truncateTo []bool
+}
+
+func (w *recordingWAL) Append(entry []byte, truncateTo bool) error {
+	w.appended = append(w.appended, entry)
+	w.truncateTo = append(w.truncateTo, truncateTo)
+
+	return nil
+}
+
+func newViewRecord(viewID, latestSequence uint64) *protos.SavedMessage {
+	return &protos.SavedMessage{
+		Content: &protos.SavedMessage_NewView{
+			NewView: &protos.ViewMetadata{
+				ViewId:         viewID,
+				LatestSequence: latestSequence,
+			},
+		},
+	}
+}
+
+// The WAL is a truncation point when nothing is in flight, since recovery reads
+// the last record alone, and the one before it only for a commit.
+func TestSaveTruncatesAccordingToInFlightProposal(t *testing.T) {
+	proposalRecord := &protos.SavedMessage{
+		Content: &protos.SavedMessage_ProposedRecord{
+			ProposedRecord: &protos.ProposedRecord{
+				PrePrepare: &protos.PrePrepare{
+					Proposal: &protos.Proposal{
+						Header:               []byte{1},
+						Payload:              []byte{1},
+						Metadata:             MarshalOrPanic(&protos.ViewMetadata{ViewId: 1}),
+						VerificationSequence: 100,
+					},
+					Seq:  200,
+					View: 300,
+				},
+				Prepare: &protos.Prepare{
+					Seq:  200,
+					View: 300,
+				},
+			},
+		},
+	}
+
+	commitRecord := &protos.SavedMessage{
+		Content: &protos.SavedMessage_Commit{
+			Commit: &protos.Message{
+				Content: &protos.Message_Commit{
+					Commit: &protos.Commit{
+						Seq:  200,
+						View: 300,
+						Signature: &protos.Signature{
+							Signer: 11,
+						},
+					},
+				},
+			},
+		},
+	}
+
+	for _, testCase := range []struct {
+		description        string
+		proposalInFlight   bool
+		recordsToSave      []*protos.SavedMessage
+		expectedTruncateTo []bool
+	}{
+		{
+			description:        "a proposal begins the pair, so it is a truncation point",
+			recordsToSave:      []*protos.SavedMessage{proposalRecord},
+			expectedTruncateTo: []bool{true},
+		},
+		{
+			description:        "a commit right after the proposal keeps the pair",
+			recordsToSave:      []*protos.SavedMessage{proposalRecord, commitRecord},
+			expectedTruncateTo: []bool{true, false},
+		},
+		{
+			description:        "a new view with nothing in flight is a truncation point",
+			recordsToSave:      []*protos.SavedMessage{newViewRecord(7, 4)},
+			expectedTruncateTo: []bool{true},
+		},
+		{
+			description:        "a new view with a proposal in flight is not a truncation point",
+			proposalInFlight:   true,
+			recordsToSave:      []*protos.SavedMessage{newViewRecord(7, 4)},
+			expectedTruncateTo: []bool{false},
+		},
+	} {
+		t.Run(testCase.description, func(t *testing.T) {
+			basicLog, err := zap.NewDevelopment()
+			require.NoError(t, err)
+
+			inFlight := &InFlightData{}
+			if testCase.proposalInFlight {
+				inFlight.StoreProposal(types.Proposal{VerificationSequence: 42})
+			}
+
+			writeAheadLog := &recordingWAL{}
+			state := &PersistedState{
+				InFlightProposal: inFlight,
+				Logger:           basicLog.Sugar(),
+				WAL:              writeAheadLog,
+			}
+
+			for _, record := range testCase.recordsToSave {
+				require.NoError(t, state.Save(record))
+			}
+
+			require.Equal(t, testCase.expectedTruncateTo, writeAheadLog.truncateTo)
+
+			require.Len(t, writeAheadLog.appended, len(testCase.recordsToSave))
+			for i, record := range testCase.recordsToSave {
+				appended := &protos.SavedMessage{}
+				require.NoError(t, proto.Unmarshal(writeAheadLog.appended[i], appended))
+				require.True(t, proto.Equal(record, appended), "record %d was not appended as saved", i)
+			}
+		})
+	}
+}
+
+func walFileCount(t *testing.T, dirPath string) int {
+	t.Helper()
+
+	names, err := os.ReadDir(dirPath)
+	require.NoError(t, err)
+
+	var count int
+	for _, name := range names {
+		if strings.HasSuffix(name.Name(), ".wal") {
+			count++
+		}
+	}
+
+	return count
+}
+
+// A node that syncs but never proposes writes new view records only. Each of them
+// is a truncation point, so rotations drop the files written before it, and neither
+// another run of writes nor a restart adds files.
+func TestSaveNewViewWithNoProposalInFlightDoesNotGrowWAL(t *testing.T) {
+	basicLog, err := zap.NewDevelopment()
+	require.NoError(t, err)
+	log := basicLog.Sugar()
+
+	testDir := t.TempDir()
+
+	options := &wal.Options{FileSizeBytes: 1024}
+	writeAheadLog, err := wal.Create(log, testDir, options)
+	require.NoError(t, err)
+
+	state := &PersistedState{
+		InFlightProposal: &InFlightData{},
+		Logger:           log,
+		WAL:              writeAheadLog,
+	}
+
+	for i := range 100 {
+		require.NoError(t, state.Save(newViewRecord(7, uint64(i))))
+	}
+	require.NoError(t, writeAheadLog.Close())
+
+	filesBeforeRestart := walFileCount(t, testDir)
+	require.Positive(t, filesBeforeRestart)
+
+	for restart := range 2 {
+		writeAheadLog, err = wal.Open(log, testDir, options)
+		require.NoError(t, err)
+		state.WAL = writeAheadLog
+
+		entries, err := writeAheadLog.ReadAll()
+		require.NoError(t, err)
+		require.NotEmpty(t, entries)
+
+		for i := range 100 {
+			require.NoError(t, state.Save(newViewRecord(8, uint64(i))))
+		}
+		require.NoError(t, writeAheadLog.Close())
+
+		require.LessOrEqual(t, walFileCount(t, testDir), filesBeforeRestart,
+			"restart %d grew the WAL", restart)
+	}
+}
+
+// A commit must never be saved with truncate=true, even when another goroutine prunes the
+// in-flight proposal while Save is running: Controller.sync can call maybePruneInFlight (which
+// clears the proposal) between storing the prepares and computing the truncation flag. A commit
+// that loses the pre-prepare before it cannot be restored (recoverPrepared).
+func TestSaveCommitIsNotTruncatedWhenInFlightIsPrunedDuringSave(t *testing.T) {
+	basicLog, err := zap.NewDevelopment()
+	require.NoError(t, err)
+
+	inFlight := &InFlightData{}
+	inFlight.StoreProposal(types.Proposal{VerificationSequence: 42})
+
+	commitRecord := &protos.SavedMessage{
+		Content: &protos.SavedMessage_Commit{
+			Commit: &protos.Message{
+				Content: &protos.Message_Commit{
+					Commit: &protos.Commit{
+						Seq:  200,
+						View: 300,
+						Signature: &protos.Signature{
+							Signer: 11,
+							// Large enough that the marshaling inside Save takes long enough for
+							// the other goroutine to win the race, as it does in production.
+							Value: make([]byte, 8<<20),
+						},
+					},
+				},
+			},
+		},
+	}
+
+	writeAheadLog := &recordingWAL{}
+	state := &PersistedState{
+		InFlightProposal: inFlight,
+		Logger:           basicLog.Sugar(),
+		WAL:              writeAheadLog,
+	}
+
+	pruned := make(chan struct{})
+
+	go func() {
+		defer close(pruned)
+
+		for !inFlight.IsInFlightPrepared() {
+			runtime.Gosched()
+		}
+
+		// What maybePruneInFlight does once the checkpoint has decided the proposal's fate.
+		inFlight.clear()
+	}()
+
+	require.NoError(t, state.Save(commitRecord))
+
+	select {
+	case <-pruned:
+	case <-time.After(10 * time.Second):
+		require.Fail(t, "the in-flight proposal was not pruned during the save")
+	}
+
+	require.Equal(t, []bool{false}, writeAheadLog.truncateTo, "a commit must never be a truncation point")
 }

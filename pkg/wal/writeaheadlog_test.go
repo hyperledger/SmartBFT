@@ -569,6 +569,325 @@ func TestWriteAheadLogFile_ReadAll(t *testing.T) {
 	})
 }
 
+// TestWriteAheadLogFile_OpenRemovesAnchorOnlyFiles covers the files that store nothing: a
+// CRC-anchor and nothing else. They are what a node that never accepts a proposal leaves behind on
+// every restart, and nothing else ever deletes them.
+func TestWriteAheadLogFile_OpenRemovesAnchorOnlyFiles(t *testing.T) {
+	basicLog, err := zap.NewDevelopment()
+	require.NoError(t, err)
+
+	logger := basicLog.Sugar()
+
+	walFile := func(index int) string {
+		return fmt.Sprintf(walFileTemplate, index)
+	}
+
+	t.Run("Removes the anchor-only tail", func(t *testing.T) {
+		testDir := t.TempDir()
+
+		dirPath := filepath.Join(testDir, "anchor-only-tail")
+
+		wal, err := Create(logger, dirPath, nil)
+		require.NoError(t, err)
+		require.NoError(t, wal.Append([]byte{1, 2, 3, 4}, false))
+		require.NoError(t, wal.Close())
+
+		// One restart of a node that writes nothing: ReadAll() always creates the file the WAL
+		// switches to write in, and in this case it holds nothing but its anchor.
+		wal, err = Open(logger, dirPath, nil)
+		require.NoError(t, err)
+		_, err = wal.ReadAll()
+		require.NoError(t, err)
+		require.NoError(t, wal.Close())
+
+		names, err := dirReadWalNames(dirPath)
+		require.NoError(t, err)
+		require.Equal(t, []string{walFile(1), walFile(2)}, names)
+
+		wal, err = Open(logger, dirPath, nil)
+		require.NoError(t, err)
+		require.NoError(t, wal.Close())
+
+		names, err = dirReadWalNames(dirPath)
+		require.NoError(t, err)
+		require.Equal(t, []string{walFile(1)}, names, "the anchor-only tail file must be gone")
+
+		// The sequence left behind is still continuous.
+		indexes, err := checkWalFiles(logger, dirPath, names)
+		require.NoError(t, err)
+		require.Equal(t, []uint64{1}, indexes)
+	})
+
+	t.Run("Removes every consecutive anchor-only tail", func(t *testing.T) {
+		testDir := t.TempDir()
+
+		dirPath := filepath.Join(testDir, "many-anchor-only-tails")
+
+		wal, err := Create(logger, dirPath, nil)
+		require.NoError(t, err)
+		require.NoError(t, wal.Append([]byte{1, 2, 3, 4}, false))
+		require.NoError(t, wal.Close())
+
+		// Three files with nothing in them, the way a node that writes no record used to leave
+		// one behind on every restart.
+		writeAnchorOnlyFiles(t, logger, dirPath, 2, 3, 4)
+
+		names, err := dirReadWalNames(dirPath)
+		require.NoError(t, err)
+		require.Equal(t, []string{walFile(1), walFile(2), walFile(3), walFile(4)}, names)
+
+		wal, err = Open(logger, dirPath, nil)
+		require.NoError(t, err)
+
+		names, err = dirReadWalNames(dirPath)
+		require.NoError(t, err)
+		require.Equal(t, []string{walFile(1)}, names, "only the file holding records may survive")
+
+		indexes, err := checkWalFiles(logger, dirPath, names)
+		require.NoError(t, err)
+		require.Equal(t, []uint64{1}, indexes)
+
+		_, err = wal.ReadAll()
+		require.NoError(t, err)
+		require.NoError(t, wal.Close())
+	})
+
+	t.Run("Keeps a tail that holds records", func(t *testing.T) {
+		testDir := t.TempDir()
+
+		dirPath := filepath.Join(testDir, "tail-with-records")
+
+		wal, err := Create(logger, dirPath, &Options{FileSizeBytes: 4096})
+		require.NoError(t, err)
+
+		// Rotate onto a few files, then write one more record, so that the tail file is not the
+		// empty one a rotation just created.
+		for {
+			require.NoError(t, wal.Append(make([]byte, 1000), false))
+
+			names, err := dirReadWalNames(dirPath)
+			require.NoError(t, err)
+			if len(names) == 3 {
+				break
+			}
+		}
+
+		require.NoError(t, wal.Append(make([]byte, 1000), false))
+		require.NoError(t, wal.Close())
+
+		namesBefore, err := dirReadWalNames(dirPath)
+		require.NoError(t, err)
+		require.Greater(t, len(namesBefore), 1, "the fixture must rotate onto more than one file")
+
+		wal, err = Open(logger, dirPath, nil)
+		require.NoError(t, err)
+		require.NoError(t, wal.Close())
+
+		namesAfter, err := dirReadWalNames(dirPath)
+		require.NoError(t, err)
+		require.Equal(t, namesBefore, namesAfter, "a file holding records is never deleted")
+	})
+
+	t.Run("Keeps the last file of an empty WAL", func(t *testing.T) {
+		testDir := t.TempDir()
+
+		dirPath := filepath.Join(testDir, "only-anchor")
+
+		wal, err := Create(logger, dirPath, nil)
+		require.NoError(t, err)
+		require.NoError(t, wal.Close())
+
+		wal, err = Open(logger, dirPath, nil)
+		require.NoError(t, err)
+
+		names, err := dirReadWalNames(dirPath)
+		require.NoError(t, err)
+		require.Equal(t, []string{walFile(1)}, names, "an empty WAL is still a WAL of one file")
+
+		items, err := wal.ReadAll()
+		require.NoError(t, err)
+		require.Empty(t, items)
+		require.NoError(t, wal.Close())
+	})
+}
+
+// TestWriteAheadLogFile_RestartDoesNotGrowFiles is the audit measurement: restarts of a node that
+// writes records but never marks any of them as a truncation point used to add a file each.
+func TestWriteAheadLogFile_RestartDoesNotGrowFiles(t *testing.T) {
+	basicLog, err := zap.NewDevelopment()
+	require.NoError(t, err)
+
+	logger := basicLog.Sugar()
+
+	testDir := t.TempDir()
+
+	dirPath := filepath.Join(testDir, "restarts")
+
+	const NumRecords = 5
+
+	wal, err := Create(logger, dirPath, nil)
+	require.NoError(t, err)
+
+	for m := range NumRecords {
+		require.NoError(t, wal.Append([]byte{byte(m + 1)}, false))
+	}
+
+	require.NoError(t, wal.Close())
+
+	var names []string
+
+	for cycle := 1; cycle <= 20; cycle++ {
+		wal, err = Open(logger, dirPath, nil)
+		require.NoError(t, err)
+
+		items, err := wal.ReadAll()
+		require.NoError(t, err)
+		require.Len(t, items, NumRecords)
+		require.NoError(t, wal.Close())
+
+		names, err = dirReadWalNames(dirPath)
+		require.NoError(t, err)
+		require.LessOrEqual(t, len(names), 2, "cycle %d left %d files behind", cycle, len(names))
+
+		if cycle == 1 {
+			continue
+		}
+
+		require.Len(t, names, 2, "cycle %d changed the number of files", cycle)
+	}
+}
+
+// TestWriteAheadLogFile_TruncationKeepsNumberOfFiles is the regression from the brief: records
+// without a truncation point followed by one with it.
+func TestWriteAheadLogFile_TruncationKeepsNumberOfFiles(t *testing.T) {
+	basicLog, err := zap.NewDevelopment()
+	require.NoError(t, err)
+
+	logger := basicLog.Sugar()
+
+	testDir := t.TempDir()
+
+	dirPath := filepath.Join(testDir, "truncation")
+
+	options := &Options{FileSizeBytes: 4096}
+
+	wal, err := Create(logger, dirPath, options)
+	require.NoError(t, err)
+
+	for range 20 {
+		require.NoError(t, wal.Append(make([]byte, 1000), false))
+	}
+
+	names, err := dirReadWalNames(dirPath)
+	require.NoError(t, err)
+	beforeTruncation := len(names)
+	require.Greater(t, beforeTruncation, 1)
+
+	truncationRecord := make([]byte, 1000)
+	require.NoError(t, wal.Append(truncationRecord, true))
+
+	names, err = dirReadWalNames(dirPath)
+	require.NoError(t, err)
+	afterTruncationRecord := len(names)
+	require.Equal(t, beforeTruncation, afterTruncationRecord, "the truncation point deletes nothing on its own")
+
+	// Write on until the rotation that follows the truncation point: that is where the files
+	// preceding it are dropped.
+	var recordsAfterTruncation int
+
+	for range 100 {
+		require.NoError(t, wal.Append(make([]byte, 1000), false))
+		recordsAfterTruncation++
+
+		names, err = dirReadWalNames(dirPath)
+		require.NoError(t, err)
+		if len(names) < afterTruncationRecord {
+			break
+		}
+	}
+	afterTruncation := len(names)
+	require.Less(t, afterTruncation, beforeTruncation, "the files before the truncation point must be gone")
+
+	// Write on well past that rotation: nothing is deleted any more, the number of files only
+	// grows with the records.
+	const moreRecords = 40
+
+	for range moreRecords {
+		require.NoError(t, wal.Append(make([]byte, 1000), false))
+		recordsAfterTruncation++
+
+		names, err = dirReadWalNames(dirPath)
+		require.NoError(t, err)
+		require.GreaterOrEqual(t, len(names), afterTruncation, "no file may be deleted after the truncation point")
+	}
+
+	require.NoError(t, wal.Close())
+
+	names, err = dirReadWalNames(dirPath)
+	require.NoError(t, err)
+	rotated := len(names)
+
+	wal, err = Open(logger, dirPath, options)
+	require.NoError(t, err)
+
+	items, err := wal.ReadAll()
+	require.NoError(t, err)
+	require.NoError(t, wal.Close())
+
+	names, err = dirReadWalNames(dirPath)
+	require.NoError(t, err)
+	require.Len(t, names, rotated, "a restart must not add a file")
+
+	// The truncation point and everything written after it survived the restart.
+	require.Len(t, items, recordsAfterTruncation+1)
+	require.Equal(t, truncationRecord, items[0])
+}
+
+// writeAnchorOnlyFiles adds log files that hold nothing but their CRC-anchor, chained to the CRC
+// the WAL is currently at. It is how a node that writes no record used to leave one such file
+// behind on every restart.
+func writeAnchorOnlyFiles(t *testing.T, logger api.Logger, dirPath string, indexes ...uint64) {
+	lastFilePath := filepath.Join(dirPath, fmt.Sprintf(walFileTemplate, indexes[0]-1))
+
+	r, err := NewLogRecordReader(logger, lastFilePath)
+	require.NoError(t, err)
+
+	for {
+		_, readErr := r.Read()
+		if readErr != nil {
+			require.ErrorIs(t, readErr, io.EOF)
+			break
+		}
+	}
+
+	crc := r.CRC()
+	require.NoError(t, r.Close())
+
+	for _, index := range indexes {
+		writer := &WriteAheadLogFile{
+			dirName:    dirPath,
+			logger:     logger,
+			headerBuff: make([]byte, recordHeaderSize),
+			crc:        crc,
+		}
+
+		filePath := filepath.Join(dirPath, fmt.Sprintf(walFileTemplate, index))
+
+		writer.logFile, err = os.OpenFile(filePath, os.O_CREATE|os.O_WRONLY, walFilePermPrivateRW)
+		require.NoError(t, err)
+		require.NoError(t, writer.saveCRC())
+		require.NoError(t, writer.logFile.Close())
+	}
+}
+
+func TestOptions_String(t *testing.T) {
+	require.Equal(t,
+		fmt.Sprintf("{FileSizeBytes: %d, BufferSizeBytes: %d}",
+			FileSizeBytesDefault, BufferSizeBytesDefault),
+		DefaultOptions().String(),
+	)
+}
+
 func TestWriteAheadLogFile_Repair(t *testing.T) {
 	testDir := t.TempDir()
 

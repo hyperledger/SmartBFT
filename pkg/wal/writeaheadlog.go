@@ -265,6 +265,14 @@ func Open(logger api.Logger, dirPath string, options *Options) (*WriteAheadLogFi
 
 		return nil, err
 	}
+
+	walNames, err = wal.removeAnchorOnlyTailFiles(dirPath, walNames)
+	if err != nil {
+		_ = wal.Close()
+
+		return nil, err
+	}
+
 	wal.metrics.CountOfFiles.Set(float64(len(wal.activeIndexes)))
 
 	wal.index, err = parseWalFileName(walNames[0]) // first valid file
@@ -277,6 +285,42 @@ func Open(logger api.Logger, dirPath string, options *Options) (*WriteAheadLogFi
 	wal.logger.Infof("Write-Ahead-Log opened successfully, mode: READ, dir: %s", wal.dirName)
 
 	return wal, nil
+}
+
+// removeAnchorOnlyTailFiles drops the trailing log files that hold no record at all, nothing but
+// their CRC-anchor, and returns the file names that are left.
+//
+// Such a file is what ReadAll() leaves behind every time it switches the WAL to write mode, and it
+// is never deleted afterwards: without a truncation point there is nothing for the rotation to
+// delete it against. A node that writes no record therefore gains one file per restart, which is
+// how a WAL directory fills up with 16 byte files.
+//
+// Deleting them is safe because they carry no data, and because a CRC-anchor only carries the CRC
+// forward: dropping a trailing anchor-only file leaves the CRC chain of the files before it
+// untouched.
+//
+// The last file of the WAL is kept even when it is an anchor-only one: an empty WAL still has to be
+// a WAL of at least one file, both for Open() to have something to open and for ReadAll() to read.
+func (w *WriteAheadLogFile) removeAnchorOnlyTailFiles(dirPath string, walNames []string) ([]string, error) {
+	for len(w.activeIndexes) > 1 {
+		lastIndex := w.activeIndexes[len(w.activeIndexes)-1]
+		lastFilePath := filepath.Join(dirPath, fmt.Sprintf(walFileTemplate, lastIndex))
+
+		if !isAnchorOnlyFile(w.logger, lastFilePath) {
+			break
+		}
+
+		w.logger.Infof("Write-Ahead-Log deleting file with no records but its CRC-anchor: %s", lastFilePath)
+
+		if err := os.Remove(lastFilePath); err != nil {
+			return nil, fmt.Errorf("wal: could not delete anchor-only file: %s; error: %w", lastFilePath, err)
+		}
+
+		w.activeIndexes = w.activeIndexes[:len(w.activeIndexes)-1]
+		walNames = walNames[:len(walNames)-1]
+	}
+
+	return walNames, nil
 }
 
 // Repair tries to repair the last file of a WAL, in case an Open() comes back with a io.ErrUnexpectedEOF,
