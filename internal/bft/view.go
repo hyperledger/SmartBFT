@@ -52,7 +52,7 @@ type State interface {
 	// before the message can be dropped. The caller decides it; Save does not
 	// infer the flag from the message type. A pre-prepare is normally a truncation
 	// point, while a commit never is: its pre-prepare must survive next to it.
-	// View records are not truncation points in this change.
+	// A view record is a truncation point only when no proposal is in flight.
 	Save(message *protos.SavedMessage, truncateTo bool) error
 
 	// Restore restores the given view to its latest state

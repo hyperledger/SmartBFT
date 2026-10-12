@@ -6,13 +6,24 @@
 package bft
 
 import (
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/hyperledger/SmartBFT/pkg/api"
+	"github.com/hyperledger/SmartBFT/pkg/metrics/disabled"
 	"github.com/hyperledger/SmartBFT/pkg/types"
+	"github.com/hyperledger/SmartBFT/pkg/wal"
 	protos "github.com/hyperledger/SmartBFT/smartbftprotos"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
+	"google.golang.org/protobuf/proto"
 )
 
 // stubSynchronizer returns a fixed SyncResponse.
@@ -149,16 +160,25 @@ func TestSyncDecisionsInView(t *testing.T) {
 	})
 }
 
-// stateTransferResponder answers a state transfer request with the same view
-// and sequence from two nodes, which is enough for the collector quorum.
-type stateTransferResponder struct {
+// stubRequestsTimer is a no-op api.RequestsTimer.
+type stubRequestsTimer struct{}
+
+func (s *stubRequestsTimer) StopTimers()    {}
+func (s *stubRequestsTimer) RestartTimers() {}
+func (s *stubRequestsTimer) RemoveRequest(types.RequestInfo) error {
+	return nil
+}
+
+// stateRespondingComm answers the state transfer request of sync() on behalf of
+// every other node with the view and sequence the cluster claims to be at.
+type stateRespondingComm struct {
 	stubComm
 	collector *StateCollector
 	view      uint64
 	seq       uint64
 }
 
-func (c *stateTransferResponder) SendConsensus(targetID uint64, m *protos.Message) {
+func (c *stateRespondingComm) SendConsensus(targetID uint64, m *protos.Message) {
 	if m.GetStateTransferRequest() == nil {
 		return
 	}
@@ -173,22 +193,30 @@ func (c *stateTransferResponder) SendConsensus(targetID uint64, m *protos.Messag
 	})
 }
 
-// TestSyncSavesNewViewWithoutTruncating checks the sync call site: the record
-// of the new view is saved with truncate=false in this change.
-func TestSyncSavesNewViewWithoutTruncating(t *testing.T) {
-	const (
-		controllerSeq  = uint64(10)
-		controllerView = uint64(3)
-	)
+// syncFixture is a Controller whose sync() runs all the way to saving a record
+// of the new view into a real WAL, together with the in-flight data that
+// record's truncation flag is derived from.
+type syncFixture struct {
+	controller *Controller
+	inFlight   *InFlightData
+}
 
-	log := zap.NewNop().Sugar()
+// newSyncFixture builds a controller that sits at controllerView and
+// controllerSeq, and whose synchronizer returns a confirmed decision at syncSeq
+// and syncView. The state transfer request is answered with a view one higher
+// than syncView and syncSeq+1 as its sequence, which is what makes sync() save a
+// record of the new view.
+func newSyncFixture(t *testing.T, writeAheadLog api.WriteAheadLog, controllerSeq, controllerView, syncSeq, syncView uint64) *syncFixture {
+	t.Helper()
+
+	log := newQuietLogger()
 
 	checkpoint := &types.Checkpoint{}
 	checkpoint.Set(types.Proposal{
 		Metadata: MarshalOrPanic(&protos.ViewMetadata{
 			LatestSequence:  controllerSeq,
 			ViewId:          controllerView,
-			DecisionsInView: 0,
+			DecisionsInView: 1,
 		}),
 	}, []types.Signature{{ID: 1}, {ID: 2}, {ID: 3}})
 
@@ -196,49 +224,409 @@ func TestSyncSavesNewViewWithoutTruncating(t *testing.T) {
 		SelfID:         1,
 		N:              4,
 		Logger:         log,
-		CollectTimeout: time.Second,
+		CollectTimeout: 5 * time.Second,
 	}
 	collector.Start()
-	defer collector.Stop()
+	t.Cleanup(collector.Stop)
 
-	state := &StateRecorder{}
-	c := &Controller{
+	viewChanger := &ViewChanger{
+		SelfID:              1,
+		N:                   4,
+		NodesList:           []uint64{1, 2, 3, 4},
+		Logger:              log,
+		Comm:                &stubComm{},
+		RequestsTimer:       &stubRequestsTimer{},
+		Ticker:              make(chan time.Time),
+		InMsqQSize:          10,
+		ControllerStartedWG: sync.WaitGroup{},
+		MetricsViewChange:   api.NewMetricsViewChange(&disabled.Provider{}),
+	}
+	viewChanger.Start(controllerView)
+	t.Cleanup(viewChanger.Stop)
+
+	inFlight := &InFlightData{}
+
+	controller := &Controller{
 		ID:        1,
 		N:         4,
-		Logger:    log,
 		NodesList: []uint64{1, 2, 3, 4},
-		Comm: &stateTransferResponder{
+		Logger:    log,
+		Comm: &stateRespondingComm{
 			collector: collector,
-			view:      controllerView + 1,
-			seq:       controllerSeq + 1,
+			view:      syncView + 1,
+			seq:       syncSeq + 1,
 		},
 		Synchronizer: &stubSynchronizer{response: types.SyncResponse{
 			Latest: types.Decision{
 				Proposal: types.Proposal{
 					Metadata: MarshalOrPanic(&protos.ViewMetadata{
-						LatestSequence: controllerSeq,
-						ViewId:         controllerView,
+						LatestSequence: syncSeq,
+						ViewId:         syncView,
 					}),
 				},
+				Signatures: []types.Signature{{ID: 1}, {ID: 2}, {ID: 3}},
 			},
+			Reconfig: types.ReconfigSync{InReplicatedDecisions: false},
 		}},
-		Checkpoint:          checkpoint,
-		Collector:           collector,
-		InFlight:            &InFlightData{},
-		ViewChanger:         &ViewChanger{informChan: make(chan uint64, 1)},
-		State:               state,
-		currViewNumber:      controllerView,
-		currDecisionsInView: 1,
+		Checkpoint:  checkpoint,
+		Collector:   collector,
+		InFlight:    inFlight,
+		ViewChanger: viewChanger,
+		State:       &PersistedState{InFlightProposal: inFlight, Logger: log, WAL: writeAheadLog},
+		WAL:         writeAheadLog,
 	}
-	c.syncChan = make(chan struct{}, 1)
+	controller.syncChan = make(chan struct{}, 1)
 
-	viewNum, seq, decisions := c.sync()
+	return &syncFixture{controller: controller, inFlight: inFlight}
+}
 
-	require.Equal(t, controllerView+1, viewNum)
-	require.Equal(t, controllerSeq+1, seq)
-	require.Equal(t, uint64(0), decisions)
-	require.Len(t, state.SavedMessages, 1)
-	require.NotNil(t, state.SavedMessages[0].GetNewView())
-	require.Equal(t, []bool{false}, state.TruncateTo,
-		"a new view saved after sync must not truncate the WAL in this change")
+// newQuietLogger keeps the test output readable: the WAL and the controller both
+// log a lot per record.
+func newQuietLogger() api.Logger {
+	cfg := zap.NewDevelopmentConfig()
+	cfg.Level = zap.NewAtomicLevelAt(zapcore.ErrorLevel)
+
+	logger, err := cfg.Build()
+	if err != nil {
+		panic(err)
+	}
+
+	return logger.Sugar()
+}
+
+// mustNoError fails the test right away when there is an error to report.
+func mustNoError(t *testing.T, err error) {
+	t.Helper()
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+// mustNotNil fails the test right away when there is nothing to look at.
+func mustNotNil(t *testing.T, object any, message string) {
+	t.Helper()
+
+	if object == nil {
+		t.Fatalf("%s", message)
+	}
+}
+
+// storeInFlightProposal makes the controller hold a proposal at the given view
+// and sequence, the way a node that proposed before losing the leader does.
+func (f *syncFixture) storeInFlightProposal(view, seq uint64) {
+	f.inFlight.StoreProposal(types.Proposal{
+		Metadata: MarshalOrPanic(&protos.ViewMetadata{
+			ViewId:         view,
+			LatestSequence: seq,
+		}),
+	})
+}
+
+// lastLogRecord returns the last record written into the WAL file with the
+// given index. The CRC anchor is consumed by the reader and is not returned.
+func lastLogRecord(t *testing.T, log api.Logger, dir string, index uint64) *protos.LogRecord {
+	t.Helper()
+
+	reader, err := wal.NewLogRecordReader(log, filepath.Join(dir, fmt.Sprintf("%016x.wal", index)))
+	mustNoError(t, err)
+	defer func() {
+		require.NoError(t, reader.Close())
+	}()
+
+	var last *protos.LogRecord
+	for {
+		record, err := reader.Read()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		mustNoError(t, err)
+
+		last = record
+	}
+	mustNotNil(t, last, "expected at least one record in the WAL")
+
+	return last
+}
+
+// walFileNames lists the files of the WAL directory.
+func walFileNames(t *testing.T, dir string) []string {
+	t.Helper()
+
+	entries, err := os.ReadDir(dir)
+	mustNoError(t, err)
+
+	var names []string
+	for _, entry := range entries {
+		names = append(names, entry.Name())
+	}
+
+	return names
+}
+
+type abortRecordingProposer struct {
+	aborted   bool
+	abortChan chan struct{}
+}
+
+func (p *abortRecordingProposer) Propose(types.Proposal) {}
+func (p *abortRecordingProposer) Start()                 {}
+
+func (p *abortRecordingProposer) Abort() {
+	p.aborted = true
+	if p.abortChan != nil {
+		close(p.abortChan)
+	}
+}
+
+func (p *abortRecordingProposer) Stopped() bool              { return false }
+func (p *abortRecordingProposer) AbortChan() <-chan struct{} { return p.abortChan }
+func (p *abortRecordingProposer) GetLeaderID() uint64        { return 0 }
+func (p *abortRecordingProposer) GetMetadata() []byte        { return nil }
+func (p *abortRecordingProposer) HandleMessage(uint64, *protos.Message) {
+}
+
+type appendObservingWAL struct {
+	api.WriteAheadLog
+	observe func()
+}
+
+func (w *appendObservingWAL) Append(entry []byte, truncateTo bool) error {
+	w.observe()
+	return w.WriteAheadLog.Append(entry, truncateTo)
+}
+
+// TestSyncAbortsViewBeforeSavingNewView covers the write side of the truncation
+// race: once the record of the new view is written, the view that was running
+// when the sync started must not append anything after it.
+func TestSyncAbortsViewBeforeSavingNewView(t *testing.T) {
+	const (
+		controllerSeq  = uint64(10)
+		controllerView = uint64(5)
+		inFlightSeq    = uint64(10)
+		syncSeq        = uint64(12)
+		syncView       = uint64(6)
+	)
+
+	dir := t.TempDir()
+	log := newQuietLogger()
+	writeAheadLog, err := wal.Create(log, dir, nil)
+	mustNoError(t, err)
+	defer func() {
+		require.NoError(t, writeAheadLog.Close())
+	}()
+
+	proposer := &abortRecordingProposer{}
+	savedAfterAbort := true
+	observedWAL := &appendObservingWAL{
+		WriteAheadLog: writeAheadLog,
+		observe: func() {
+			if !proposer.aborted {
+				savedAfterAbort = false
+			}
+		},
+	}
+
+	fixture := newSyncFixture(t, observedWAL, controllerSeq, controllerView, syncSeq, syncView)
+	fixture.storeInFlightProposal(controllerView, inFlightSeq)
+	fixture.controller.currView = proposer
+
+	fixture.controller.sync()
+
+	require.True(t, proposer.aborted, "the view was not aborted before the new view was saved")
+	require.True(t, savedAfterAbort, "the new view was saved before the view stopped")
+
+	record := lastLogRecord(t, log, dir, 1)
+	saved := &protos.SavedMessage{}
+	mustNoError(t, proto.Unmarshal(record.GetData(), saved))
+	mustNotNil(t, saved.GetNewView(), fmt.Sprintf("expected a record of the new view, got %v", saved))
+}
+
+// TestDecideDoesNotDropDecisionOnAbortedView covers the hand-off between the view
+// and the controller: a view that is being aborted must not stay blocked on a full
+// decision channel, but the committed decision must still reach the controller.
+func TestDecideDoesNotDropDecisionOnAbortedView(t *testing.T) {
+	proposer := &abortRecordingProposer{abortChan: make(chan struct{})}
+	controller := &Controller{
+		currView:     proposer,
+		decisionChan: make(chan decision, 1),
+		stopChan:     make(chan struct{}),
+	}
+	controller.decisionChan <- decision{proposal: types.Proposal{Payload: []byte("queued")}}
+
+	decided := make(chan struct{})
+	go func() {
+		controller.Decide(types.Proposal{Payload: []byte("committed")}, nil, nil)
+		close(decided)
+	}()
+
+	select {
+	case <-decided:
+		t.Fatal("Decide returned before the view was aborted")
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	close(proposer.abortChan)
+
+	select {
+	case <-decided:
+	case <-time.After(time.Second):
+		t.Fatal("Decide did not return after the view was aborted")
+	}
+
+	queued := <-controller.decisionChan
+	require.Equal(t, []byte("queued"), queued.proposal.Payload)
+
+	select {
+	case committed := <-controller.decisionChan:
+		require.Equal(t, []byte("committed"), committed.proposal.Payload)
+	case <-time.After(time.Second):
+		t.Fatal("the committed decision was dropped")
+	}
+}
+
+// TestAbortViewDoesNotNeedTheControllerLoop covers the view changer side: aborting
+// a view reaches the view directly, so it does not wait for the controller loop,
+// which may be inside a long synchronization or an application delivery.
+func TestAbortViewDoesNotNeedTheControllerLoop(t *testing.T) {
+	proposer := &guardTestProposer{}
+	controller := &Controller{
+		currView:       proposer,
+		currViewNumber: 1,
+		Batcher:        guardTestBatcher{},
+		Logger:         newQuietLogger(),
+	}
+
+	// No controller run loop is started: a blocking request handler would never answer.
+	require.True(t, controller.AbortView(1))
+	require.True(t, proposer.Stopped())
+}
+
+// TestSyncSavesNewViewWithTruncateWhenInFlightIsPruned covers R01: a node that
+// proposed sequence 10 and then caught up with a cluster that is at sequence 12
+// has nothing in flight once the sync is accounted for, so the record of the new
+// view is the point from which everything older may go.
+func TestSyncSavesNewViewWithTruncateWhenInFlightIsPruned(t *testing.T) {
+	const (
+		controllerSeq  = uint64(10)
+		controllerView = uint64(3)
+		inFlightSeq    = uint64(10)
+		syncSeq        = uint64(12)
+		syncView       = uint64(4)
+	)
+
+	dir := t.TempDir()
+	log := newQuietLogger()
+	writeAheadLog, err := wal.Create(log, dir, nil)
+	mustNoError(t, err)
+	defer func() {
+		require.NoError(t, writeAheadLog.Close())
+	}()
+
+	fixture := newSyncFixture(t, writeAheadLog, controllerSeq, controllerView, syncSeq, syncView)
+	fixture.storeInFlightProposal(controllerView, inFlightSeq)
+
+	fixture.controller.sync()
+
+	require.Nil(t, fixture.inFlight.InFlightProposal(), "in-flight proposal at sequence %d is stale once the cluster is at %d", inFlightSeq, syncSeq)
+
+	record := lastLogRecord(t, log, dir, 1)
+	require.True(t, record.GetTruncateTo(), "the record of the new view must be a truncation point, files: %v", walFileNames(t, dir))
+
+	saved := &protos.SavedMessage{}
+	mustNoError(t, proto.Unmarshal(record.GetData(), saved))
+	newView := saved.GetNewView()
+	mustNotNil(t, newView, fmt.Sprintf("expected a record of the new view, got %v", saved))
+	require.Equal(t, syncView+1, newView.GetViewId())
+	require.Equal(t, syncSeq, newView.GetLatestSequence())
+}
+
+// TestSyncSavesNewViewWithoutTruncateWhenInFlightSurvives covers R01.1: the sync
+// moved the checkpoint to sequence 12, but the node still holds a proposal at
+// sequence 13, which the cluster has not seen. Losing the records before the new
+// view would cost the node the pre-prepare of its own proposal.
+func TestSyncSavesNewViewWithoutTruncateWhenInFlightSurvives(t *testing.T) {
+	const (
+		controllerSeq  = uint64(10)
+		controllerView = uint64(3)
+		inFlightSeq    = uint64(13)
+		syncSeq        = uint64(12)
+		syncView       = uint64(4)
+	)
+
+	dir := t.TempDir()
+	log := newQuietLogger()
+	writeAheadLog, err := wal.Create(log, dir, nil)
+	mustNoError(t, err)
+	defer func() {
+		require.NoError(t, writeAheadLog.Close())
+	}()
+
+	fixture := newSyncFixture(t, writeAheadLog, controllerSeq, controllerView, syncSeq, syncView)
+	fixture.storeInFlightProposal(controllerView, inFlightSeq)
+
+	fixture.controller.sync()
+
+	inFlight := fixture.inFlight.InFlightProposal()
+	mustNotNil(t, inFlight, fmt.Sprintf("the in-flight proposal at sequence %d outlives a sync to %d", inFlightSeq, syncSeq))
+	inFlightMD := &protos.ViewMetadata{}
+	mustNoError(t, proto.Unmarshal(inFlight.Metadata, inFlightMD))
+	require.Equal(t, inFlightSeq, inFlightMD.GetLatestSequence())
+
+	record := lastLogRecord(t, log, dir, 1)
+	require.False(t, record.GetTruncateTo(), "a record written with a proposal in flight may not be a truncation point, files: %v", walFileNames(t, dir))
+
+	saved := &protos.SavedMessage{}
+	mustNoError(t, proto.Unmarshal(record.GetData(), saved))
+	mustNotNil(t, saved.GetNewView(), fmt.Sprintf("expected a record of the new view, got %v", saved))
+}
+
+// TestSyncWALFileCountDoesNotGrowAcrossRestarts reproduces what an operator sees
+// on a node that only ever syncs: every restart makes the WAL move to a new file
+// and, absent a truncation point, nothing is ever freed. Each round the node
+// holds a stale in-flight proposal and catches up with a cluster one sequence
+// ahead, which is exactly the case where the record of the new view may truncate.
+func TestSyncWALFileCountDoesNotGrowAcrossRestarts(t *testing.T) {
+	const (
+		rounds         = 5
+		controllerView = uint64(3)
+		firstSyncSeq   = uint64(12)
+	)
+
+	dir := t.TempDir()
+	log := newQuietLogger()
+	// A file size no record will ever reach, so the only rotations are the ones a
+	// restart makes on its own.
+	options := &wal.Options{FileSizeBytes: 64 * 1024 * 1024}
+
+	writeAheadLog, err := wal.Create(log, dir, options)
+	mustNoError(t, err)
+
+	var counts []int
+	for round := range rounds {
+		if round > 0 {
+			mustNoError(t, writeAheadLog.Close())
+
+			writeAheadLog, err = wal.Open(log, dir, options)
+			mustNoError(t, err)
+
+			entries, err := writeAheadLog.ReadAll()
+			mustNoError(t, err)
+			require.Len(t, entries, 1, "only the record of the new view written by the previous round may be left to recover from")
+		}
+		defer func() {
+			require.NoError(t, writeAheadLog.Close())
+		}()
+
+		syncSeq := firstSyncSeq + uint64(round)
+		fixture := newSyncFixture(t, writeAheadLog, syncSeq-2, controllerView, syncSeq, controllerView+1)
+		// A proposal the cluster has already moved past.
+		fixture.storeInFlightProposal(controllerView, syncSeq-2)
+
+		fixture.controller.sync()
+
+		counts = append(counts, len(walFileNames(t, dir)))
+	}
+
+	require.Equal(t, counts[1], counts[rounds-1], "the number of WAL files must stop growing after the first restart, got %v", counts)
 }

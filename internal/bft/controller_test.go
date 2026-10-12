@@ -76,6 +76,99 @@ func TestControllerBasic(t *testing.T) {
 	controller.Stop()
 }
 
+type blockingProposer struct {
+	abortStarted chan struct{}
+	abortRelease chan struct{}
+	once         sync.Once
+}
+
+func (p *blockingProposer) Propose(types.Proposal) {}
+func (p *blockingProposer) Start()                 {}
+
+func (p *blockingProposer) Abort() {
+	p.once.Do(func() {
+		close(p.abortStarted)
+	})
+	<-p.abortRelease
+}
+
+func (p *blockingProposer) Stopped() bool                         { return false }
+func (p *blockingProposer) AbortChan() <-chan struct{}            { return nil }
+func (p *blockingProposer) GetLeaderID() uint64                   { return 0 }
+func (p *blockingProposer) GetMetadata() []byte                   { return nil }
+func (p *blockingProposer) HandleMessage(uint64, *protos.Message) {}
+
+type fixedProposerBuilder struct {
+	proposer bft.Proposer
+}
+
+func (b *fixedProposerBuilder) NewProposer(uint64, uint64, uint64, uint64, int) (bft.Proposer, bft.Phase) {
+	return b.proposer, bft.COMMITTED
+}
+
+func TestAbortViewWaitsUntilTheViewStops(t *testing.T) {
+	log := zap.NewNop().Sugar()
+	batcher := &mocks.Batcher{}
+	batcher.On("Close")
+	pool := &mocks.RequestPool{}
+	pool.On("Close")
+	leaderMon := &mocks.LeaderMonitor{}
+	leaderMon.On("ChangeRole", mock.Anything, mock.Anything, mock.Anything)
+	leaderMon.On("Close")
+
+	proposer := &blockingProposer{
+		abortStarted: make(chan struct{}),
+		abortRelease: make(chan struct{}),
+	}
+
+	startedWG := sync.WaitGroup{}
+	startedWG.Add(1)
+
+	controller := &bft.Controller{
+		Checkpoint:      &types.Checkpoint{},
+		Batcher:         batcher,
+		RequestPool:     pool,
+		LeaderMonitor:   leaderMon,
+		ProposerBuilder: &fixedProposerBuilder{proposer: proposer},
+		ID:              0,
+		N:               4,
+		NodesList:       []uint64{0, 1, 2, 3},
+		Logger:          log,
+		StartedWG:       &startedWG,
+		ViewSequences:   &atomic.Value{},
+	}
+
+	controller.Start(1, 0, 0, 1, false)
+
+	abortReturned := make(chan struct{})
+	go func() {
+		controller.AbortView(1)
+		close(abortReturned)
+	}()
+
+	select {
+	case <-proposer.abortStarted:
+	case <-time.After(time.Second):
+		require.Fail(t, "the view was not aborted")
+	}
+
+	select {
+	case <-abortReturned:
+		require.Fail(t, "AbortView returned before the view stopped")
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	close(proposer.abortRelease)
+
+	select {
+	case <-abortReturned:
+	case <-time.After(time.Second):
+		require.Fail(t, "AbortView did not return after the view stopped")
+	}
+
+	controller.Stop()
+}
+
 func TestControllerLeaderBasic(t *testing.T) {
 	basicLog, err := zap.NewDevelopment()
 	require.NoError(t, err)
@@ -775,7 +868,7 @@ func TestSyncInform(t *testing.T) {
 	reqTimer.On("StopTimers")
 	reqTimer.On("RestartTimers")
 	controllerMock := &mocks.ViewController{}
-	controllerMock.On("AbortView", mock.Anything)
+	controllerMock.On("AbortView", mock.Anything).Return(true)
 
 	collector := bft.StateCollector{
 		SelfID:         0,
@@ -1226,8 +1319,9 @@ func TestDeliverTwiceOnceFromSyncAndOnceFromViewData(t *testing.T) {
 		return m.GetProposedRecord() != nil
 	}), true).Return(nil)
 	state.On("Save", mock.MatchedBy(func(m *protos.SavedMessage) bool {
-		return m.GetProposedRecord() == nil
+		return m.GetCommit() != nil
 	}), false).Return(nil)
+	state.On("Save", mock.Anything, mock.Anything).Return(nil)
 
 	verifier := &mocks.VerifierMock{}
 	verifier.On("VerificationSequence").Return(uint64(1))
