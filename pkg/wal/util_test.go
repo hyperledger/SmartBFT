@@ -185,6 +185,53 @@ func TestWALUtil(t *testing.T) {
 		assert.NoError(t, err)
 	})
 
+	t.Run("scan-repair-corrupt-record-in-the-middle", func(t *testing.T) {
+		testDir, err := os.MkdirTemp("", "unittest")
+		assert.NoErrorf(t, err, "generate temporary test dir")
+		defer os.RemoveAll(testDir)
+
+		wal, err := Create(logger, testDir, &Options{FileSizeBytes: 1024 * 1024})
+		assert.NoError(t, err)
+		for range 20 {
+			assert.NoError(t, wal.Append(make([]byte, 1024), false))
+		}
+		assert.NoError(t, wal.Close())
+
+		names, err := dirReadWalNames(testDir)
+		assert.NoError(t, err)
+		assert.Len(t, names, 1)
+		lastFile := filepath.Join(testDir, names[0])
+
+		// flip a CRC bit of the first record, leaving the records written after it intact
+		r, err := NewLogRecordReader(logger, lastFile)
+		assert.NoError(t, err)
+		_, err = r.Read() // the CRC-anchor
+		assert.NoError(t, err)
+		offset, err := r.logFile.Seek(0, io.SeekCurrent)
+		assert.NoError(t, err)
+		assert.NoError(t, r.Close())
+
+		f, err := os.OpenFile(lastFile, os.O_RDWR, walFilePermPrivateRW)
+		assert.NoError(t, err)
+		crcByte := make([]byte, 1)
+		_, err = f.ReadAt(crcByte, offset+5) // upper 32 bits of the header hold the CRC
+		assert.NoError(t, err)
+		crcByte[0] ^= 0x01
+		_, err = f.WriteAt(crcByte, offset+5)
+		assert.NoError(t, err)
+		assert.NoError(t, f.Close())
+
+		sizeBefore, err := os.Stat(lastFile)
+		assert.NoError(t, err)
+
+		// the node cannot be repaired: the records after the corrupt one are lost otherwise
+		assert.ErrorIs(t, Repair(logger, testDir), ErrNotRepairable)
+
+		sizeAfter, err := os.Stat(lastFile)
+		assert.NoError(t, err)
+		assert.Equal(t, sizeBefore.Size(), sizeAfter.Size(), "the file must be left untouched")
+	})
+
 	t.Run("scan-repair-tail", func(t *testing.T) {
 		testDir, err := os.MkdirTemp("", "unittest")
 		assert.NoErrorf(t, err, "generate temporary test dir")
@@ -217,6 +264,45 @@ func TestWALUtil(t *testing.T) {
 		assert.NoError(t, err)
 		err = scanVerifyFiles(logger, testDir, names)
 		assert.NoError(t, err)
+	})
+
+	t.Run("repair makes a private copy of the last file", func(t *testing.T) {
+		testDir, err := os.MkdirTemp("", "unittest")
+		assert.NoErrorf(t, err, "generate temporary test dir")
+		defer os.RemoveAll(testDir)
+
+		make8LogFiles(t, logger, testDir)
+
+		lastFile := filepath.Join(testDir, fmt.Sprintf(walFileTemplate, 8))
+		// pre-existing world readable copy must be tightened
+		lastFileCopy := lastFile + ".copy"
+		assert.NoError(t, os.WriteFile(lastFileCopy, []byte("junk"), 0o644))
+
+		// corrupt the last file, so that Repair has something to do
+		f, err := os.OpenFile(lastFile, os.O_RDWR, walFilePermPrivateRW)
+		assert.NoError(t, err)
+		_, err = f.Seek(0, io.SeekStart)
+		assert.NoError(t, err)
+		_, err = f.Write(make([]byte, 64))
+		assert.NoError(t, err)
+		assert.NoError(t, f.Close())
+
+		damaged, err := os.ReadFile(lastFile)
+		assert.NoError(t, err)
+
+		assert.NoError(t, Repair(logger, testDir))
+
+		fi, err := os.Stat(lastFileCopy)
+		assert.NoError(t, err)
+		assert.Equal(t, os.FileMode(walFilePermPrivateRW), fi.Mode().Perm())
+
+		copied, err := os.ReadFile(lastFileCopy)
+		assert.NoError(t, err)
+		assert.Equal(t, damaged, copied)
+
+		names, err := dirReadWalNames(testDir)
+		assert.NoError(t, err)
+		assert.NoError(t, scanVerifyFiles(logger, testDir, names))
 	})
 
 	t.Run("scan-repair-bad-anchor", func(t *testing.T) {

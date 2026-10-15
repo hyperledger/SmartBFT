@@ -6,6 +6,7 @@
 package wal
 
 import (
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
@@ -16,6 +17,8 @@ import (
 	"strings"
 
 	"github.com/hyperledger/SmartBFT/pkg/api"
+	protos "github.com/hyperledger/SmartBFT/smartbftprotos"
+	"google.golang.org/protobuf/proto"
 )
 
 var padTable [][]byte
@@ -157,13 +160,33 @@ func parseWalFileName(fileName string) (index uint64, err error) {
 	return index, nil
 }
 
+// copyFile copies the source file to the target, readable and writable by the owner only,
+// just like the WAL files themselves (walFilePermPrivateRW). Permissions of an already
+// existing target are tightened before anything is written to it, since the open mode
+// applies only when the file is created.
 func copyFile(source, target string) error {
-	input, err := os.ReadFile(source)
+	input, err := os.Open(source)
+	if err != nil {
+		return err
+	}
+	defer input.Close()
+
+	output, err := os.OpenFile(target, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, walFilePermPrivateRW)
 	if err != nil {
 		return err
 	}
 
-	return os.WriteFile(target, input, 0o644)
+	if err = output.Chmod(walFilePermPrivateRW); err != nil {
+		_ = output.Close()
+		return err
+	}
+
+	if _, err = io.Copy(output, input); err != nil {
+		_ = output.Close()
+		return err
+	}
+
+	return output.Close()
 }
 
 func truncateCloseFile(f *os.File, offset int64) error {
@@ -235,6 +258,10 @@ func scanVerify1(logger api.Logger, r *LogRecordReader, i int, crc uint32) (num 
 
 // scanRepairFile scans the file to the last good record and truncates after it. If even the CRC-Anchor cannot be
 // read, the file is deleted.
+//
+// Only corruption of the last record is repaired. Anything else is refused with
+// ErrNotRepairable, since truncating at a corrupt record in the middle of the file would
+// drop records that were written before it, possibly ones that were already committed.
 func scanRepairFile(logger api.Logger, lastFile string) error {
 	logger.Debugf("Trying to repair file: %s", lastFile)
 
@@ -266,6 +293,9 @@ func scanRepairFile(logger api.Logger, lastFile string) error {
 		if readErr != nil {
 			logger.Debugf("Read error: %s", readErr)
 
+			// offset is the end of the last good record, hence the start of the corrupt one.
+			corruptRecordStart := offset
+
 			if closeErr := r.Close(); closeErr != nil {
 				return closeErr
 			}
@@ -274,6 +304,26 @@ func scanRepairFile(logger api.Logger, lastFile string) error {
 				logger.Debugf("Read %d good records till EOF, no need to repair", num)
 
 				return nil // no need to repair
+			}
+
+			torn, err := isTornTail(logger, lastFile, corruptRecordStart)
+			if err != nil {
+				return err
+			}
+
+			if !torn {
+				logger.Errorf(
+					"Write-Ahead-Log will not repair file: %s; the corrupt record at offset %d is followed by further records, truncating it would drop them",
+					lastFile,
+					corruptRecordStart,
+				)
+
+				return fmt.Errorf(
+					"%w: corrupt record at offset %d of file: %s",
+					ErrNotRepairable,
+					corruptRecordStart,
+					lastFile,
+				)
 			}
 
 			break
@@ -303,4 +353,109 @@ func scanRepairFile(logger api.Logger, lastFile string) error {
 	}
 
 	return nil
+}
+
+// isTornTail reports whether the record starting at recordStart is the last one in the
+// file, i.e. whether nothing was written after it.
+//
+// Repair truncates the file after the last good record, which is safe only for a torn
+// write of the last record. If real records follow the corrupt one, they were written
+// before the crash and may already be committed, so truncating would silently restart the
+// node from a state in the past.
+//
+// The corrupt record cannot be parsed, so its length is unknown and the offset of the next
+// record cannot be computed. We therefore resynchronize: every offset at which a record
+// could start is probed, and a remainder is accepted only if no readable record is found
+// from any of them. Requiring a readable record at *some* offset keeps this conservative
+// in the safe direction - a false positive refuses the repair, never performs a lossy one.
+func isTornTail(logger api.Logger, fileName string, recordStart int64) (bool, error) {
+	f, err := os.Open(fileName)
+	if err != nil {
+		return false, err
+	}
+	defer f.Close()
+
+	fileInfo, err := f.Stat()
+	if err != nil {
+		return false, err
+	}
+
+	fileSize := fileInfo.Size()
+
+	for offset := recordStart + int64(recordHeaderSize); offset+int64(recordHeaderSize) <= fileSize; offset += int64(recordHeaderSize) {
+		found, err := readableRecordsFollow(f, fileSize, offset)
+		if err != nil {
+			return false, err
+		}
+
+		if found {
+			logger.Debugf(
+				"Corrupt record at offset %d of file: %s is followed by readable records from offset %d",
+				recordStart,
+				fileName,
+				offset,
+			)
+
+			return false, nil
+		}
+	}
+
+	return true, nil
+}
+
+// readableRecordsFollow reports whether the file holds readable records from offset to its
+// end. The CRC of the first record cannot be checked, since it depends on the corrupt
+// record, so a readable record is reported only when it is followed by another record whose
+// CRC continues the chain - random bytes do not produce that.
+func readableRecordsFollow(f *os.File, fileSize, offset int64) (bool, error) {
+	header := make([]byte, recordHeaderSize)
+
+	var (
+		prevCRC uint32
+		haveCRC bool
+	)
+
+	for pos := offset; pos+int64(recordHeaderSize) <= fileSize; {
+		if _, err := f.ReadAt(header, pos); err != nil {
+			return false, err
+		}
+
+		length := int64(binary.LittleEndian.Uint64(header) & recordLengthMask)
+		crc := uint32((binary.LittleEndian.Uint64(header) & recordCRCMask) >> 32)
+
+		padSize := int64(getPadSize(int(length)))
+		payloadLength := length + padSize
+
+		if payloadLength == 0 || pos+int64(recordHeaderSize)+payloadLength > fileSize {
+			// Torn or out of bounds, the chain ends here.
+			return false, nil
+		}
+
+		payload := make([]byte, payloadLength)
+		if _, err := f.ReadAt(payload, pos+int64(recordHeaderSize)); err != nil {
+			return false, err
+		}
+
+		if haveCRC && !verifyCRC(prevCRC, crc, payload) {
+			// The chain is broken: from here on there is nothing we can trust.
+			return false, nil
+		}
+
+		record := &protos.LogRecord{}
+		if err := proto.Unmarshal(payload[:length], record); err != nil {
+			return false, nil
+		}
+
+		switch record.Type {
+		case protos.LogRecord_ENTRY, protos.LogRecord_CONTROL, protos.LogRecord_CRC_ANCHOR:
+		default:
+			return false, nil
+		}
+
+		prevCRC = crc
+		haveCRC = true
+		pos += int64(recordHeaderSize) + payloadLength
+	}
+
+	return haveCRC, nil
 }

@@ -42,10 +42,13 @@ const (
 var (
 	ErrCRC                 = errors.New("wal: crc verification failed")
 	ErrWALUnmarshalPayload = errors.New("wal: failed to unmarshal payload")
+	ErrRecordTooBig        = errors.New("wal: record too big")
 	ErrWriteOnly           = errors.New("wal: in WRITE mode")
 	ErrReadOnly            = errors.New("wal: in READ mode")
 
 	ErrWALAlreadyExists = errors.New("wal: is already exists")
+
+	ErrNotRepairable = errors.New("wal: corruption is not in the last record, not repairable")
 
 	crcTable = crc32.MakeTable(crc32.Castagnoli)
 )
@@ -443,7 +446,7 @@ func (w *WriteAheadLogFile) append(record *protos.LogRecord) error {
 
 	recordLength := len(payloadBuff)
 	if (uint64(recordLength) & recordCRCMask) != 0 {
-		return fmt.Errorf("wal: record too big, length does not fit in uint32: %d", recordLength)
+		return fmt.Errorf("%w, length does not fit in uint32: %d", ErrRecordTooBig, recordLength)
 	}
 
 	padSize, padBytes := getPadBytes(recordLength)
@@ -574,7 +577,8 @@ FileLoop:
 		if index == lastIndex &&
 			(errors.Is(readErr, io.ErrUnexpectedEOF) ||
 				errors.Is(readErr, ErrCRC) ||
-				errors.Is(readErr, ErrWALUnmarshalPayload)) {
+				errors.Is(readErr, ErrWALUnmarshalPayload) ||
+				errors.Is(readErr, ErrRecordTooBig)) {
 			w.logger.Warnf(
 				"Received an error in the last file, this can possibly be repaired; file: %s; error: %s",
 				r.fileName,
