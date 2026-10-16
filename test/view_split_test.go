@@ -30,7 +30,12 @@ type viewTracker struct {
 	quorums  map[uint64]int
 	viewData map[uint64]int
 	syncs    map[uint64]int
-	views    map[uint64]uint64
+	// announcedSyncs counts only the syncs a node made because peers announced a view beyond
+	// the one it is in. The generic syncs counter cannot tell that path apart from the ones
+	// the view change timeout and the heartbeat already made before the fix, so a test that
+	// asserts on it proves nothing about the announcement path.
+	announcedSyncs map[uint64]int
+	views          map[uint64]uint64
 	// proposals is the furthest sequence each node processed a proposal at. The leader broadcasts
 	// the pre-prepare while processing the proposal, and it is broadcast only once, so this is
 	// what tells a test whether a node that joins a view later has already missed it.
@@ -39,12 +44,13 @@ type viewTracker struct {
 
 func newViewTracker() *viewTracker {
 	return &viewTracker{
-		attempts:  make(map[uint64]int),
-		quorums:   make(map[uint64]int),
-		viewData:  make(map[uint64]int),
-		syncs:     make(map[uint64]int),
-		views:     make(map[uint64]uint64),
-		proposals: make(map[uint64]uint64),
+		attempts:       make(map[uint64]int),
+		quorums:        make(map[uint64]int),
+		viewData:       make(map[uint64]int),
+		syncs:          make(map[uint64]int),
+		announcedSyncs: make(map[uint64]int),
+		views:          make(map[uint64]uint64),
+		proposals:      make(map[uint64]uint64),
 	}
 }
 
@@ -76,10 +82,13 @@ func (vt *viewTracker) hook(id uint64) func(zapcore.Entry) error {
 			vt.bump(vt.viewData, id)
 		case strings.Contains(msg, "got a quorum of viewData messages"):
 			vt.bump(vt.quorums, id)
+		case strings.Contains(msg, "is calling sync because") && strings.Contains(msg, "announced view"):
+			vt.bump(vt.announcedSyncs, id)
+			vt.bump(vt.syncs, id)
 		case strings.Contains(msg, "get msg from syncChan"):
 			// the controller logs this once for every sync it performs, whichever part of the
-			// library asked for it: the view change timeout or a heartbeat saying the cluster
-			// is ahead of it
+			// library asked for it: the view change timeout, an announcement of a view beyond
+			// the one this node is in, or a heartbeat saying the cluster is ahead of it
 			vt.bump(vt.syncs, id)
 		}
 		return nil
@@ -147,6 +156,14 @@ func (vt *viewTracker) syncsOf(id uint64) int {
 	return vt.syncs[id]
 }
 
+// announcedSyncsOf returns how many times the node synchronized because a quorum of peers had
+// announced a view beyond the one it was in.
+func (vt *viewTracker) announcedSyncsOf(id uint64) int {
+	vt.mu.Lock()
+	defer vt.mu.Unlock()
+	return vt.announcedSyncs[id]
+}
+
 func (vt *viewTracker) proposalOf(id uint64) uint64 {
 	vt.mu.Lock()
 	defer vt.mu.Unlock()
@@ -157,8 +174,8 @@ func (vt *viewTracker) proposalOf(id uint64) uint64 {
 func (vt *viewTracker) describe(ids []uint64) string {
 	var b strings.Builder
 	for _, id := range ids {
-		fmt.Fprintf(&b, "\n  node %d: view=%d, view change attempts=%d, view data sent=%d, view data quorums=%d, syncs=%d, last proposal=%d",
-			id, vt.viewOf(id), vt.attemptsOf(id), vt.viewDataOf(id), vt.quorumsOf(id), vt.syncsOf(id), vt.proposalOf(id))
+		fmt.Fprintf(&b, "\n  node %d: view=%d, view change attempts=%d, view data sent=%d, view data quorums=%d, syncs=%d (announced view: %d), last proposal=%d",
+			id, vt.viewOf(id), vt.attemptsOf(id), vt.viewDataOf(id), vt.quorumsOf(id), vt.syncsOf(id), vt.announcedSyncsOf(id), vt.proposalOf(id))
 	}
 	return b.String()
 }
@@ -226,6 +243,13 @@ func decideFirstRequest(t *testing.T, nodes []*App) {
 			t.Fatalf("node %d did not deliver the first transaction", n.ID)
 		}
 	}
+}
+
+// cutAll breaks the link between two nodes in both directions. DisconnectFrom only closes the
+// sending side, so both sides have to be cut for the split to be a real one.
+func cutAll(nodes []*App, a, b uint64) {
+	nodes[a-1].DisconnectFrom(b)
+	nodes[b-1].DisconnectFrom(a)
 }
 
 // heal restores every link of the cluster.
@@ -313,6 +337,29 @@ func viewsReached(t *testing.T, vt *viewTracker, ids []uint64, view uint64, time
 			}
 		}
 		return true
+	}, timeout, 100*time.Millisecond, msg)
+}
+
+// attemptsReached waits until every listed node has tried to change view at least n times.
+func attemptsReached(t *testing.T, vt *viewTracker, ids []uint64, n int, timeout time.Duration, msg string) bool {
+	t.Helper()
+	return assert.Eventually(t, func() bool {
+		for _, id := range ids {
+			if vt.attemptsOf(id) < n {
+				return false
+			}
+		}
+		return true
+	}, timeout, 100*time.Millisecond, msg)
+}
+
+// announcedSyncReached waits until the node synchronized because a quorum of peers announced a
+// view beyond the one it was in. The generic sync counter cannot be used for this: the view
+// change timeout and the heartbeat already synchronized a node before the fix as well.
+func announcedSyncReached(t *testing.T, vt *viewTracker, id uint64, timeout time.Duration, msg string) bool {
+	t.Helper()
+	return assert.Eventually(t, func() bool {
+		return vt.announcedSyncsOf(id) > 0
 	}, timeout, 100*time.Millisecond, msg)
 }
 
@@ -439,6 +486,118 @@ func TestNodeOneSequenceBehindRejoins(t *testing.T) {
 	// let the commits through: the five decide request 2, which the two missed
 	release()
 
+	deliverRequest(t, nodes, ids, 2, vt)
+
+	t.Logf("state after the cluster recovered:%s", vt.describe(ids))
+}
+
+// TestNodeBehindOnIdleViewRejoins covers the node that fell behind without ever having asked to
+// change view.
+//
+// This is the case the description of the fix is about: the node sits in a view nobody is in any
+// more, and nothing on its own moves it. Node 1 leads view 0 and keeps sending its heartbeat to
+// node 2, so node 2 never times out and never starts a view change. The other five move on to
+// view 2, and then split among themselves: the three in the middle are cut off from the leader
+// of view 2 and keep announcing view 3, which they cannot install with only three nodes.
+//
+// Node 2 is let back in to the three in the middle, while node 1 stays cut off. Node 1 cannot
+// gather the quorum of heartbeat responses that would synchronize it, and node 2 still hears its
+// leader, so the only signal left to either of them is the announcements: a quorum of the peers
+// announce a view beyond the one this node is in. That is what makes node 2 synchronize and find
+// out where the cluster went. Before the fix a view change message for a view beyond the next one
+// was recorded and dropped, so node 2 waited forever in a view nobody was in.
+//
+// Note the scope of this scenario: the announcements are what node 2 needs while it still hears
+// the leader it is stuck with. Once the whole cluster is connected, node 1 gathers the heartbeat
+// responses that synchronize it, and node 2 follows it out after its heartbeat timeout, so the
+// timeouts do eventually rescue both. This test therefore pins down that the announcement path is
+// taken and that it is what the node acts on, rather than that it is the only way back.
+func TestNodeBehindOnIdleViewRejoins(t *testing.T) {
+	t.Parallel()
+
+	const numberOfNodes = 7
+
+	nodes, ids, vt := newSplitCluster(t, numberOfNodes)
+	decideFirstRequest(t, nodes)
+
+	// the node that ends up behind, and the leader it is stuck with
+	behind := []uint64{1, 2}
+	// the nodes that end up furthest ahead
+	ahead := []uint64{3, 7}
+	// the nodes that end up in the middle, stuck one vote short of changing view
+	middle := []uint64{4, 5, 6}
+
+	done := make(chan struct{})
+	defer close(done)
+	var counter uint64
+	accelerateTime(nodes, done, true, true, &counter)
+
+	// The two behind are cut off together, but they keep hearing each other: node 1 is the
+	// leader of view 0 and keeps sending heartbeats to node 2, so neither of them starts a view
+	// change, even though their timers are running.
+	for _, id := range behind {
+		for _, other := range append(append([]uint64{}, ahead...), middle...) {
+			cutAll(nodes, id, other)
+		}
+	}
+
+	// With the leader of view 1 among the two that are cut off, the other five install view 2.
+	if !viewsReached(t, vt, append(append([]uint64{}, ahead...), middle...), 2, 90*time.Second,
+		"the five nodes that moved on did not start view 2") {
+		t.Fatalf("the five nodes that moved on did not start view 2:%s", vt.describe(ids))
+	}
+	// the two behind did not move, and neither did the leader of the view they are stuck with
+	if v := vt.viewOf(1); v != 0 {
+		t.Fatalf("node 1 changed view while it was cut off: view=%d:%s", v, vt.describe(ids))
+	}
+	if v := vt.viewOf(2); v != 0 {
+		t.Fatalf("node 2 changed view while it was cut off: view=%d:%s", v, vt.describe(ids))
+	}
+
+	// The five now split. The three in the middle keep their view's leader cut off, so they
+	// cannot gather the votes they need to change view on their own, and keep announcing view 3.
+	// The two in front stay in view 2, which is the view the cluster is actually in.
+	for _, id := range middle {
+		for _, other := range ahead {
+			cutAll(nodes, id, other)
+		}
+	}
+	if !attemptsReached(t, vt, middle, 3, 90*time.Second,
+		"the three nodes in the middle did not start announcing a new view") {
+		t.Fatalf("the three nodes in the middle did not start announcing a new view:%s", vt.describe(ids))
+	}
+	for _, id := range append(append([]uint64{}, ahead...), middle...) {
+		if v := vt.viewOf(id); v != 2 {
+			t.Fatalf("node %d is not in view 2 after the split: view=%d:%s", id, v, vt.describe(ids))
+		}
+	}
+
+	t.Logf("state with the cluster in view 2 and the middle three announcing view 3:%s", vt.describe(ids))
+
+	// Let node 2 back in to the three in the middle. Node 1 stays cut off: it would gather the
+	// f+1 heartbeat responses that synchronize it as soon as it could reach the cluster, and
+	// would then pull node 2 along, so the announcement path would never be reached.
+	for _, id := range middle {
+		nodes[id-1].ConnectTo(behind[1])
+	}
+	nodes[behind[1]-1].ConnectTo(middle[0])
+	nodes[behind[1]-1].ConnectTo(middle[1])
+	nodes[behind[1]-1].ConnectTo(middle[2])
+
+	// This is the assertion the fix exists for: node 2 synchronized because a quorum of its
+	// peers announced a view it is not in.
+	if !announcedSyncReached(t, vt, behind[1], 60*time.Second,
+		"node 2 never synchronized because of an announced view, so it never had a chance to learn where the cluster went") {
+		t.Fatalf("node 2 never synchronized because of an announced view:%s", vt.describe(ids))
+	}
+	if !viewsReached(t, vt, behind[1:], 2, 60*time.Second, "node 2 did not reach the view of the cluster") {
+		t.Fatalf("node 2 did not reach the view of the cluster:%s", vt.describe(ids))
+	}
+
+	// the rest of the cluster is connected again and has to decide on its own
+	heal(nodes, ids)
+
+	nodes[0].Submit(Request{ID: "2", ClientID: "alice"})
 	deliverRequest(t, nodes, ids, 2, vt)
 
 	t.Logf("state after the cluster recovered:%s", vt.describe(ids))

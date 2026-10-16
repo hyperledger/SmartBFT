@@ -165,6 +165,8 @@ func TestViewChangeProcess(t *testing.T) {
 			controller.On("AbortView", mock.Anything)
 			state := &mocks.State{}
 			state.On("Save", mock.Anything).Return(nil)
+			synchronizer := &mocks.Synchronizer{}
+			synchronizer.On("Sync")
 
 			vc := &bft.ViewChanger{
 				SelfID:            0,
@@ -174,6 +176,7 @@ func TestViewChangeProcess(t *testing.T) {
 				Signer:            signer,
 				Logger:            log,
 				RequestsTimer:     reqTimer,
+				Synchronizer:      synchronizer,
 				Ticker:            make(chan time.Time),
 				InFlight:          &bft.InFlightData{},
 				Checkpoint:        &types.Checkpoint{},
@@ -204,7 +207,9 @@ func TestViewChangeProcess(t *testing.T) {
 				vc.HandleMessage(3, viewChangeMsg)
 			}
 
-			// sending viewChange messages with bigger view doesn't make a difference
+			// a quorum of senders announcing a view beyond the next one does make a difference:
+			// the cluster moved on and is no longer announcing the view this node is in, so the
+			// node syncs to find out where it went
 			msg3 := proto.Clone(viewChangeMsg).(*protos.Message)
 			msg3.GetViewChange().NextView = 3
 			vc.HandleMessage(2, msg3)
@@ -227,6 +232,9 @@ func TestViewChangeProcess(t *testing.T) {
 			assert.NotNil(t, m.GetViewData())
 			comm.AssertCalled(t, "SendConsensus", uint64(2), mock.Anything)
 
+			// asserted after the reads above, which is what waits for the view changer to
+			// have processed the messages that were just sent to it
+			synchronizer.AssertNumberOfCalls(t, "Sync", 1)
 			reqTimer.AssertNumberOfCalls(t, "StopTimers", 2)
 			controller.AssertNumberOfCalls(t, "AbortView", 4)
 			state.AssertNumberOfCalls(t, "Save", 2)

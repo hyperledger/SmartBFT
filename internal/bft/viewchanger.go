@@ -93,6 +93,10 @@ type ViewChanger struct {
 	backOffFactor       uint64
 	syncedForNewView    bool
 	acceptedNewView     bool // whether a new view message was already accepted for currView
+	// syncedForAnnouncedView is the furthest view this node has synced for after hearing a
+	// peer announce it. It is reset when the node moves to a new view, and it keeps a faulty
+	// node from making this node sync over and over again.
+	syncedForAnnouncedView uint64
 
 	// Runtime
 	MetricsViewChange         *api.MetricsViewChange
@@ -145,6 +149,7 @@ func (v *ViewChanger) Start(startViewNumber uint64) {
 	v.MetricsViewChange.CurrentView.Set(float64(v.currView))
 	v.MetricsViewChange.RealView.Set(float64(v.realView))
 	v.MetricsViewChange.NextView.Set(float64(v.nextView))
+	v.resetSyncedForView()
 
 	v.lastTick = time.Now()
 	v.lastResend = v.lastTick
@@ -283,6 +288,16 @@ func (v *ViewChanger) processMsg(sender uint64, m *protos.Message) {
 			v.processViewChangeMsg(false)
 			return
 		}
+		if vc.NextView > v.currView+1 {
+			// The cluster has moved on to a view this node is not in, and is no longer
+			// announcing it, so there is no other way to find out where the cluster went.
+			// The announcement carries no signature, so wait for a quorum of distinct senders
+			// to announce it before acting on it, or one faulty sender could make this node
+			// sync whenever it liked. Even then the announcement only triggers the sync: the
+			// view itself is adopted through the authenticated new view message.
+			v.syncForAnnouncedView(vc.NextView, sender)
+			return
+		}
 		if v.nextView == v.currView+1 && // node has already started view change with last view
 			vc.NextView > v.realView &&
 			vc.NextView < v.currView+1 &&
@@ -330,6 +345,33 @@ func (v *ViewChanger) processMsg(sender uint64, m *protos.Message) {
 	}
 }
 
+// syncForAnnouncedView syncs when a quorum of peers announce a view beyond the one this node is
+// in. The view change only accepts messages for the view immediately following the one this
+// node is in, and the cluster is no longer announcing the view it moved on to, so without this
+// the node waits forever in a view nobody is in. It syncs at most once per announced view, so
+// that a faulty node cannot make it sync over and over again.
+func (v *ViewChanger) syncForAnnouncedView(announcedView uint64, sender uint64) {
+	if v.syncedForAnnouncedView >= announcedView {
+		v.Logger.Debugf("Node %d already synced for a view at or beyond %d, not syncing again", v.SelfID, announcedView)
+		return
+	}
+	if announced := v.nvs.announcedAtOrAbove(announcedView); announced < uint64(v.f)+1 {
+		v.Logger.Debugf("Node %d got an announcement of view %d from %d, but %d senders announced it and a quorum is %d", v.SelfID, announcedView, sender, announced, uint64(v.f)+1)
+		return
+	}
+	v.Logger.Infof("Node %d is calling sync because %d announced view %d while the current view is %d", v.SelfID, sender, announcedView, v.currView)
+	v.syncedForAnnouncedView = announcedView
+	v.Synchronizer.Sync()
+}
+
+// resetSyncedForView clears the record of the views this node has already synced for. It has to
+// run wherever the node's view changes, including when it restores one from its log, or a node
+// coming back would refuse to sync for the view it is already in the middle of.
+func (v *ViewChanger) resetSyncedForView() {
+	v.syncedForNewView = false
+	v.syncedForAnnouncedView = v.currView
+}
+
 // InformNewView tells the view changer to advance to a new view number
 func (v *ViewChanger) InformNewView(view uint64) {
 	select {
@@ -356,7 +398,7 @@ func (v *ViewChanger) informNewView(view uint64) {
 	v.viewDataMsgs.clear(v.N)
 	v.checkTimeout = false
 	v.backOffFactor = 1 // reset
-	v.syncedForNewView = false
+	v.resetSyncedForView()
 	v.acceptedNewView = true // the node is already in this view, so a new view message for it is not needed
 	v.RequestsTimer.RestartTimers()
 }
@@ -428,9 +470,9 @@ func (v *ViewChanger) processViewChangeMsg(restore bool) {
 	v.currView = v.nextView
 	v.MetricsViewChange.CurrentView.Set(float64(v.currView))
 	v.viewChangeMsgs.clear(v.N)
-	v.viewDataMsgs.clear(v.N)  // clear because currView changed
-	v.syncedForNewView = false // clear because currView changed
-	v.acceptedNewView = false  // clear because currView changed
+	v.viewDataMsgs.clear(v.N) // clear because currView changed
+	v.resetSyncedForView()    // clear because currView changed
+	v.acceptedNewView = false // clear because currView changed
 	msg := v.prepareViewDataMsg()
 	leader := v.getLeader()
 	if leader == v.SelfID {
@@ -1203,6 +1245,7 @@ func (v *ViewChanger) processNewViewMsg(msg *protos.NewView) {
 	v.realView = v.currView
 	v.MetricsViewChange.RealView.Set(float64(v.realView))
 	v.nvs.clear()
+	v.resetSyncedForView()
 	v.Controller.ViewChanged(v.currView, mySequence+1)
 
 	v.RequestsTimer.RestartTimers()

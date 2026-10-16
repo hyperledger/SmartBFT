@@ -155,6 +155,19 @@ func (nv *nextViews) sendRecv(next uint64, sender uint64) bool {
 	return next == nv.n[sender]
 }
 
+// announcedAtOrAbove counts the senders that announced a view at or above the given one. A view
+// change message carries no signature, so no single sender can be trusted to be telling the
+// truth about it; a quorum of them means at least one of them is honest.
+func (nv *nextViews) announcedAtOrAbove(next uint64) uint64 {
+	var count uint64
+	for _, announced := range nv.n {
+		if announced >= next {
+			count++
+		}
+	}
+	return count
+}
+
 type incMsg struct {
 	*protos.Message
 	sender uint64
