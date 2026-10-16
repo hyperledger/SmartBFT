@@ -7,11 +7,6 @@ on:
     branches: [ "**" ]
   workflow_dispatch:
 
-env:
-  GO_VER: 1.26.3
-  PROTOC_VER: "36.2"
-  PROTOC_GEN_GO_VER: v1.36.12
-
 jobs:
   validate:
     runs-on: ubuntu-latest
@@ -22,15 +17,7 @@ jobs:
       - name: Install Go
         uses: actions/setup-go@v7
         with:
-          go-version: ${{ env.GO_VER }}
-
-      - name: Install Protoc
-        run: |
-          curl -fL --retry 3 -o /tmp/protoc.zip "https://github.com/protocolbuffers/protobuf/releases/download/v${{ env.PROTOC_VER }}/protoc-${{ env.PROTOC_VER }}-linux-x86_64.zip"
-          # update this hash whenever PROTOC_VER is bumped
-          echo "121f6c7afe1d4d0e3ea6aab9432038599250134cbf4474cb1167d2c7decd4278  /tmp/protoc.zip" | sha256sum -c -
-          unzip -o /tmp/protoc.zip -d "$HOME/protoc" 'bin/*' 'include/*'
-          echo "$HOME/protoc/bin" >> "$GITHUB_PATH"
+          go-version-file: go.mod
 
       - name: check go.mod
         run: |
@@ -55,10 +42,8 @@ jobs:
 
       - name: check protobuf
         run: |
-          go install google.golang.org/protobuf/cmd/protoc-gen-go@${{ env.PROTOC_GEN_GO_VER }}
-          protoc --go_opt=paths=source_relative --go_out=. smartbftprotos/*.proto
-          protoc --go_opt=paths=source_relative --go_out=. examples/naive_chain/*.proto
-          protoc --go_opt=paths=source_relative --go_out=. test/*.proto
+          go -C tools install github.com/bufbuild/buf/cmd/buf google.golang.org/protobuf/cmd/protoc-gen-go
+          PATH="$(go env GOPATH)/bin:$PATH" buf generate
           git diff --exit-code
 
   build:
@@ -72,7 +57,7 @@ jobs:
     - name: Install Go
       uses: actions/setup-go@v7
       with:
-        go-version: ${{ env.GO_VER }}
+        go-version-file: go.mod
 
     - name: Test
       run: |
