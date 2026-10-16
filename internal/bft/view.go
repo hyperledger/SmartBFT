@@ -851,7 +851,6 @@ func (vv *voteVerifier) verifyVote(vote *protos.Message) {
 
 func (v *View) decide(proposal *types.Proposal, signatures []types.Signature, requests []types.RequestInfo) {
 	v.Logger.Infof("Deciding on seq %d", v.ProposalSequence)
-	v.ViewSequences.Store(ViewSequence{ProposalSeq: v.ProposalSequence, ViewActive: true})
 	// first make preparations for the next sequence so that the view will be ready to continue right after delivery
 	v.startNextSeq()
 	signatures = append(signatures, *v.myProposalSig)
@@ -865,6 +864,14 @@ func (v *View) startNextSeq() {
 	v.DecisionsInView++
 
 	nextSeq := v.ProposalSequence
+
+	// Publish the sequence this view is about to propose next. Without this the stored
+	// sequence stays at the one that was just decided, and every reader of it - the
+	// heartbeat a leader broadcasts, the state a node collects from its peers, and the
+	// follower that compares its own sequence against it - ends up comparing a decided
+	// sequence against a proposal sequence, which hides a follower that is behind by
+	// exactly the sequence in flight.
+	v.ViewSequences.Store(ViewSequence{ProposalSeq: nextSeq, ViewActive: true})
 
 	v.MetricsView.ProposalSequence.Set(float64(v.ProposalSequence))
 	v.MetricsView.DecisionsInView.Set(float64(v.DecisionsInView))

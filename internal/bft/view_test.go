@@ -743,7 +743,9 @@ func TestNormalPath(t *testing.T) {
 	view.HandleMessage(2, commit2Next)
 	view.HandleMessage(3, commit3Next)
 	deciderWG.Wait()
-	assert.Equal(t, bft.ViewSequence{ViewActive: true, ProposalSeq: 1}, viewSeq.Load().(bft.ViewSequence))
+	// after deciding sequence 1 the view advertises the sequence it proposes next, which
+	// is the one followers compare their own sequence against
+	assert.Equal(t, bft.ViewSequence{ViewActive: true, ProposalSeq: 2}, viewSeq.Load().(bft.ViewSequence))
 	dProp = <-decidedProposal
 	secondProposal := proposal
 	secondProposal.Metadata = bft.MarshalOrPanic(&protos.ViewMetadata{
