@@ -49,6 +49,27 @@ type change struct {
 	stopView bool
 }
 
+// inFlightAttempt is one run of the in-flight proposal view, so that the view's
+// completion is signaled to the waiter of that run only.
+type inFlightAttempt struct {
+	decideCh chan struct{}
+	syncCh   chan struct{}
+	viewRef  *View
+}
+
+type inFlightAttemptCallbacks struct {
+	vc      *ViewChanger
+	attempt *inFlightAttempt
+}
+
+func (c *inFlightAttemptCallbacks) Decide(proposal types.Proposal, signatures []types.Signature, requests []types.RequestInfo) {
+	c.vc.decideInFlight(c.attempt, proposal, signatures, requests)
+}
+
+func (c *inFlightAttemptCallbacks) Sync() {
+	c.vc.syncInFlight(c.attempt)
+}
+
 // ViewChanger is responsible for running the view change protocol.
 type ViewChanger struct {
 	// Configuration
@@ -77,11 +98,9 @@ type ViewChanger struct {
 	Pruner        Pruner
 
 	// for the in flight proposal view
-	ViewSequences      *atomic.Value
-	inFlightDecideChan chan struct{}
-	inFlightSyncChan   chan struct{}
-	inFlightView       *View
-	inFlightViewLock   sync.RWMutex
+	ViewSequences    *atomic.Value
+	inFlightView     *View
+	inFlightViewLock sync.RWMutex
 
 	Ticker              <-chan time.Time
 	lastTick            time.Time
@@ -149,9 +168,6 @@ func (v *ViewChanger) Start(startViewNumber uint64) {
 	v.lastResend = v.lastTick
 
 	v.backOffFactor = 1
-
-	v.inFlightDecideChan = make(chan struct{})
-	v.inFlightSyncChan = make(chan struct{})
 
 	go func() {
 		defer v.vcDone.Done()
@@ -1255,6 +1271,14 @@ func (v *ViewChanger) commitInFlightProposal(proposal *protos.Proposal) (success
 	inFlightViewLatestSeq := proposalMD.LatestSequence
 
 	v.inFlightViewLock.Lock()
+	attempt := &inFlightAttempt{
+		decideCh: make(chan struct{}, 1),
+		syncCh:   make(chan struct{}, 1),
+	}
+	callbacks := &inFlightAttemptCallbacks{
+		vc:      v,
+		attempt: attempt,
+	}
 	inFlightView := &View{
 		RetrieveCheckpoint: v.Checkpoint.Get,
 		DecisionsPerLeader: v.DecisionsPerLeader,
@@ -1264,9 +1288,9 @@ func (v *ViewChanger) commitInFlightProposal(proposal *protos.Proposal) (success
 		Number:             inFlightViewNum,
 		LeaderID:           v.SelfID, // so that no byzantine leader will cause a complain
 		Quorum:             v.quorum,
-		Decider:            v,
+		Decider:            callbacks,
 		FailureDetector:    v,
-		Sync:               v,
+		Sync:               callbacks,
 		Logger:             v.Logger,
 		Comm:               v.Comm,
 		Verifier:           v.Verifier,
@@ -1279,6 +1303,7 @@ func (v *ViewChanger) commitInFlightProposal(proposal *protos.Proposal) (success
 		MetricsBlacklist:   v.MetricsBlacklist,
 		MetricsView:        v.MetricsView,
 	}
+	attempt.viewRef = inFlightView
 	inFlightView.MetricsView.ViewNumber.Set(float64(inFlightView.Number))
 	inFlightView.MetricsView.LeaderID.Set(float64(inFlightView.LeaderID))
 	inFlightView.MetricsView.ProposalSequence.Set(float64(inFlightView.ProposalSequence))
@@ -1316,7 +1341,14 @@ func (v *ViewChanger) commitInFlightProposal(proposal *protos.Proposal) (success
 
 	inFlightView.beginPrePrepare = time.Now() // the latency of processing the in flight proposal is measured from here
 	inFlightView.Start()
-	defer inFlightView.Abort()
+	defer func() {
+		inFlightView.Abort()
+		v.inFlightViewLock.Lock()
+		if v.inFlightView == inFlightView {
+			v.inFlightView = nil
+		}
+		v.inFlightViewLock.Unlock()
+	}()
 
 	v.inFlightViewLock.Unlock()
 
@@ -1325,10 +1357,10 @@ func (v *ViewChanger) commitInFlightProposal(proposal *protos.Proposal) (success
 	// wait for view to finish or time out
 	for {
 		select {
-		case <-v.inFlightDecideChan:
+		case <-attempt.decideCh:
 			v.Logger.Infof("In-flight view %d with latest sequence %d has committed a decision", inFlightViewNum, inFlightViewLatestSeq)
 			return true
-		case <-v.inFlightSyncChan:
+		case <-attempt.syncCh:
 			v.Logger.Infof("In-flight view %d with latest sequence %d has asked to sync", inFlightViewNum, inFlightViewLatestSeq)
 			return false
 		case now := <-v.Ticker:
@@ -1344,9 +1376,10 @@ func (v *ViewChanger) commitInFlightProposal(proposal *protos.Proposal) (success
 	}
 }
 
-// Decide delivers to the application and informs the view changer after delivery
-func (v *ViewChanger) Decide(proposal types.Proposal, signatures []types.Signature, requests []types.RequestInfo) {
-	v.inFlightView.stop()
+// decideInFlight delivers the decision of the in-flight proposal view to the application
+// and informs the waiter of the given attempt after delivery.
+func (v *ViewChanger) decideInFlight(attempt *inFlightAttempt, proposal types.Proposal, signatures []types.Signature, requests []types.RequestInfo) {
+	attempt.viewRef.stop()
 	v.Logger.Debugf("Delivering to app from Decide the last decision proposal")
 	reconfig := v.Application.Deliver(proposal, signatures)
 	if reconfig.InLatestDecision {
@@ -1361,11 +1394,10 @@ func (v *ViewChanger) Decide(proposal types.Proposal, signatures []types.Signatu
 	}
 	v.Pruner.MaybePruneRevokedRequests()
 
+	// The waiter may have already left (timed out or stopped), so never block on it.
 	select {
-	case v.inFlightDecideChan <- struct{}{}:
-		return
-	case <-v.stopChan:
-		return
+	case attempt.decideCh <- struct{}{}:
+	default:
 	}
 }
 
@@ -1374,12 +1406,16 @@ func (v *ViewChanger) Complain(viewNum uint64, stopView bool) {
 	v.Logger.Panicf("Node %d has complained while in the view for the in flight proposal", v.SelfID)
 }
 
-// Sync calls the synchronizer and informs the view changer of the sync
-func (v *ViewChanger) Sync() {
+// syncInFlight calls the synchronizer and informs the waiter of the given attempt of the sync.
+func (v *ViewChanger) syncInFlight(attempt *inFlightAttempt) {
 	// the in flight proposal view asked to sync
 	v.Logger.Debugf("Node %d is calling sync because the in flight proposal view has asked to sync", v.SelfID)
 	v.Synchronizer.Sync()
-	v.inFlightSyncChan <- struct{}{}
+	// The waiter may have already left (timed out or stopped), so never block on it.
+	select {
+	case attempt.syncCh <- struct{}{}:
+	default:
+	}
 }
 
 // HandleViewMessage passes a message to the in flight proposal view if applicable
