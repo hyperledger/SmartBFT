@@ -1578,7 +1578,10 @@ func TestInformViewChanger(t *testing.T) {
 	})
 	reqTimer := &mocks.RequestsTimer{}
 	reqTimer.On("StopTimers").Once()
-	reqTimer.On("RestartTimers")
+	informed := make(chan struct{}, 1)
+	reqTimer.On("RestartTimers").Run(func(args mock.Arguments) {
+		informed <- struct{}{} // the view changer restarts the timers once it is informed of a new view
+	})
 	basicLog, err := zap.NewDevelopment()
 	assert.NoError(t, err)
 	log := basicLog.Sugar()
@@ -1600,7 +1603,7 @@ func TestInformViewChanger(t *testing.T) {
 
 	info := uint64(2)
 	vc.InformNewView(info) // increase the view number
-	vc.InformNewView(info) // make sure that inform happened (channel size is 1)
+	<-informed             // make sure that inform happened
 
 	vc.StartViewChange(2, true)
 	msg := <-msgChan
@@ -1612,6 +1615,69 @@ func TestInformViewChanger(t *testing.T) {
 	reqTimer.AssertNumberOfCalls(t, "StopTimers", 1)
 	controller.AssertNumberOfCalls(t, "AbortView", 1)
 	reqTimer.AssertCalled(t, "RestartTimers")
+}
+
+// TestInformNewViewDoesNotBlock makes sure that informing the view changer of a new view never blocks,
+// even when it is not processing the views it was already informed of, and that it ends up in the latest one.
+func TestInformNewViewDoesNotBlock(t *testing.T) {
+	comm := &mocks.CommMock{}
+	msgChan := make(chan *protos.Message)
+	comm.On("BroadcastConsensus", mock.Anything).Run(func(args mock.Arguments) {
+		msgChan <- args.Get(0).(*protos.Message)
+	})
+	reqTimer := &mocks.RequestsTimer{}
+	reqTimer.On("StopTimers")
+	informed := make(chan struct{}, 1)
+	reqTimer.On("RestartTimers").Run(func(args mock.Arguments) {
+		informed <- struct{}{} // the view changer restarts the timers once it is informed of a new view
+	})
+	basicLog, err := zap.NewDevelopment()
+	assert.NoError(t, err)
+	controller := &mocks.ViewController{}
+	controller.On("AbortView", mock.Anything)
+
+	vc := &bft.ViewChanger{
+		N:             4,
+		NodesList:     []uint64{0, 1, 2, 3},
+		Comm:          comm,
+		RequestsTimer: reqTimer,
+		Ticker:        make(chan time.Time),
+		Logger:        basicLog.Sugar(),
+		Controller:    controller,
+		InMsqQSize:    100,
+	}
+	// the view changer does not run until the controller started, so it processes none of the views it is informed of
+	vc.ControllerStartedWG.Add(1)
+	vc.Start(0)
+
+	returned := make(chan struct{})
+	go func() {
+		defer close(returned)
+		for view := uint64(1); view <= 3; view++ {
+			vc.InformNewView(view)
+		}
+	}()
+	select {
+	case <-returned:
+	case <-time.After(3 * time.Second):
+		assert.Fail(t, "informing the view changer of a new view blocked")
+	}
+
+	vc.ControllerStartedWG.Done()
+	select {
+	case <-informed:
+	case <-time.After(3 * time.Second):
+		assert.Fail(t, "the view changer did not process the views it was informed of")
+	}
+	vc.StartViewChange(3, true)
+	select {
+	case msg := <-msgChan:
+		assert.Equal(t, uint64(4), msg.GetViewChange().GetNextView(), "the view changer is not in the latest view it was informed of")
+	case <-time.After(3 * time.Second):
+		assert.Fail(t, "the view changer did not start a view change")
+	}
+
+	vc.Stop()
 }
 
 func TestRestoreViewChange(t *testing.T) {

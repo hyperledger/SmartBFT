@@ -330,12 +330,22 @@ func (v *ViewChanger) processMsg(sender uint64, m *protos.Message) {
 	}
 }
 
-// InformNewView tells the view changer to advance to a new view number
+// InformNewView tells the view changer to advance to a new view number.
+// It never blocks: if the view changer did not process a previous view yet, only the highest of the two is kept.
 func (v *ViewChanger) InformNewView(view uint64) {
-	select {
-	case v.informChan <- view:
-	case <-v.stopChan:
-		return
+	for {
+		select {
+		case v.informChan <- view:
+			return
+		case <-v.stopChan:
+			return
+		default:
+		}
+		select {
+		case pending := <-v.informChan:
+			view = max(view, pending)
+		default:
+		}
 	}
 }
 
