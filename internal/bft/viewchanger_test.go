@@ -2563,6 +2563,95 @@ func TestNewViewWithoutQuorumSyncs(t *testing.T) {
 	}
 }
 
+// TestNewViewOfCurrentViewIsIgnored makes sure that once a node accepted a new view message,
+// another new view message for the same view does not install the view again.
+func TestNewViewOfCurrentViewIsIgnored(t *testing.T) {
+	for _, test := range []struct {
+		description string
+		viewData    func() *protos.ViewData
+	}{
+		{
+			description: "without an in flight proposal",
+			viewData: func() *protos.ViewData {
+				return proto.Clone(vd).(*protos.ViewData)
+			},
+		},
+		{
+			// the node already decided the in flight proposal, and then decides the next sequence
+			// before it gets the new view message again
+			description: "with an in flight proposal",
+			viewData:    preparedInFlightViewData,
+		},
+	} {
+		t.Run(test.description, func(t *testing.T) {
+			verifier := &mocks.VerifierMock{}
+			verifier.On("VerifySignature", mock.Anything).Return(nil)
+			verifier.On("VerifyConsenterSig", mock.Anything, mock.Anything).Return(nil, nil)
+
+			vc, app, viewChangedChan := newViewChangerWithInFlight(t, verifier)
+			panicked := make(chan string, 1)
+			baseLogger := vc.Logger.(*zap.SugaredLogger).Desugar()
+			vc.Logger = baseLogger.WithOptions(zap.WithPanicHook(zapcore.WriteThenGoexit), zap.Hooks(func(entry zapcore.Entry) error {
+				if entry.Level == zapcore.PanicLevel {
+					select {
+					case panicked <- entry.Message:
+					default:
+					}
+				}
+				return nil
+			})).Sugar()
+
+			vc.Start(1)
+
+			raw := bft.MarshalOrPanic(test.viewData())
+			msg := &protos.Message{
+				Content: &protos.Message_NewView{
+					NewView: &protos.NewView{
+						SignedViewData: []*protos.SignedViewData{
+							{RawViewData: raw, Signer: 0},
+							{RawViewData: raw, Signer: 1},
+							{RawViewData: raw, Signer: 2},
+						},
+					},
+				},
+			}
+
+			vc.HandleMessage(1, msg)
+			select {
+			case view := <-viewChangedChan:
+				assert.Equal(t, uint64(1), view)
+			case <-time.After(3 * time.Second):
+				assert.Fail(t, "the view was not changed by the new view message")
+			}
+
+			// the node makes progress in the new view
+			vc.Checkpoint.Set(types.Proposal{
+				Payload: []byte{3},
+				Header:  []byte{4},
+				Metadata: bft.MarshalOrPanic(&protos.ViewMetadata{
+					LatestSequence: 3,
+					ViewId:         1,
+				}),
+				VerificationSequence: 1,
+			}, lastDecisionSignatures)
+
+			vc.HandleMessage(1, msg)
+			select {
+			case <-viewChangedChan:
+				assert.Fail(t, "the view was changed again by a new view message for the current view")
+			case message := <-panicked:
+				assert.Fail(t, "a new view message for the current view made the node panic", message)
+				return // the view changer is gone, so it cannot be stopped
+			case <-time.After(100 * time.Millisecond):
+			}
+
+			vc.Stop()
+
+			app.AssertNotCalled(t, "Deliver")
+		})
+	}
+}
+
 // The new leader is the node that collected the view data messages of the others,
 // so a newView message that does not carry the new leader's own signed view data
 // message must not be accepted, regardless of where in the list the entries sit.

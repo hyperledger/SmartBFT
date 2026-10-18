@@ -92,6 +92,7 @@ type ViewChanger struct {
 	checkTimeout        bool
 	backOffFactor       uint64
 	syncedForNewView    bool
+	acceptedNewView     bool // whether a new view message was already accepted for currView
 
 	// Runtime
 	MetricsViewChange         *api.MetricsViewChange
@@ -321,6 +322,10 @@ func (v *ViewChanger) processMsg(sender uint64, m *protos.Message) {
 			v.Logger.Warnf("Node %d got newView message %v from %d, expected sender to be %d the next leader", v.SelfID, MsgToString(m), sender, leader)
 			return
 		}
+		if v.acceptedNewView {
+			v.Logger.Debugf("Node %d got newView message %v from %d, but it is already in view %d, ignoring it", v.SelfID, MsgToString(m), sender, v.currView)
+			return
+		}
 		v.processNewViewMsg(nv)
 	}
 }
@@ -352,6 +357,7 @@ func (v *ViewChanger) informNewView(view uint64) {
 	v.checkTimeout = false
 	v.backOffFactor = 1 // reset
 	v.syncedForNewView = false
+	v.acceptedNewView = true // the node is already in this view, so a new view message for it is not needed
 	v.RequestsTimer.RestartTimers()
 }
 
@@ -424,6 +430,7 @@ func (v *ViewChanger) processViewChangeMsg(restore bool) {
 	v.viewChangeMsgs.clear(v.N)
 	v.viewDataMsgs.clear(v.N)  // clear because currView changed
 	v.syncedForNewView = false // clear because currView changed
+	v.acceptedNewView = false  // clear because currView changed
 	msg := v.prepareViewDataMsg()
 	leader := v.getLeader()
 	if leader == v.SelfID {
@@ -1192,6 +1199,7 @@ func (v *ViewChanger) processNewViewMsg(msg *protos.NewView) {
 	default:
 	}
 
+	v.acceptedNewView = true
 	v.realView = v.currView
 	v.MetricsViewChange.RealView.Set(float64(v.realView))
 	v.nvs.clear()
