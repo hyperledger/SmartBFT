@@ -1377,9 +1377,9 @@ func (v *ViewChanger) Decide(proposal types.Proposal, signatures []types.Signatu
 	}
 }
 
-// Complain panics when a view change is requested
+// Complain is called by the view of the in flight proposal, which then stops, and so it is only logged
 func (v *ViewChanger) Complain(viewNum uint64, stopView bool) {
-	v.Logger.Panicf("Node %d has complained while in the view for the in flight proposal", v.SelfID)
+	v.Logger.Warnf("Node %d has complained while in the view for the in flight proposal", v.SelfID)
 }
 
 // Sync calls the synchronizer and informs the view changer of the sync

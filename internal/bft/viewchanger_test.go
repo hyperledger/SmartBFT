@@ -2115,6 +2115,152 @@ func (h *recordedHistogram) Observe(value float64) {
 	h.recorder.values[h.name] = append(h.recorder.values[h.name], value)
 }
 
+// TestInFlightViewMessageFromItselfWithWrongView makes sure that the view of the in flight proposal does not panic
+// when it gets a message with a wrong view from its leader, which is the node itself.
+func TestInFlightViewMessageFromItselfWithWrongView(t *testing.T) {
+	comm := &mocks.CommMock{}
+	msgChan := make(chan *protos.Message, 10)
+	comm.On("BroadcastConsensus", mock.Anything).Run(func(args mock.Arguments) {
+		msgChan <- args.Get(0).(*protos.Message)
+	})
+	basicLog, err := zap.NewDevelopment()
+	assert.NoError(t, err)
+	panicked := make(chan string, 1)
+	log := basicLog.WithOptions(zap.WithPanicHook(zapcore.WriteThenGoexit), zap.Hooks(func(entry zapcore.Entry) error {
+		if entry.Level == zapcore.PanicLevel {
+			select {
+			case panicked <- entry.Message:
+			default:
+			}
+		}
+		return nil
+	})).Sugar()
+	signer := &mocks.SignerMock{}
+	signer.On("Sign", mock.Anything).Return([]byte{1, 2, 3})
+	signed := make(chan struct{}, 1)
+	signer.On("SignProposal", mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
+		signed <- struct{}{}
+	}).Return(&types.Signature{
+		ID:    1,
+		Value: []byte{4},
+	})
+	verifier := &mocks.VerifierMock{}
+	verifier.On("VerifySignature", mock.Anything).Return(nil)
+	verifier.On("VerifyConsenterSig", mock.Anything, mock.Anything).Return(nil, nil)
+	verifier.On("RequestsFromProposal", mock.Anything).Return(nil)
+	controller := &mocks.ViewController{}
+	controller.On("ViewChanged", mock.Anything, mock.Anything).Return(nil).Maybe()
+	controller.On("AbortView", mock.Anything)
+	reqTimer := &mocks.RequestsTimer{}
+	reqTimer.On("StopTimers")
+	reqTimer.On("RestartTimers")
+	checkpoint := types.Checkpoint{}
+	checkpoint.Set(lastDecision, lastDecisionSignatures)
+	synchronizer := &mocks.Synchronizer{}
+	synced := make(chan struct{}, 1)
+	synchronizer.On("Sync").Run(func(args mock.Arguments) {
+		select {
+		case synced <- struct{}{}:
+		default:
+		}
+	}).Return()
+
+	sched := make(chan time.Time)
+	vc := &bft.ViewChanger{
+		SelfID:           1,
+		N:                4,
+		NodesList:        []uint64{0, 1, 2, 3},
+		Comm:             comm,
+		Logger:           log,
+		Verifier:         verifier,
+		Controller:       controller,
+		Signer:           signer,
+		RequestsTimer:    reqTimer,
+		Ticker:           sched,
+		InFlight:         &bft.InFlightData{},
+		Checkpoint:       &checkpoint,
+		ViewSequences:    &atomic.Value{},
+		State:            &bft.StateRecorder{},
+		InMsqQSize:       int(types.DefaultConfig.IncomingMessageBufferSize),
+		Synchronizer:     synchronizer,
+		MetricsBlacklist: api.NewMetricsBlacklist(&disabled.Provider{}),
+		MetricsView:      api.NewMetricsView(&disabled.Provider{}),
+	}
+
+	vc.Start(0)
+
+	vc.HandleMessage(2, viewChangeMsg)
+	vc.HandleMessage(3, viewChangeMsg)
+	m := <-msgChan
+	assert.NotNil(t, m.GetViewChange())
+
+	inFlightProposal := types.Proposal{
+		Payload: []byte{1},
+		Header:  []byte{2},
+		Metadata: bft.MarshalOrPanic(&protos.ViewMetadata{
+			LatestSequence: 2,
+			ViewId:         0,
+		}),
+		VerificationSequence: 1,
+	}
+	viewData := proto.Clone(vd).(*protos.ViewData)
+	viewData.InFlightProposal = &protos.Proposal{
+		Payload:              inFlightProposal.Payload,
+		Header:               inFlightProposal.Header,
+		Metadata:             inFlightProposal.Metadata,
+		VerificationSequence: uint64(inFlightProposal.VerificationSequence),
+	}
+	viewData.InFlightPrepared = true
+	msg := proto.Clone(viewDataMsg1).(*protos.Message)
+	msg.GetViewData().RawViewData = bft.MarshalOrPanic(viewData)
+	vc.HandleMessage(0, msg)
+	msg2 := proto.Clone(msg).(*protos.Message)
+	msg2.GetViewData().Signer = 2
+	vc.HandleMessage(2, msg2)
+	m = <-msgChan
+	assert.NotNil(t, m.GetNewView())
+
+	// the view of the in flight proposal starts after two ticks
+	<-signed
+	sched <- time.Now()
+	sched <- time.Now()
+	assert.Eventually(t, func() bool {
+		select {
+		case m := <-msgChan:
+			return m.GetCommit() != nil
+		default:
+			return false
+		}
+	}, 3*time.Second, 10*time.Millisecond, "the view of the in flight proposal did not start")
+
+	// a commit from a newer view, as if sent by this node, which is the leader of the view of the in flight proposal
+	vc.HandleViewMessage(1, &protos.Message{
+		Content: &protos.Message_Commit{
+			Commit: &protos.Commit{
+				View:   1,
+				Seq:    2,
+				Digest: inFlightProposal.Digest(),
+				Signature: &protos.Signature{
+					Signer: 1,
+					Value:  []byte{4},
+				},
+			},
+		},
+	})
+
+	select {
+	case message := <-panicked:
+		assert.Fail(t, "the view of the in flight proposal panicked", message)
+		return // the view changer is gone, so it cannot be stopped
+	case <-synced:
+		// the view of the in flight proposal stopped and asked to sync, since the message is from a newer view
+	case <-time.After(3 * time.Second):
+		assert.Fail(t, "the view of the in flight proposal neither stopped nor panicked")
+	}
+
+	vc.Stop()
+}
+
 func TestCommitWhileHavingInFlight(t *testing.T) {
 	comm := &mocks.CommMock{}
 	msgChan := make(chan *protos.Message, 1)
