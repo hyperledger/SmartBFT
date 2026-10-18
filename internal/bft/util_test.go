@@ -7,6 +7,7 @@ package bft
 
 import (
 	"fmt"
+	"sync"
 	"testing"
 
 	"github.com/hyperledger/SmartBFT/pkg/api"
@@ -15,6 +16,7 @@ import (
 	protos "github.com/hyperledger/SmartBFT/smartbftprotos"
 	"github.com/stretchr/testify/assert"
 	"go.uber.org/zap"
+	"google.golang.org/protobuf/proto"
 )
 
 func TestBlacklist(t *testing.T) {
@@ -130,6 +132,61 @@ func TestInFlightProposalLatest(t *testing.T) {
 
 	ifp.StoreProposal(prop)
 	assert.Equal(t, prop, *ifp.InFlightProposal())
+}
+
+type noopSigner struct{}
+
+func (noopSigner) Sign([]byte) []byte { return nil }
+
+func (noopSigner) SignProposal(types.Proposal, []byte) *types.Signature { return nil }
+
+// TestViewDataInFlightWhileStored makes sure that the in flight proposal and whether it is prepared,
+// as reported in a view data message, are taken together, even while the view stores a new in flight proposal.
+// The view stores proposals with an even payload and then their prepares, and proposals with an odd payload
+// without ever preparing them, so a view data message must never report an odd proposal as prepared.
+func TestViewDataInFlightWhileStored(t *testing.T) {
+	basicLog, err := zap.NewDevelopment()
+	assert.NoError(t, err)
+	checkpoint := &types.Checkpoint{}
+	checkpoint.Set(types.Proposal{}, nil) // the genesis proposal, so any in flight proposal is reported
+	vc := &ViewChanger{
+		SelfID:     1,
+		Logger:     basicLog.Sugar(),
+		Signer:     noopSigner{},
+		Checkpoint: checkpoint,
+		InFlight:   &InFlightData{},
+	}
+
+	done := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := 0; ; i++ {
+			select {
+			case <-done:
+				return
+			default:
+			}
+			vc.InFlight.StoreProposal(types.Proposal{Payload: []byte{byte(i)}, Metadata: []byte{}})
+			if i%2 == 0 {
+				vc.InFlight.StorePrepares(0, 0)
+			}
+		}
+	}()
+
+	inconsistent := 0
+	for range 100000 {
+		viewData := &protos.ViewData{}
+		assert.NoError(t, proto.Unmarshal(vc.prepareViewDataMsg().GetViewData().RawViewData, viewData))
+		if viewData.InFlightPrepared && viewData.InFlightProposal.Payload[0]%2 == 1 {
+			inconsistent++
+		}
+	}
+	close(done)
+	wg.Wait()
+
+	assert.Zero(t, inconsistent, "view data reported an in flight proposal as prepared although it was never prepared")
 }
 
 func TestQuorum(t *testing.T) {

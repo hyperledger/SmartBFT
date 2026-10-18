@@ -215,6 +215,19 @@ func (ifp *InFlightData) IsInFlightPrepared() bool {
 	return ifp.v.prepared
 }
 
+// InFlightProposalAndPrepared returns the in-flight proposal, or nil if there is no such,
+// together with whether it is prepared, so that the two are never taken from different proposals.
+func (ifp *InFlightData) InFlightProposalAndPrepared() (*types.Proposal, bool) {
+	ifp.lock.RLock()
+	defer ifp.lock.RUnlock()
+
+	if ifp.v == nil {
+		return nil, false
+	}
+
+	return ifp.v.proposal, ifp.v.prepared
+}
+
 // StoreProposal stores an in-flight proposal.
 func (ifp *InFlightData) StoreProposal(prop types.Proposal) {
 	p := prop

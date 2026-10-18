@@ -443,8 +443,8 @@ func (v *ViewChanger) processViewChangeMsg(restore bool) {
 
 func (v *ViewChanger) prepareViewDataMsg() *protos.Message {
 	lastDecision, lastDecisionSignatures := v.Checkpoint.Get()
-	inFlight := v.getInFlight(lastDecision)
-	prepared := v.InFlight.IsInFlightPrepared()
+	inFlightProposal, prepared := v.InFlight.InFlightProposalAndPrepared()
+	inFlight := v.getInFlight(lastDecision, inFlightProposal)
 	vd := &protos.ViewData{
 		NextView:               v.currView,
 		LastDecision:           lastDecision,
@@ -466,8 +466,7 @@ func (v *ViewChanger) prepareViewDataMsg() *protos.Message {
 	return msg
 }
 
-func (v *ViewChanger) getInFlight(lastDecision *protos.Proposal) *protos.Proposal {
-	inFlight := v.InFlight.InFlightProposal()
+func (v *ViewChanger) getInFlight(lastDecision *protos.Proposal, inFlight *types.Proposal) *protos.Proposal {
 	if inFlight == nil {
 		v.Logger.Debugf("Node %d's in flight proposal is not set", v.SelfID)
 		return nil
