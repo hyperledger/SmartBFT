@@ -331,7 +331,10 @@ func (v *ViewChanger) processMsg(sender uint64, m *protos.Message) {
 }
 
 // InformNewView tells the view changer to advance to a new view number.
-// It never blocks: if the view changer did not process a previous view yet, only the highest of the two is kept.
+// It is called from the controller's run loop after a sync, and so it must not wait for the view changer.
+// If the view changer did not process a previous view yet, the pending view is replaced by the higher of the two,
+// which loses nothing since informNewView ignores views lower than the current one.
+// The pending view is held only in informChan, so concurrent calls are safe as well.
 func (v *ViewChanger) InformNewView(view uint64) {
 	for {
 		select {
