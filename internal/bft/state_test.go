@@ -9,11 +9,13 @@ import (
 	"testing"
 
 	"github.com/hyperledger/SmartBFT/internal/bft"
+	"github.com/hyperledger/SmartBFT/internal/bft/mocks"
 	"github.com/hyperledger/SmartBFT/pkg/api"
 	"github.com/hyperledger/SmartBFT/pkg/metrics/disabled"
 	"github.com/hyperledger/SmartBFT/pkg/types"
 	protos "github.com/hyperledger/SmartBFT/smartbftprotos"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
 	"go.uber.org/zap"
 )
 
@@ -179,10 +181,13 @@ func TestStateRestore(t *testing.T) {
 				InFlightProposal: &bft.InFlightData{},
 			}
 
+			verifier := &mocks.VerifierMock{}
+			verifier.On("RequestsFromProposal", mock.Anything).Return(nil)
 			view := &bft.View{
 				Number:           300,
 				ProposalSequence: testCase.proposalSeqViewInitializedWith,
 				MetricsView:      api.NewMetricsView(&disabled.Provider{}),
+				Verifier:         verifier,
 			}
 
 			err = state.Restore(view)

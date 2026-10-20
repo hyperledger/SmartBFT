@@ -8,6 +8,7 @@ package bft
 import (
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/hyperledger/SmartBFT/pkg/api"
 	"github.com/hyperledger/SmartBFT/pkg/types"
@@ -160,6 +161,7 @@ func (ps *PersistedState) recoverProposed(lastPersistedMessage *protos.ProposedR
 		Payload:              prop.Payload,
 		Header:               prop.Header,
 	}
+	restoreInFlightRequests(v)
 	ps.storeProposal(lastPersistedMessage)
 	// Reconstruct the prepare message we shall next broadcast
 	// after the recovery.
@@ -219,6 +221,7 @@ func (ps *PersistedState) recoverPrepared(lastPersistedMessage *protos.Message, 
 		Payload:              prop.Payload,
 		Header:               prop.Header,
 	}
+	restoreInFlightRequests(v)
 	ps.storeProposal(prePrepareMsg.GetProposedRecord())
 	ps.storePrepared(lastPersistedMessage)
 
@@ -244,4 +247,12 @@ func (ps *PersistedState) recoverPrepared(lastPersistedMessage *protos.Message, 
 
 	ps.Logger.Infof("Restored proposal with sequence %d", prePrepareFromWAL.Seq)
 	return nil
+}
+
+// restoreInFlightRequests sets what a view sets when it accepts a proposal and that is not persisted in the WAL,
+// so that once the restored proposal is decided its requests are removed from the pool,
+// and the time it took to process it is measured from the restore.
+func restoreInFlightRequests(v *View) {
+	v.inFlightRequests = v.Verifier.RequestsFromProposal(*v.inFlightProposal)
+	v.beginPrePrepare = time.Now()
 }

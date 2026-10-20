@@ -13,6 +13,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/hyperledger/SmartBFT/internal/bft"
 	"github.com/hyperledger/SmartBFT/internal/bft/mocks"
@@ -920,10 +921,12 @@ func TestViewPersisted(t *testing.T) {
 		},
 	} {
 		t.Run(testCase.description, func(t *testing.T) {
+			requests := []types.RequestInfo{{ClientID: "1", ID: "1"}, {ClientID: "1", ID: "2"}}
 			verifier := &mocks.VerifierMock{}
 			verifier.On("VerifySignature", mock.Anything).Return(nil)
 			verifier.On("VerificationSequence").Return(uint64(1))
-			verifier.On("VerifyProposal", mock.Anything).Return(nil, nil)
+			verifier.On("VerifyProposal", mock.Anything).Return(requests, nil)
+			verifier.On("RequestsFromProposal", mock.Anything).Return(requests).Maybe()
 			verifier.On("VerifyConsenterSig", mock.Anything, mock.Anything).Return(nil, nil)
 
 			var prepareSent sync.WaitGroup
@@ -958,10 +961,13 @@ func TestViewPersisted(t *testing.T) {
 
 			var deciderWG sync.WaitGroup
 			deciderWG.Add(1)
+			var decidedRequests []types.RequestInfo
 			decider := &mocks.Decider{}
-			decider.On("Decide", mock.Anything, mock.Anything, mock.Anything).Run(func(_ mock.Arguments) {
+			decider.On("Decide", mock.Anything, mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
+				decidedRequests = args.Get(2).([]types.RequestInfo)
 				deciderWG.Done()
 			})
+			histograms := &histogramsRecorder{}
 
 			state := &mocks.State{}
 
@@ -983,7 +989,7 @@ func TestViewPersisted(t *testing.T) {
 					ProposalSequence:   0,
 					ViewSequences:      &atomic.Value{},
 					InMsgQSize:         40,
-					MetricsView:        api.NewMetricsView(&disabled.Provider{}),
+					MetricsView:        api.NewMetricsView(histograms),
 				}
 			}
 
@@ -1094,6 +1100,15 @@ func TestViewPersisted(t *testing.T) {
 
 			// Wait for the proposal to be committed.
 			deciderWG.Wait()
+
+			// The requests of the proposal are decided with it, also when the view was restored from the WAL.
+			assert.Equal(t, requests, decidedRequests)
+			// The time it took to process the proposal is measured from when the view got it, or was restored with it.
+			latencies := histograms.observed("view_latency_batch_processing")
+			assert.Len(t, latencies, 1)
+			for _, latency := range latencies {
+				assert.Less(t, latency, time.Minute.Seconds())
+			}
 
 			view.Abort()
 
