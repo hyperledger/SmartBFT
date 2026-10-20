@@ -379,7 +379,7 @@ func (rp *Pool) RemoveRequest(requestInfo types.RequestInfo) error {
 	if !exist {
 		rp.moveToDelSlice(requestInfo)
 		errStr := fmt.Sprintf("request %s is not in the pool at remove time", requestInfo)
-		rp.logger.Debugf(errStr)
+		rp.logger.Debugf("%s", errStr)
 		return errors.New(errStr)
 	}
 

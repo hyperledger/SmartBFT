@@ -282,7 +282,7 @@ func (c *Controller) OnRequestTimeout(request []byte, info types.RequestInfo) {
 	}
 
 	c.Logger.Infof("Request %s timeout expired, forwarding request to leader: %d", info, leaderID)
-	c.Comm.SendTransaction(leaderID, request)
+	c.SendTransaction(leaderID, request)
 }
 
 // OnLeaderFwdRequestTimeout is called when the leader-forward timeout expires, and complains about the leader.
@@ -365,7 +365,7 @@ func (c *Controller) respondToStateTransferRequest(sender uint64) {
 			},
 		},
 	}
-	c.Comm.SendConsensus(sender, msg)
+	c.SendConsensus(sender, msg)
 }
 
 func (c *Controller) convertViewMessageToHeartbeat(m *protos.Message) *protos.Message {
@@ -927,7 +927,7 @@ func (c *Controller) BroadcastConsensus(m *protos.Message) {
 		if c.ID == node {
 			continue
 		}
-		c.Comm.SendConsensus(node, m)
+		c.SendConsensus(node, m)
 	}
 
 	if m.GetPrePrepare() != nil || m.GetPrepare() != nil || m.GetCommit() != nil {

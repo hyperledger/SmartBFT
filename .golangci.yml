@@ -1,0 +1,103 @@
+# SPDX-License-Identifier: Apache-2.0
+version: "2"
+run:
+  timeout: 5m
+  exclude-dirs:
+    - vendor
+
+formatters:
+  enable:
+    - gci
+    - gofumpt
+    - gofmt
+    - goimports
+
+linters:
+  default: none
+  enable:
+    - asciicheck
+    - bodyclose
+    - contextcheck
+    - copyloopvar
+    - decorder
+    - depguard
+    - dogsled
+    - dupword
+    - durationcheck
+    - errname
+    - errorlint
+    - fatcontext
+    - gocheckcompilerdirectives
+    - gocritic
+    - goheader
+    - gomodguard_v2
+    - goprintffuncname
+    - govet
+    - grouper
+    - iface
+    - ineffassign
+    - interfacebloat
+    - loggercheck
+    - misspell
+    - nilerr
+    - noctx
+    - nolintlint
+    - nosprintfhostport
+    - promlinter
+    - reassign
+    - recvcheck
+    - sloglint
+    - spancheck
+    - staticcheck
+    - testableexamples
+    - tparallel
+    - unconvert
+    - unparam
+    - unused
+    - usestdlibvars
+    - whitespace
+  settings:
+    depguard:
+      rules:
+        main:
+          deny:
+            - pkg: "golang.org/x/net/context"
+              desc: "use 'context' from stdlib instead"
+            - pkg: "github.com/gogo/protobuf"
+              desc: "use 'github.com/golang/protobuf' instead"
+    govet:
+      settings:
+        printf:
+          funcs:
+            - Debug
+            - Debugf
+            - Print
+            - Printf
+            - Info
+            - Infof
+            - Warning
+            - Warningf
+            - Error
+            - Errorf
+            - Critical
+            - Criticalf
+            - Sprint
+            - Sprintf
+            - Log
+            - Logf
+            - Panic
+            - Panicf
+            - Fatal
+            - Fatalf
+            - Notice
+            - Noticef
+            - Wrap
+            - Wrapf
+            - WithMessage
+    staticcheck:
+      checks: ["all", "-SA1019", "-ST1000", "-ST1003", "-ST1005", "-ST1016", "-ST1020", "-ST1021", "-ST1022"]
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
+  uniq-by-line: false

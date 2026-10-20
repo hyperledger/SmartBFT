@@ -215,8 +215,8 @@ func TestHeartbeatMonitorFollower(t *testing.T) {
 
 			start = start.Add(incrementUnit).Add(time.Second)
 
-			for i := time.Duration(1); i <= heartbeatCount*2; i++ {
-				elapsed := start.Add(incrementUnit*i + time.Millisecond)
+			for i := 1; i <= heartbeatCount*2; i++ {
+				elapsed := start.Add(time.Duration(i)*incrementUnit + time.Millisecond)
 				scheduler <- elapsed
 				hm.ProcessMsg(testCase.sender, testCase.heartbeatMessage)
 			}

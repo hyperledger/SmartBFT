@@ -32,16 +32,16 @@ func (t *Task) isStopped() bool {
 
 type backingHeap []*Task
 
-func (h backingHeap) Len() int {
-	return len(h)
+func (h *backingHeap) Len() int {
+	return len(*h)
 }
 
-func (h backingHeap) Less(i, j int) bool {
-	return h[i].Deadline.Before(h[j].Deadline)
+func (h *backingHeap) Less(i, j int) bool {
+	return (*h)[i].Deadline.Before((*h)[j].Deadline)
 }
 
-func (h backingHeap) Swap(i, j int) {
-	h[i], h[j] = h[j], h[i]
+func (h *backingHeap) Swap(i, j int) {
+	(*h)[i], (*h)[j] = (*h)[j], (*h)[i]
 }
 
 func (h *backingHeap) Push(o any) {

@@ -2437,7 +2437,6 @@ func TestCommitWhileHavingInFlight(t *testing.T) {
 	vc.HandleMessage(2, msg2)
 
 	reasonAboutInFlightLowerThanLatestDecision.Wait()
-
 }
 
 func TestDontCommitInFlight(t *testing.T) {

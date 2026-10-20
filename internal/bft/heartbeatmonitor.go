@@ -297,7 +297,7 @@ func (hm *HeartbeatMonitor) sendHeartBeatResponse(target uint64) {
 	hm.logger.Debugf("Sent HeartBeatResponse view: %d; to %d", hm.view, target)
 }
 
-func (hm *HeartbeatMonitor) viewActive(hbMsg *smartbftprotos.HeartBeat) (bool, uint64) {
+func (hm *HeartbeatMonitor) viewActive(_ *smartbftprotos.HeartBeat) (bool, uint64) {
 	vs := hm.viewSequences.Load()
 	// View isn't initialized
 	if vs == nil {

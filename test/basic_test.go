@@ -1231,6 +1231,7 @@ func TestFollowerStateTransfer(t *testing.T) {
 }
 
 func TestLeaderModifiesPreprepare(t *testing.T) {
+	t.Parallel()
 	for _, test := range []struct {
 		description  string
 		mutatingFunc func(target uint64, m *smartbftprotos.Message)
@@ -1811,7 +1812,7 @@ func TestRotateAndViewChange(t *testing.T) {
 	}
 }
 
-func TestMigrateToBlacklistAndBackAgain(t *testing.T) {
+func TestMigrateToBlacklistAndBackAgain(t *testing.T) { //nolint:tparallel // subtests are sequential phases sharing the same nodes
 	t.Parallel()
 	network := NewNetwork()
 	defer network.Shutdown()

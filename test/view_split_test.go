@@ -393,7 +393,7 @@ func TestNodeOneSequenceBehindRejoins(t *testing.T) {
 
 	// Node 1 leads view 0, so it stays in view 0 while cut off: a leader never starts a view
 	// change of its own. The other six install view 1, led by node 2.
-	nodes[1-1].Disconnect()
+	nodes[0].Disconnect()
 	if !viewsReached(t, vt, ids[1:], 1, 60*time.Second, "the group that moved on did not start view 1") {
 		t.Fatalf("the group that moved on did not start view 1:%s", vt.describe(ids))
 	}
