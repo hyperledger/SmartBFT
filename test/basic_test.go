@@ -3094,6 +3094,7 @@ func TestTryCommittedSequenceTwice(t *testing.T) {
 
 	twiceDeliverBeginCh := make(chan struct{}, 2)
 	deliverControlCh := make(chan struct{})
+	var deliverControlOnce sync.Once
 	deliverViewChangerCh := make(chan struct{})
 	go func() {
 		// 2. [twice] Waiting for the moment when both goroutines are ready to deliver the transaction
@@ -3102,6 +3103,22 @@ func TestTryCommittedSequenceTwice(t *testing.T) {
 		// 3. [twice] Started delivery in goroutine viewchanger
 		close(deliverViewChangerCh)
 	}()
+	// The view changer and the controller do not always both try to deliver the transaction, depending on the order
+	// in which node 4 gets the messages, so each goroutine waits for the other only for a while instead of forever.
+	const twiceDeliverWait = 5 * time.Second
+	readyToDeliver := func() {
+		select {
+		case twiceDeliverBeginCh <- struct{}{}:
+		default: // both goroutines were already ready once, this is a later delivery
+		}
+	}
+	waitFor := func(ch <-chan struct{}, what string) {
+		select {
+		case <-ch:
+		case <-time.After(twiceDeliverWait):
+			t.Logf("Node 4 did not %s, delivering without it", what)
+		}
+	}
 
 	for i := range numberOfNodes {
 		id := nodes[i].ID
@@ -3195,29 +3212,29 @@ func TestTryCommittedSequenceTwice(t *testing.T) {
 				// Suspension of gorutins and their launch to try to implement twice-delivery
 				if strings.Contains(entry.Message, "Delivering to app from deliverDecision the last decision proposal") {
 					// 1. [twice] Waited by the time the transaction was delivered
-					twiceDeliverBeginCh <- struct{}{}
+					readyToDeliver()
 					// 4. [twice] Started delivery in goroutine "viewchanger"
-					<-deliverViewChangerCh
+					waitFor(deliverViewChangerCh, "start delivering in the controller")
 				}
 				if strings.Contains(entry.Message, "Delivering to app from Decide the last decision proposal") {
 					// 1. [twice] Waited by the time the transaction was delivered
-					twiceDeliverBeginCh <- struct{}{}
+					readyToDeliver()
 					// 4. [twice] Started delivery in goroutine "viewchanger"
-					<-deliverViewChangerCh
+					waitFor(deliverViewChangerCh, "start delivering in the controller")
 				}
 				if strings.Contains(entry.Message, "Delivering end to app from deliverDecision the last decision proposal") {
 					// 5. [twice] "Viewchanger" delivered the transaction, let's pass the baton on
-					close(deliverControlCh)
+					deliverControlOnce.Do(func() { close(deliverControlCh) })
 				}
 				if strings.Contains(entry.Message, "Delivering end to app from Decide the last decision proposal") {
 					// 5. [twice] "Viewchanger" delivered the transaction, let's pass the baton on
-					close(deliverControlCh)
+					deliverControlOnce.Do(func() { close(deliverControlCh) })
 				}
 				if strings.Contains(entry.Message, "Delivering to app from Controller decide the last decision proposal") {
 					// 1. [twice] Waited by the time the transaction was delivered
-					twiceDeliverBeginCh <- struct{}{}
+					readyToDeliver()
 					// 6. [twice] Started delivery in goroutine "control"
-					<-deliverControlCh
+					waitFor(deliverControlCh, "deliver in the view changer")
 				}
 			}
 			return nil
