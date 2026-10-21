@@ -36,7 +36,7 @@ func TestBasicReconfig(t *testing.T) {
 		d := <-nodes[i].Delivered
 		data = append(data, d)
 	}
-	for i := 0; i < numberOfNodes-1; i++ {
+	for i := range numberOfNodes - 1 {
 		assert.Equal(t, data[i], data[i+1])
 	}
 
@@ -60,7 +60,7 @@ func TestBasicReconfig(t *testing.T) {
 		d := <-nodes[i].Delivered
 		data = append(data, d)
 	}
-	for i := 0; i < numberOfNodes-1; i++ {
+	for i := range numberOfNodes - 1 {
 		assert.Equal(t, data[i], data[i+1])
 	}
 
@@ -70,7 +70,7 @@ func TestBasicReconfig(t *testing.T) {
 		d := <-nodes[i].Delivered
 		data = append(data, d)
 	}
-	for i := 0; i < numberOfNodes-1; i++ {
+	for i := range numberOfNodes - 1 {
 		assert.Equal(t, data[i], data[i+1])
 	}
 }
@@ -124,7 +124,7 @@ func TestPoolPrunedAfterReconfig(t *testing.T) {
 		d := <-nodes[i].Delivered
 		data = append(data, d)
 	}
-	for i := 0; i < numberOfNodes-1; i++ {
+	for i := range numberOfNodes - 1 {
 		assert.Equal(t, data[i], data[i+1])
 	}
 
@@ -138,7 +138,7 @@ func TestPoolPrunedAfterReconfig(t *testing.T) {
 		d := <-nodes[i].Delivered
 		data = append(data, d)
 	}
-	for i := 0; i < numberOfNodes-1; i++ {
+	for i := range numberOfNodes - 1 {
 		assert.Equal(t, data[i], data[i+1])
 	}
 }
@@ -165,11 +165,11 @@ func TestBasicAddNodes(t *testing.T) {
 	nodes[0].Submit(Request{ID: "1", ClientID: "alice"})
 
 	data1 := make([]*AppRecord, 0)
-	for i := 0; i < numberOfNodes; i++ {
+	for i := range numberOfNodes {
 		d := <-nodes[i].Delivered
 		data1 = append(data1, d)
 	}
-	for i := 0; i < numberOfNodes-1; i++ {
+	for i := range numberOfNodes - 1 {
 		assert.Equal(t, data1[i], data1[i+1])
 	}
 
@@ -191,11 +191,11 @@ func TestBasicAddNodes(t *testing.T) {
 	})
 
 	data2 := make([]*AppRecord, 0)
-	for i := 0; i < numberOfNodes; i++ {
+	for i := range numberOfNodes {
 		d := <-nodes[i].Delivered
 		data2 = append(data2, d)
 	}
-	for i := 0; i < numberOfNodes-1; i++ {
+	for i := range numberOfNodes - 1 {
 		assert.Equal(t, data2[i], data2[i+1])
 	}
 
@@ -214,11 +214,11 @@ func TestBasicAddNodes(t *testing.T) {
 	nodes[0].Submit(Request{ID: "11", ClientID: "alice"})
 	numberOfNodes = 6
 	data := make([]*AppRecord, 0)
-	for i := 0; i < numberOfNodes; i++ {
+	for i := range numberOfNodes {
 		d := <-nodes[i].Delivered
 		data = append(data, d)
 	}
-	for i := 0; i < numberOfNodes-1; i++ {
+	for i := range numberOfNodes - 1 {
 		assert.Equal(t, data[i], data[i+1])
 	}
 }
@@ -249,11 +249,11 @@ func TestBasicRemoveNodes(t *testing.T) {
 	nodes[0].Submit(Request{ID: "1", ClientID: "alice"})
 
 	data := make([]*AppRecord, 0)
-	for i := 0; i < numberOfNodes; i++ {
+	for i := range numberOfNodes {
 		d := <-nodes[i].Delivered
 		data = append(data, d)
 	}
-	for i := 0; i < numberOfNodes-1; i++ {
+	for i := range numberOfNodes - 1 {
 		assert.Equal(t, data[i], data[i+1])
 	}
 
@@ -272,11 +272,11 @@ func TestBasicRemoveNodes(t *testing.T) {
 	})
 
 	data = make([]*AppRecord, 0)
-	for i := 0; i < numberOfNodes; i++ {
+	for i := range numberOfNodes {
 		d := <-nodes[i].Delivered
 		data = append(data, d)
 	}
-	for i := 0; i < numberOfNodes-1; i++ {
+	for i := range numberOfNodes - 1 {
 		assert.Equal(t, data[i], data[i+1])
 	}
 
@@ -287,11 +287,11 @@ func TestBasicRemoveNodes(t *testing.T) {
 	numberOfNodes = 4
 	nodes[0].Submit(Request{ID: "11", ClientID: "alice"})
 	data = make([]*AppRecord, 0)
-	for i := 0; i < numberOfNodes; i++ {
+	for i := range numberOfNodes {
 		d := <-nodes[i].Delivered
 		data = append(data, d)
 	}
-	for i := 0; i < numberOfNodes-1; i++ {
+	for i := range numberOfNodes - 1 {
 		assert.Equal(t, data[i], data[i+1])
 	}
 }
@@ -318,11 +318,11 @@ func TestAddRemoveNodes(t *testing.T) {
 	nodes[0].Submit(Request{ID: "1", ClientID: "alice"})
 
 	data1 := make([]*AppRecord, 0)
-	for i := 0; i < numberOfNodes; i++ {
+	for i := range numberOfNodes {
 		d := <-nodes[i].Delivered
 		data1 = append(data1, d)
 	}
-	for i := 0; i < numberOfNodes-1; i++ {
+	for i := range numberOfNodes - 1 {
 		assert.Equal(t, data1[i], data1[i+1])
 	}
 
@@ -346,11 +346,11 @@ func TestAddRemoveNodes(t *testing.T) {
 	})
 
 	data2 := make([]*AppRecord, 0)
-	for i := 0; i < numberOfNodes; i++ {
+	for i := range numberOfNodes {
 		d := <-nodes[i].Delivered
 		data2 = append(data2, d)
 	}
-	for i := 0; i < numberOfNodes-1; i++ {
+	for i := range numberOfNodes - 1 {
 		assert.Equal(t, data2[i], data2[i+1])
 	}
 
@@ -363,7 +363,7 @@ func TestAddRemoveNodes(t *testing.T) {
 		d := <-nodes[i].Delivered
 		data = append(data, d)
 	}
-	for i := 0; i < numberOfNodes-4; i++ {
+	for i := range numberOfNodes - 4 {
 		assert.Equal(t, data[i], data1[0])
 	}
 	data = make([]*AppRecord, 0)
@@ -371,17 +371,17 @@ func TestAddRemoveNodes(t *testing.T) {
 		d := <-nodes[i].Delivered
 		data = append(data, d)
 	}
-	for i := 0; i < numberOfNodes-4; i++ {
+	for i := range numberOfNodes - 4 {
 		assert.Equal(t, data[i], data2[0])
 	}
 
 	nodes[9].Submit(Request{ID: "11", ClientID: "alice"})
 	data3 := make([]*AppRecord, 0)
-	for i := 0; i < numberOfNodes; i++ {
+	for i := range numberOfNodes {
 		d := <-nodes[i].Delivered
 		data3 = append(data3, d)
 	}
-	for i := 0; i < numberOfNodes-1; i++ {
+	for i := range numberOfNodes - 1 {
 		assert.Equal(t, data3[i], data3[i+1])
 	}
 
@@ -408,7 +408,7 @@ func TestAddRemoveNodes(t *testing.T) {
 			d := <-nodes[i].Delivered
 			data = append(data, d)
 		}
-		for i := 0; i < numberOfNodes-r; i++ {
+		for i := range numberOfNodes - r {
 			assert.Equal(t, data[i], data[i+1])
 		}
 
@@ -421,7 +421,7 @@ func TestAddRemoveNodes(t *testing.T) {
 		d := <-nodes[i].Delivered
 		data = append(data, d)
 	}
-	for i := 0; i < numberOfNodes-nodesToRemove-1; i++ {
+	for i := range numberOfNodes - nodesToRemove - 1 {
 		assert.Equal(t, data[i], data[i+1])
 	}
 }
@@ -451,7 +451,7 @@ func TestAddRemoveAddNodes(t *testing.T) {
 		d := <-nodes[i].Delivered
 		data1 = append(data1, d)
 	}
-	for i := 0; i < numberOfNodes-1; i++ {
+	for i := range numberOfNodes - 1 {
 		assert.Equal(t, data1[i], data1[i+1])
 	}
 
@@ -477,7 +477,7 @@ func TestAddRemoveAddNodes(t *testing.T) {
 		d := <-nodes[i].Delivered
 		data2 = append(data2, d)
 	}
-	for i := 0; i < numberOfNodes-1; i++ {
+	for i := range numberOfNodes - 1 {
 		assert.Equal(t, data2[i], data2[i+1])
 	}
 
@@ -496,7 +496,7 @@ func TestAddRemoveAddNodes(t *testing.T) {
 		d := <-nodes[i].Delivered
 		data3 = append(data3, d)
 	}
-	for i := 0; i < numberOfNodes-1; i++ {
+	for i := range numberOfNodes - 1 {
 		assert.Equal(t, data3[i], data3[i+1])
 	}
 
@@ -506,7 +506,7 @@ func TestAddRemoveAddNodes(t *testing.T) {
 		d := <-nodes[i].Delivered
 		data4 = append(data4, d)
 	}
-	for i := 0; i < numberOfNodes-1; i++ {
+	for i := range numberOfNodes - 1 {
 		assert.Equal(t, data4[i], data4[i+1])
 	}
 
@@ -516,7 +516,7 @@ func TestAddRemoveAddNodes(t *testing.T) {
 		d := <-nodes[i].Delivered
 		data5 = append(data5, d)
 	}
-	for i := 0; i < numberOfNodes-1; i++ {
+	for i := range numberOfNodes - 1 {
 		assert.Equal(t, data5[i], data5[i+1])
 	}
 
@@ -535,7 +535,7 @@ func TestAddRemoveAddNodes(t *testing.T) {
 	data6 := make([]*AppRecord, 0)
 
 	fail := time.After(1 * time.Minute)
-	for i := 0; i < numberOfNodes+1; i++ {
+	for i := range numberOfNodes + 1 {
 		select {
 		case d := <-nodes[i].Delivered:
 			data6 = append(data6, d)
@@ -576,7 +576,7 @@ func TestViewChangeAfterReconfig(t *testing.T) {
 		d := <-nodes[i].Delivered
 		data = append(data, d)
 	}
-	for i := 0; i < numberOfNodes-1; i++ {
+	for i := range numberOfNodes - 1 {
 		assert.Equal(t, data[i], data[i+1])
 	}
 
@@ -604,7 +604,7 @@ func TestViewChangeAfterReconfig(t *testing.T) {
 		d := <-nodes[i].Delivered
 		data = append(data, d)
 	}
-	for i := 0; i < numberOfNodes-1; i++ {
+	for i := range numberOfNodes - 1 {
 		assert.Equal(t, data[i], data[i+1])
 	}
 
@@ -616,7 +616,7 @@ func TestViewChangeAfterReconfig(t *testing.T) {
 		d := <-nodes[i].Delivered
 		data = append(data, d)
 	}
-	for i := 0; i < numberOfNodes-1; i++ {
+	for i := range numberOfNodes - 1 {
 		assert.Equal(t, data[i], data[i+1])
 	}
 }
@@ -646,11 +646,11 @@ func TestAddNodeAfterManyRotations(t *testing.T) {
 	for j := 1; j <= blocksNum; j++ {
 		nodes[0].Submit(Request{ID: fmt.Sprintf("%d", j), ClientID: "alice"})
 		data := make([]*AppRecord, 0)
-		for i := 0; i < numberOfNodes; i++ {
+		for i := range numberOfNodes {
 			d := <-nodes[i].Delivered
 			data = append(data, d)
 		}
-		for i := 0; i < numberOfNodes-1; i++ {
+		for i := range numberOfNodes - 1 {
 			assert.Equal(t, data[i], data[i+1])
 		}
 		blocks = append(blocks, data[0])
@@ -674,11 +674,11 @@ func TestAddNodeAfterManyRotations(t *testing.T) {
 	})
 
 	reconfigBlock := make([]*AppRecord, 0)
-	for i := 0; i < numberOfNodes; i++ {
+	for i := range numberOfNodes {
 		d := <-nodes[i].Delivered
 		reconfigBlock = append(reconfigBlock, d)
 	}
-	for i := 0; i < numberOfNodes-1; i++ {
+	for i := range numberOfNodes - 1 {
 		assert.Equal(t, reconfigBlock[i], reconfigBlock[i+1])
 	}
 
@@ -699,11 +699,11 @@ func TestAddNodeAfterManyRotations(t *testing.T) {
 	nodes[0].Submit(Request{ID: "11", ClientID: "alice"})
 	numberOfNodes = 5
 	data := make([]*AppRecord, 0)
-	for i := 0; i < numberOfNodes; i++ {
+	for i := range numberOfNodes {
 		d := <-nodes[i].Delivered
 		data = append(data, d)
 	}
-	for i := 0; i < numberOfNodes-1; i++ {
+	for i := range numberOfNodes - 1 {
 		assert.Equal(t, data[i], data[i+1])
 	}
 }

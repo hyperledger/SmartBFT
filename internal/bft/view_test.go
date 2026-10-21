@@ -1232,9 +1232,9 @@ func TestDiscoverDeliberateCensorship(t *testing.T) {
 			// Send some un-related messages, to ensure we processed the messages before this one.
 			// We send exactly 10 * int(view.N) + 2 (the incoming messages buffer size) so that we
 			// are sure that the above 2 messages were processed.
-			// Otherwise we might finish the test too early and get a false negative (Sync would have been
+			// Otherwise, we might finish the test too early and get a false negative (Sync would have been
 			// called wrongly had the test been run for longer).
-			for i := 0; i < 10*int(view.N)+2; i++ {
+			for range 10*view.N + 2 {
 				view.HandleMessage(2, prepare)
 			}
 

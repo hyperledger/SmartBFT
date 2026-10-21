@@ -37,6 +37,7 @@ linters:
     - iface
     - ineffassign
     - interfacebloat
+    - intrange
     - loggercheck
     - misspell
     - nilerr

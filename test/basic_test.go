@@ -56,7 +56,7 @@ func TestBasic(t *testing.T) {
 		d := <-nodes[i].Delivered
 		data = append(data, d)
 	}
-	for i := 0; i < numberOfNodes-1; i++ {
+	for i := range numberOfNodes - 1 {
 		assert.Equal(t, data[i], data[i+1])
 	}
 }
@@ -122,7 +122,7 @@ func TestNodeViewChangeWhileInPartition(t *testing.T) {
 
 	nodes[0].Submit(Request{ID: "1", ClientID: "alice"}) // submit to a node
 
-	for i := 0; i < numberOfNodes-1; i++ {
+	for i := range numberOfNodes - 1 {
 		<-nodes[i].Delivered
 	}
 
@@ -190,7 +190,7 @@ func TestRestartFollowers(t *testing.T) {
 	d1 := <-nodes[1].Delivered
 
 	data = append(data, d0, d1, d2, d3)
-	for i := 0; i < numberOfNodes-1; i++ {
+	for i := range numberOfNodes - 1 {
 		assert.Equal(t, data[i], data[i+1])
 	}
 
@@ -208,7 +208,7 @@ func TestRestartFollowers(t *testing.T) {
 	d3 = <-nodes[3].Delivered
 
 	data = append(data, d0, d1, d2, d3)
-	for i := 0; i < numberOfNodes-1; i++ {
+	for i := range numberOfNodes - 1 {
 		assert.Equal(t, data[i], data[i+1])
 	}
 }
@@ -244,7 +244,7 @@ func TestLeaderInPartition(t *testing.T) {
 		d := <-nodes[i].Delivered
 		data = append(data, d)
 	}
-	for i := 0; i < numberOfNodes-2; i++ {
+	for i := range numberOfNodes - 2 {
 		assert.Equal(t, data[i], data[i+1])
 	}
 	assert.LessOrEqual(t, uint64(2), nodes[2].Consensus.GetLeaderID())
@@ -274,7 +274,7 @@ func TestAfterDecisionLeaderInPartition(t *testing.T) {
 		d := <-nodes[i].Delivered
 		data = append(data, d)
 	}
-	for i := 0; i < numberOfNodes-1; i++ {
+	for i := range numberOfNodes - 1 {
 		assert.Equal(t, data[i], data[i+1])
 	}
 
@@ -285,7 +285,7 @@ func TestAfterDecisionLeaderInPartition(t *testing.T) {
 		d := <-nodes[i].Delivered
 		data = append(data, d)
 	}
-	for i := 0; i < numberOfNodes-1; i++ {
+	for i := range numberOfNodes - 1 {
 		assert.Equal(t, data[i], data[i+1])
 	}
 
@@ -300,7 +300,7 @@ func TestAfterDecisionLeaderInPartition(t *testing.T) {
 		d := <-nodes[i].Delivered
 		data = append(data, d)
 	}
-	for i := 0; i < numberOfNodes-2; i++ {
+	for i := range numberOfNodes - 2 {
 		assert.Equal(t, data[i], data[i+1])
 	}
 
@@ -313,7 +313,7 @@ func TestAfterDecisionLeaderInPartition(t *testing.T) {
 		d := <-nodes[i].Delivered
 		data = append(data, d)
 	}
-	for i := 0; i < numberOfNodes-2; i++ {
+	for i := range numberOfNodes - 2 {
 		assert.Equal(t, data[i], data[i+1])
 	}
 }
@@ -343,7 +343,7 @@ func TestLeaderInPartitionWithHealing(t *testing.T) {
 		d := <-nodes[i].Delivered
 		data = append(data, d)
 	}
-	for i := 0; i < numberOfNodes-1; i++ {
+	for i := range numberOfNodes - 1 {
 		assert.Equal(t, data[i], data[i+1])
 	}
 
@@ -354,7 +354,7 @@ func TestLeaderInPartitionWithHealing(t *testing.T) {
 		d := <-nodes[i].Delivered
 		data = append(data, d)
 	}
-	for i := 0; i < numberOfNodes-1; i++ {
+	for i := range numberOfNodes - 1 {
 		assert.Equal(t, data[i], data[i+1])
 	}
 
@@ -370,7 +370,7 @@ func TestLeaderInPartitionWithHealing(t *testing.T) {
 		d := <-nodes[i].Delivered
 		data = append(data, d)
 	}
-	for i := 0; i < numberOfNodes-2; i++ {
+	for i := range numberOfNodes - 2 {
 		assert.Equal(t, data[i], data[i+1])
 	}
 
@@ -427,7 +427,7 @@ func TestMultiLeadersPartition(t *testing.T) {
 		d := <-nodes[i].Delivered
 		data = append(data, d)
 	}
-	for i := 0; i < numberOfNodes-3; i++ {
+	for i := range numberOfNodes - 3 {
 		assert.Equal(t, data[i], data[i+1])
 	}
 
@@ -495,7 +495,7 @@ func TestHeartbeatTimeoutCausesViewChange(t *testing.T) {
 		d := <-nodes[i].Delivered
 		data = append(data, d)
 	}
-	for i := 0; i < numberOfNodes-2; i++ {
+	for i := range numberOfNodes - 2 {
 		assert.Equal(t, data[i], data[i+1])
 	}
 }
@@ -560,7 +560,7 @@ func TestMultiViewChangeWithNoRequestsTimeout(t *testing.T) {
 		d := <-nodes[i].Delivered
 		data = append(data, d)
 	}
-	for i := 0; i < numberOfNodes-3; i++ {
+	for i := range numberOfNodes - 3 {
 		assert.Equal(t, data[i], data[i+1])
 	}
 }
@@ -612,11 +612,11 @@ func TestCatchingUpWithViewChange(t *testing.T) {
 	nodes[0].Submit(Request{ID: "1", ClientID: "alice"}) // submit to leader
 
 	data := make([]*AppRecord, 0)
-	for i := 0; i < numberOfNodes-1; i++ {
+	for i := range numberOfNodes - 1 {
 		d := <-nodes[i].Delivered
 		data = append(data, d)
 	}
-	for i := 0; i < numberOfNodes-2; i++ {
+	for i := range numberOfNodes - 2 {
 		assert.Equal(t, data[i], data[i+1])
 	}
 
@@ -641,7 +641,7 @@ func TestCatchingUpWithViewChange(t *testing.T) {
 		d := <-nodes[i].Delivered
 		data = append(data, d)
 	}
-	for i := 0; i < numberOfNodes-2; i++ {
+	for i := range numberOfNodes - 2 {
 		assert.Equal(t, data[i], data[i+1])
 	}
 }
@@ -670,7 +670,7 @@ func TestLeaderCatchingUpAfterViewChange(t *testing.T) {
 		d := <-nodes[i].Delivered
 		data = append(data, d)
 	}
-	for i := 0; i < numberOfNodes-1; i++ {
+	for i := range numberOfNodes - 1 {
 		assert.Equal(t, data[i], data[i+1])
 	}
 
@@ -684,7 +684,7 @@ func TestLeaderCatchingUpAfterViewChange(t *testing.T) {
 		d := <-nodes[i].Delivered
 		data = append(data, d)
 	}
-	for i := 0; i < numberOfNodes-2; i++ {
+	for i := range numberOfNodes - 2 {
 		assert.Equal(t, data[i], data[i+1])
 	}
 
@@ -768,7 +768,7 @@ func TestRestartAfterViewChangeAndRestoreNewView(t *testing.T) {
 		d := <-nodes[i].Delivered
 		data = append(data, d)
 	}
-	for i := 0; i < numberOfNodes-2; i++ {
+	for i := range numberOfNodes - 2 {
 		assert.Equal(t, data[i], data[i+1])
 	}
 }
@@ -848,7 +848,7 @@ func TestRestoringViewChange(t *testing.T) {
 		d := <-nodes[i].Delivered
 		data = append(data, d)
 	}
-	for i := 0; i < numberOfNodes-3; i++ {
+	for i := range numberOfNodes - 3 {
 		assert.Equal(t, data[i], data[i+1])
 	}
 }
@@ -943,10 +943,10 @@ func TestCatchingUpWithSyncAssisted(t *testing.T) {
 	nodes[3].Disconnect() // will need to catch up
 
 	for i := 1; i <= 10; i++ {
-		for j := 0; j <= 2; j++ {
+		for j := range 3 {
 			nodes[j].Submit(Request{ID: fmt.Sprintf("%d", i), ClientID: "alice"})
 		}
-		for j := 0; j <= 2; j++ {
+		for j := range 3 {
 			<-nodes[j].Delivered
 		}
 	}
@@ -955,10 +955,10 @@ func TestCatchingUpWithSyncAssisted(t *testing.T) {
 
 	// We create new batches until it catches up the quorum.
 	for reqID := 11; reqID < 100; reqID++ {
-		for j := 0; j <= 2; j++ {
+		for j := range 3 {
 			nodes[j].Submit(Request{ID: fmt.Sprintf("%d", reqID), ClientID: "alice"})
 		}
-		for j := 0; j <= 2; j++ {
+		for j := range 3 {
 			<-nodes[j].Delivered
 		}
 		caughtUp := waitForCatchup(reqID, nodes[3].Delivered)
@@ -1010,10 +1010,10 @@ func TestCatchingUpWithSyncAutonomous(t *testing.T) {
 	nodes[3].Disconnect() // will need to catch up
 
 	for i := 1; i <= 5; i++ {
-		for j := 0; j <= 2; j++ {
+		for j := range 3 {
 			nodes[j].Submit(Request{ID: fmt.Sprintf("%d", i), ClientID: "alice"})
 		}
-		for j := 0; j <= 2; j++ {
+		for j := range 3 {
 			<-nodes[j].Delivered
 		}
 	}
@@ -1094,7 +1094,7 @@ func TestSyncSameHeightPreservesDecisionsInView(t *testing.T) {
 	// Phase 1: Submit 5 proposals to build up DecisionsInView on all nodes.
 	for i := 1; i <= 5; i++ {
 		nodes[0].Submit(Request{ID: fmt.Sprintf("%d", i), ClientID: "alice"})
-		for j := 0; j < numberOfNodes; j++ {
+		for j := range numberOfNodes {
 			<-nodes[j].Delivered
 		}
 	}
@@ -1135,7 +1135,7 @@ func TestSyncSameHeightPreservesDecisionsInView(t *testing.T) {
 	// leader (which has DecisionsInView=5).
 	for i := 6; i <= 10; i++ {
 		nodes[0].Submit(Request{ID: fmt.Sprintf("%d", i), ClientID: "alice"})
-		for j := 0; j < numberOfNodes; j++ {
+		for j := range numberOfNodes {
 			select {
 			case <-nodes[j].Delivered:
 			case <-bugDetected:
@@ -1225,7 +1225,7 @@ func TestFollowerStateTransfer(t *testing.T) {
 		d := <-nodes[i].Delivered
 		data = append(data, d)
 	}
-	for i := 0; i < numberOfNodes-3; i++ {
+	for i := range numberOfNodes - 3 {
 		assert.Equal(t, data[i], data[i+1])
 	}
 }
@@ -1337,7 +1337,7 @@ func TestLeaderModifiesPreprepare(t *testing.T) {
 				d := <-nodes[i].Delivered
 				data = append(data, d)
 			}
-			for i := 0; i < numberOfNodes-1; i++ {
+			for i := range numberOfNodes - 1 {
 				assert.Equal(t, data[i], data[i+1])
 			}
 
@@ -1408,7 +1408,7 @@ func TestLeaderCatchUpWithoutSync(t *testing.T) {
 		d := <-nodes[i].Delivered
 		data = append(data, d)
 	}
-	for i := 0; i < numberOfNodes-1; i++ {
+	for i := range numberOfNodes - 1 {
 		assert.Equal(t, data[i], data[i+1])
 	}
 
@@ -1419,7 +1419,7 @@ func TestLeaderCatchUpWithoutSync(t *testing.T) {
 		d := <-nodes[i].Delivered
 		data = append(data, d)
 	}
-	for i := 0; i < numberOfNodes-1; i++ {
+	for i := range numberOfNodes - 1 {
 		assert.Equal(t, data[i], data[i+1])
 	}
 }
@@ -1495,7 +1495,7 @@ func TestLeaderProposeAfterRestartWithoutSync(t *testing.T) {
 		d := <-nodes[i].Delivered
 		data = append(data, d)
 	}
-	for i := 0; i < numberOfNodes-1; i++ {
+	for i := range numberOfNodes - 1 {
 		assert.Equal(t, data[i], data[i+1])
 	}
 
@@ -1504,7 +1504,7 @@ func TestLeaderProposeAfterRestartWithoutSync(t *testing.T) {
 		d := <-nodes[i].Delivered
 		data = append(data, d)
 	}
-	for i := 0; i < numberOfNodes-1; i++ {
+	for i := range numberOfNodes - 1 {
 		assert.Equal(t, data[i], data[i+1])
 	}
 }
@@ -1658,7 +1658,7 @@ func TestReconfigAndViewChange(t *testing.T) {
 		d := <-nodes[i].Delivered
 		data = append(data, d)
 	}
-	for i := 0; i < numberOfNodes-1; i++ {
+	for i := range numberOfNodes - 1 {
 		assert.Equal(t, data[i], data[i+1])
 	}
 
@@ -1691,7 +1691,7 @@ func TestReconfigAndViewChange(t *testing.T) {
 		d := <-nodes[i].Delivered
 		data = append(data, d)
 	}
-	for i := 0; i < numberOfNodes-1; i++ {
+	for i := range numberOfNodes - 1 {
 		assert.Equal(t, data[i], data[i+1])
 	}
 }
@@ -1761,7 +1761,7 @@ func TestRotateAndViewChange(t *testing.T) {
 		d := <-nodes[i].Delivered
 		data = append(data, d)
 	}
-	for i := 0; i < numberOfNodes-1; i++ {
+	for i := range numberOfNodes - 1 {
 		assert.Equal(t, data[i], data[i+1])
 	}
 
@@ -1772,7 +1772,7 @@ func TestRotateAndViewChange(t *testing.T) {
 		d := <-nodes[i].Delivered
 		data = append(data, d)
 	}
-	for i := 0; i < numberOfNodes-1; i++ {
+	for i := range numberOfNodes - 1 {
 		assert.Equal(t, data[i], data[i+1])
 	}
 
@@ -1783,7 +1783,7 @@ func TestRotateAndViewChange(t *testing.T) {
 		d := <-nodes[i].Delivered
 		data = append(data, d)
 	}
-	for i := 0; i < numberOfNodes-1; i++ {
+	for i := range numberOfNodes - 1 {
 		assert.Equal(t, data[i], data[i+1])
 	}
 
@@ -1807,7 +1807,7 @@ func TestRotateAndViewChange(t *testing.T) {
 		d := <-nodes[i].Delivered
 		data = append(data, d)
 	}
-	for i := 0; i < numberOfNodes-1; i++ {
+	for i := range numberOfNodes - 1 {
 		assert.Equal(t, data[i], data[i+1])
 	}
 }
@@ -2169,7 +2169,7 @@ func TestBlacklistAndRedemption(t *testing.T) {
 		txID := make([]byte, 15)
 		rand.Read(txID)
 		nodes[1].Submit(Request{ID: hex.EncodeToString(txID), ClientID: "alice"})
-		for i := 0; i < len(nodes); i++ {
+		for i := range nodes {
 			select {
 			case <-nodes[i].Delivered:
 			case <-stop:
@@ -2293,7 +2293,7 @@ func TestBlacklistMultipleViewChanges(t *testing.T) {
 		txID := make([]byte, 15)
 		rand.Read(txID)
 		nodes[3].Submit(Request{ID: hex.EncodeToString(txID), ClientID: "alice"})
-		for i := 0; i < len(nodes); i++ {
+		for i := range nodes {
 			select {
 			case <-nodes[i].Delivered:
 			case <-stop:
@@ -2366,7 +2366,7 @@ func TestNodeInFlightThenViewChange(t *testing.T) {
 	nodes[1].Submit(Request{ID: "second request", ClientID: "alice"})
 	nodes[2].Submit(Request{ID: "second request", ClientID: "alice"})
 
-	for i := 0; i < numberOfNodes-1; i++ {
+	for i := range numberOfNodes - 1 {
 		<-nodes[i].Delivered // first request
 		<-nodes[i].Delivered // second request
 	}
@@ -2374,7 +2374,7 @@ func TestNodeInFlightThenViewChange(t *testing.T) {
 	// Submit a third request to one of the nodes
 	nodes[0].Submit(Request{ID: "third request", ClientID: "alice"})
 
-	for i := 0; i < numberOfNodes-1; i++ {
+	for i := range numberOfNodes - 1 {
 		<-nodes[i].Delivered
 	}
 
@@ -2750,7 +2750,7 @@ func TestViewChangeAfterTryingToFork(t *testing.T) {
 	nodes[5].Disconnect()
 	nodes[4].Disconnect()
 
-	for i := 0; i < numberOfNodes-3; i++ {
+	for i := range numberOfNodes - 3 {
 		nodes[i].Submit(Request{ID: "1", ClientID: "alice"}) // submit to other nodes
 	}
 
@@ -2814,7 +2814,7 @@ ExternalLoop:
 		}
 	}
 
-	for i := 0; i < numberOfNodes-1; i++ {
+	for i := range numberOfNodes - 1 {
 		assert.Equal(t, data[i], data[i+1])
 	}
 
@@ -2833,7 +2833,7 @@ ExternalLoop:
 		}
 	}
 
-	for i := 0; i < numberOfNodes-1; i++ {
+	for i := range numberOfNodes - 1 {
 		assert.Equal(t, data1[i], data1[i+1])
 	}
 }
@@ -2921,7 +2921,7 @@ func TestFetchStateWhenSyncReturnsPrevView(t *testing.T) {
 		d := <-nodes[i].Delivered
 		data = append(data, d)
 	}
-	for i := 0; i < numberOfNodes-2; i++ {
+	for i := range numberOfNodes - 2 {
 		assert.Equal(t, data[i], data[i+1])
 	}
 
@@ -2972,7 +2972,7 @@ func TestFetchStateWhenSyncReturnsPrevView(t *testing.T) {
 		d := <-nodes[i].Delivered
 		data = append(data, d)
 	}
-	for i := 0; i < numberOfNodes-2; i++ {
+	for i := range numberOfNodes - 2 {
 		assert.Equal(t, data[i], data[i+1])
 	}
 }
@@ -3097,7 +3097,7 @@ func TestLeaderStopSendHeartbeat(t *testing.T) {
 		data = append(data, d)
 	}
 
-	for i := 0; i < numberOfNodes-1; i++ {
+	for i := range numberOfNodes - 1 {
 		assert.Equal(t, data[i], data[i+1])
 	}
 }
@@ -3317,7 +3317,7 @@ func TestTryCommittedSequenceTwice(t *testing.T) {
 	nodes[5].Disconnect()
 	nodes[4].Disconnect()
 
-	for i := 0; i < numberOfNodes-3; i++ {
+	for i := range numberOfNodes - 3 {
 		nodes[i].Submit(Request{ID: "1", ClientID: "alice"}) // submit to other nodes
 	}
 
@@ -3381,7 +3381,7 @@ ExternalLoop:
 		}
 	}
 
-	for i := 0; i < numberOfNodes-1; i++ {
+	for i := range numberOfNodes - 1 {
 		assert.Equal(t, data[i], data[i+1])
 	}
 
@@ -3400,7 +3400,7 @@ ExternalLoop:
 		}
 	}
 
-	for i := 0; i < numberOfNodes-1; i++ {
+	for i := range numberOfNodes - 1 {
 		assert.Equal(t, data1[i], data1[i+1])
 	}
 }
@@ -3471,7 +3471,7 @@ func TestDecideAndAbortViewAtSameTime(t *testing.T) {
 		d := <-nodes[i].Delivered
 		data = append(data, d)
 	}
-	for i := 0; i < numberOfNodes-1; i++ {
+	for i := range numberOfNodes - 1 {
 		assert.Equal(t, data[i], data[i+1])
 	}
 
@@ -3500,7 +3500,7 @@ func TestDecideAndAbortViewAtSameTime(t *testing.T) {
 		}
 	}
 
-	for i := 0; i < numberOfNodes-1; i++ {
+	for i := range numberOfNodes - 1 {
 		assert.Equal(t, data[i], data[i+1])
 	}
 }

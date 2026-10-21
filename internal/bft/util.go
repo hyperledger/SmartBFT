@@ -87,7 +87,7 @@ func getLeaderID(
 		return nodes[view%n]
 	}
 
-	for i := range len(nodes) {
+	for i := range nodes {
 		index := (view + (decisionsInView / decisionsPerLeader)) + uint64(i)
 		node := nodes[index%n]
 		_, exists := blackListed[node]
