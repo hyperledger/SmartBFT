@@ -25,9 +25,7 @@ func TestWALUtil(t *testing.T) {
 	logger := basicLog.Sugar()
 
 	t.Run("read wal names", func(t *testing.T) {
-		testDir, err := os.MkdirTemp("", "unittest")
-		assert.NoErrorf(t, err, "generate temporary test dir")
-		defer os.RemoveAll(testDir)
+		testDir := t.TempDir()
 
 		names, err := dirReadWalNames(testDir)
 		assert.NoError(t, err)
@@ -78,9 +76,7 @@ func TestWALUtil(t *testing.T) {
 	})
 
 	t.Run("check wal names", func(t *testing.T) {
-		testDir, err := os.MkdirTemp("", "unittest")
-		assert.NoErrorf(t, err, "generate temporary test dir")
-		defer os.RemoveAll(testDir)
+		testDir := t.TempDir()
 
 		indexes, err := checkWalFiles(logger, testDir, []string{})
 		assert.NoError(t, err)
@@ -136,9 +132,7 @@ func TestWALUtil(t *testing.T) {
 	})
 
 	t.Run("scan-verify", func(t *testing.T) {
-		testDir, err := os.MkdirTemp("", "unittest")
-		assert.NoErrorf(t, err, "generate temporary test dir")
-		defer os.RemoveAll(testDir)
+		testDir := t.TempDir()
 
 		make8LogFiles(t, logger, testDir)
 		names, err := dirReadWalNames(testDir)
@@ -148,11 +142,9 @@ func TestWALUtil(t *testing.T) {
 	})
 
 	t.Run("scan-repair-short", func(t *testing.T) {
-		testDir, err := os.MkdirTemp("", "unittest")
-		assert.NoErrorf(t, err, "generate temporary test dir")
-		defer os.RemoveAll(testDir)
+		testDir := t.TempDir()
 
-		// first its fine
+		// first it's fine
 		make8LogFiles(t, logger, testDir)
 		names, err := dirReadWalNames(testDir)
 		assert.NoError(t, err)
@@ -186,11 +178,9 @@ func TestWALUtil(t *testing.T) {
 	})
 
 	t.Run("scan-repair-tail", func(t *testing.T) {
-		testDir, err := os.MkdirTemp("", "unittest")
-		assert.NoErrorf(t, err, "generate temporary test dir")
-		defer os.RemoveAll(testDir)
+		testDir := t.TempDir()
 
-		// first its fine
+		// first it's fine
 		make8LogFiles(t, logger, testDir)
 		names, err := dirReadWalNames(testDir)
 		assert.NoError(t, err)
@@ -220,11 +210,9 @@ func TestWALUtil(t *testing.T) {
 	})
 
 	t.Run("scan-repair-bad-anchor", func(t *testing.T) {
-		testDir, err := os.MkdirTemp("", "unittest")
-		assert.NoErrorf(t, err, "generate temporary test dir")
-		defer os.RemoveAll(testDir)
+		testDir := t.TempDir()
 
-		// first its fine
+		// first it's fine
 		make8LogFiles(t, logger, testDir)
 		names, err := dirReadWalNames(testDir)
 		assert.NoError(t, err)

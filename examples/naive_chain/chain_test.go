@@ -7,7 +7,6 @@ package naive
 
 import (
 	"fmt"
-	"os"
 	"testing"
 	"time"
 
@@ -71,9 +70,7 @@ func TestBlockHeader(t *testing.T) {
 func TestChain(t *testing.T) {
 	blockCount := 10
 
-	testDir, err := os.MkdirTemp("", "naive_chain")
-	assert.NoErrorf(t, err, "generate temporary test dir")
-	defer os.RemoveAll(testDir)
+	testDir := t.TempDir()
 
 	numNodes := 4
 	chains := setupNetwork(t, NetworkOptions{NumNodes: numNodes, BatchSize: 1, BatchTimeout: 10 * time.Second}, testDir)

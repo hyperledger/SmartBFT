@@ -7,7 +7,6 @@ package bft_test
 
 import (
 	"errors"
-	"os"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -183,9 +182,7 @@ func TestLeaderPropose(t *testing.T) {
 	leaderMon.On("HeartbeatWasSent")
 	leaderMon.On("Close")
 
-	testDir, err := os.MkdirTemp("", "controller-unittest")
-	assert.NoErrorf(t, err, "generate temporary test dir")
-	defer os.RemoveAll(testDir)
+	testDir := t.TempDir()
 	wal, err := wal.Create(log, testDir, nil)
 	assert.NoError(t, err)
 
@@ -322,9 +319,7 @@ func TestViewChanged(t *testing.T) {
 	signer := &mocks.SignerMock{}
 	signer.On("Sign", mock.Anything).Return(nil)
 
-	testDir, err := os.MkdirTemp("", "controller-unittest")
-	assert.NoErrorf(t, err, "generate temporary test dir")
-	defer os.RemoveAll(testDir)
+	testDir := t.TempDir()
 	wal, err := wal.Create(log, testDir, nil)
 	assert.NoError(t, err)
 
@@ -436,9 +431,7 @@ func TestSyncPrevView(t *testing.T) {
 	startedWG := sync.WaitGroup{}
 	startedWG.Add(1)
 
-	testDir, err := os.MkdirTemp("", "controller-unittest")
-	assert.NoErrorf(t, err, "generate temporary test dir")
-	defer os.RemoveAll(testDir)
+	testDir := t.TempDir()
 	wal, err := wal.Create(log, testDir, nil)
 	assert.NoError(t, err)
 
@@ -756,9 +749,7 @@ func TestSyncInform(t *testing.T) {
 	signer := &mocks.SignerMock{}
 	signer.On("Sign", mock.Anything).Return(nil)
 
-	testDir, err := os.MkdirTemp("", "controller-unittest")
-	assert.NoErrorf(t, err, "generate temporary test dir")
-	defer os.RemoveAll(testDir)
+	testDir := t.TempDir()
 	wal, err := wal.Create(log, testDir, nil)
 	assert.NoError(t, err)
 
@@ -864,9 +855,7 @@ func TestRotateFromLeaderToFollower(t *testing.T) {
 	assert.NoError(t, err)
 	log := basicLog.Sugar()
 
-	testDir, err := os.MkdirTemp("", "controller-unittest")
-	assert.NoErrorf(t, err, "generate temporary test dir")
-	defer os.RemoveAll(testDir)
+	testDir := t.TempDir()
 	wal, err := wal.Create(log, testDir, nil)
 	assert.NoError(t, err)
 	defer wal.Close()
@@ -1026,9 +1015,7 @@ func TestRotateFromFollowerToLeader(t *testing.T) {
 	assert.NoError(t, err)
 	log := basicLog.Sugar()
 
-	testDir, err := os.MkdirTemp("", "controller-unittest")
-	assert.NoErrorf(t, err, "generate temporary test dir")
-	defer os.RemoveAll(testDir)
+	testDir := t.TempDir()
 	wal, err := wal.Create(log, testDir, nil)
 	assert.NoError(t, err)
 	defer wal.Close()
@@ -1207,9 +1194,7 @@ func TestDeliverTwiceOnceFromSyncAndOnceFromViewData(t *testing.T) {
 	assert.NoError(t, err)
 	log := basicLog.Sugar()
 
-	testDir, err := os.MkdirTemp("", "controller-unittest")
-	assert.NoErrorf(t, err, "generate temporary test dir")
-	defer os.RemoveAll(testDir)
+	testDir := t.TempDir()
 	wal, err := wal.Create(log, testDir, nil)
 	assert.NoError(t, err)
 

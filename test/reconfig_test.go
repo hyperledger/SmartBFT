@@ -2,7 +2,6 @@ package test
 
 import (
 	"fmt"
-	"os"
 	"testing"
 	"time"
 
@@ -15,9 +14,7 @@ func TestBasicReconfig(t *testing.T) {
 	network := NewNetwork()
 	defer network.Shutdown()
 
-	testDir, err := os.MkdirTemp("", t.Name())
-	assert.NoErrorf(t, err, "generate temporary test dir")
-	defer os.RemoveAll(testDir)
+	testDir := t.TempDir()
 
 	decisions := uint64(1)
 
@@ -83,9 +80,7 @@ func TestPoolPrunedAfterReconfig(t *testing.T) {
 	network := NewNetwork()
 	defer network.Shutdown()
 
-	testDir, err := os.MkdirTemp("", t.Name())
-	assert.NoErrorf(t, err, "generate temporary test dir")
-	defer os.RemoveAll(testDir)
+	testDir := t.TempDir()
 
 	// Long enough for the follower to never forward the request to the leader during the test
 	forwardTimeout := time.Minute
@@ -148,9 +143,7 @@ func TestBasicAddNodes(t *testing.T) {
 	network := NewNetwork()
 	defer network.Shutdown()
 
-	testDir, err := os.MkdirTemp("", t.Name())
-	assert.NoErrorf(t, err, "generate temporary test dir")
-	defer os.RemoveAll(testDir)
+	testDir := t.TempDir()
 
 	decisions := uint64(1)
 
@@ -232,9 +225,7 @@ func TestBasicRemoveNodes(t *testing.T) {
 	network := NewNetwork()
 	defer network.Shutdown()
 
-	testDir, err := os.MkdirTemp("", t.Name())
-	assert.NoErrorf(t, err, "generate temporary test dir")
-	defer os.RemoveAll(testDir)
+	testDir := t.TempDir()
 
 	decisions := uint64(1)
 
@@ -301,9 +292,7 @@ func TestAddRemoveNodes(t *testing.T) {
 	network := NewNetwork()
 	defer network.Shutdown()
 
-	testDir, err := os.MkdirTemp("", t.Name())
-	assert.NoErrorf(t, err, "generate temporary test dir")
-	defer os.RemoveAll(testDir)
+	testDir := t.TempDir()
 
 	decisions := uint64(1)
 
@@ -431,9 +420,7 @@ func TestAddRemoveAddNodes(t *testing.T) {
 	network := NewNetwork()
 	defer network.Shutdown()
 
-	testDir, err := os.MkdirTemp("", t.Name())
-	assert.NoErrorf(t, err, "generate temporary test dir")
-	defer os.RemoveAll(testDir)
+	testDir := t.TempDir()
 
 	numberOfNodes := 4
 	nodes := make([]*App, 0)
@@ -557,9 +544,7 @@ func TestViewChangeAfterReconfig(t *testing.T) {
 	network := NewNetwork()
 	defer network.Shutdown()
 
-	testDir, err := os.MkdirTemp("", t.Name())
-	assert.NoErrorf(t, err, "generate temporary test dir")
-	defer os.RemoveAll(testDir)
+	testDir := t.TempDir()
 
 	numberOfNodes := 4
 	nodes := make([]*App, 0)
@@ -626,9 +611,7 @@ func TestAddNodeAfterManyRotations(t *testing.T) {
 	network := NewNetwork()
 	defer network.Shutdown()
 
-	testDir, err := os.MkdirTemp("", t.Name())
-	assert.NoErrorf(t, err, "generate temporary test dir")
-	defer os.RemoveAll(testDir)
+	testDir := t.TempDir()
 
 	decisions := uint64(1)
 

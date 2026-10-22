@@ -20,10 +20,7 @@ import (
 )
 
 func TestWriteAheadLogFile_Create(t *testing.T) {
-	testDir, err := os.MkdirTemp("", "unittest")
-	assert.NoErrorf(t, err, "generate temporary test dir")
-
-	defer os.RemoveAll(testDir)
+	testDir := t.TempDir()
 
 	basicLog, err := zap.NewDevelopment()
 	assert.NoError(t, err)
@@ -91,10 +88,7 @@ func TestWriteAheadLogFile_Create(t *testing.T) {
 }
 
 func TestWriteAheadLogFile_Open(t *testing.T) {
-	testDir, err := os.MkdirTemp("", "unittest")
-	assert.NoErrorf(t, err, "generate temporary test dir")
-
-	defer os.RemoveAll(testDir)
+	testDir := t.TempDir()
 
 	basicLog, err := zap.NewDevelopment()
 	assert.NoError(t, err)
@@ -169,10 +163,7 @@ func TestWriteAheadLogFile_Open(t *testing.T) {
 }
 
 func TestWriteAheadLogFile_Close(t *testing.T) {
-	testDir, err := os.MkdirTemp("", "unittest")
-	assert.NoErrorf(t, err, "generate temporary test dir")
-
-	defer os.RemoveAll(testDir)
+	testDir := t.TempDir()
 
 	basicLog, err := zap.NewDevelopment()
 	assert.NoError(t, err)
@@ -224,10 +215,7 @@ func TestWriteAheadLogFile_Close(t *testing.T) {
 }
 
 func TestWriteAheadLogFile_Append(t *testing.T) {
-	testDir, err := os.MkdirTemp("", "unittest")
-	assert.NoErrorf(t, err, "generate temporary test dir")
-
-	defer os.RemoveAll(testDir)
+	testDir := t.TempDir()
 
 	basicLog, err := zap.NewDevelopment()
 	assert.NoError(t, err)
@@ -425,10 +413,7 @@ func TestWriteAheadLogFile_Append(t *testing.T) {
 }
 
 func TestWriteAheadLogFile_ReadAll(t *testing.T) {
-	testDir, err := os.MkdirTemp("", "unittest")
-	assert.NoErrorf(t, err, "generate temporary test dir")
-
-	defer os.RemoveAll(testDir)
+	testDir := t.TempDir()
 
 	basicLog, err := zap.NewDevelopment()
 	assert.NoError(t, err)
@@ -583,10 +568,7 @@ func TestWriteAheadLogFile_ReadAll(t *testing.T) {
 }
 
 func TestWriteAheadLogFile_Repair(t *testing.T) {
-	testDir, err := os.MkdirTemp("", "unittest")
-	assert.NoErrorf(t, err, "generate temporary test dir")
-
-	defer os.RemoveAll(testDir)
+	testDir := t.TempDir()
 
 	basicLog, err := zap.NewDevelopment()
 	assert.NoError(t, err)
@@ -679,10 +661,7 @@ func TestWriteAheadLogFile_Repair(t *testing.T) {
 }
 
 func TestWriteAheadLogFile_InitializeAndReadAll(t *testing.T) {
-	testDir, err := os.MkdirTemp("", t.Name())
-	assert.NoErrorf(t, err, "generate temporary test dir")
-
-	defer os.RemoveAll(testDir)
+	testDir := t.TempDir()
 
 	basicLog, err := zap.NewProduction()
 	assert.NoError(t, err)

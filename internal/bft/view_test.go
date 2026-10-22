@@ -8,7 +8,6 @@ package bft_test
 import (
 	"errors"
 	"fmt"
-	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -995,9 +994,7 @@ func TestViewPersisted(t *testing.T) {
 
 			view := constructView()
 
-			testDir, err := os.MkdirTemp("", "view-unittest")
-			assert.NoErrorf(t, err, "generate temporary test dir")
-			defer os.RemoveAll(testDir)
+			testDir := t.TempDir()
 			writeAheadLog, err := wal.Create(log, testDir, nil)
 			assert.NoError(t, err)
 

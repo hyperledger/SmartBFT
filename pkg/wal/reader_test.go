@@ -19,10 +19,7 @@ import (
 )
 
 func TestLogRecordReader(t *testing.T) {
-	testDir, err := os.MkdirTemp("", "unittest")
-	assert.NoErrorf(t, err, "generate temporary test dir")
-
-	defer os.RemoveAll(testDir)
+	testDir := t.TempDir()
 
 	basicLog, err := zap.NewDevelopment()
 	assert.NoError(t, err)

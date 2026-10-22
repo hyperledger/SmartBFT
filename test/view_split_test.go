@@ -7,7 +7,6 @@ package test
 
 import (
 	"fmt"
-	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -189,9 +188,7 @@ func newSplitCluster(t *testing.T, numberOfNodes int) (nodes []*App, ids []uint6
 	network := NewNetwork()
 	t.Cleanup(network.Shutdown)
 
-	testDir, err := os.MkdirTemp("", t.Name())
-	assert.NoErrorf(t, err, "generate temporary test dir")
-	t.Cleanup(func() { os.RemoveAll(testDir) })
+	testDir := t.TempDir()
 
 	start := time.Now()
 	for i := 1; i <= numberOfNodes; i++ {
