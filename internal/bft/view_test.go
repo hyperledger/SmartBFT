@@ -21,8 +21,8 @@ import (
 	"github.com/hyperledger/SmartBFT/pkg/types"
 	"github.com/hyperledger/SmartBFT/pkg/wal"
 	protos "github.com/hyperledger/SmartBFT/smartbftprotos"
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"google.golang.org/protobuf/proto"
@@ -124,7 +124,7 @@ var (
 func TestViewBasic(t *testing.T) {
 	// A simple test that starts a view and aborts it
 	basicLog, err := zap.NewDevelopment()
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	log := basicLog.Sugar()
 	state := &bft.StateRecorder{}
 	view := &bft.View{
@@ -164,7 +164,7 @@ func TestPrePrepareAndPrevCommits(t *testing.T) {
 	} {
 		t.Run(testCase.description, func(t *testing.T) {
 			basicLog, err := zap.NewDevelopment()
-			assert.NoError(t, err)
+			require.NoError(t, err)
 			log := basicLog.Sugar()
 			comm := &mocks.CommMock{}
 			commWG := sync.WaitGroup{}
@@ -392,7 +392,7 @@ func TestBadPrePrepare(t *testing.T) {
 	} {
 		t.Run(testCase.description, func(t *testing.T) {
 			basicLog, err := zap.NewDevelopment()
-			assert.NoError(t, err)
+			require.NoError(t, err)
 			var errorLogged sync.WaitGroup
 			errorLogged.Add(1)
 
@@ -476,7 +476,7 @@ func TestBadPrepare(t *testing.T) {
 	} {
 		t.Run(test.description, func(t *testing.T) {
 			basicLog, err := zap.NewDevelopment()
-			assert.NoError(t, err)
+			require.NoError(t, err)
 			var warningMsgLogged sync.WaitGroup
 			warningMsgLogged.Add(1)
 			log := basicLog.WithOptions(zap.Hooks(func(entry zapcore.Entry) error {
@@ -558,7 +558,7 @@ func TestBadCommit(t *testing.T) {
 	// Ensure that a commit with a wrong digest or a bad signature doesn't pass inspection.
 
 	basicLog, err := zap.NewDevelopment()
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	digestLog := make(chan struct{})
 	verifyLog := make(chan struct{})
 	log := basicLog.WithOptions(zap.Hooks(func(entry zapcore.Entry) error {
@@ -641,7 +641,7 @@ func TestNormalPath(t *testing.T) {
 	}
 
 	basicLog, err := zap.NewDevelopment()
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	log := basicLog.Sugar()
 	comm := &mocks.CommMock{}
 	commWG := sync.WaitGroup{}
@@ -707,12 +707,12 @@ func TestNormalPath(t *testing.T) {
 	view.HandleMessage(3, commit3)
 	deciderWG.Wait()
 	dProp := <-decidedProposal
-	assert.Equal(t, proposal, dProp)
+	require.Equal(t, proposal, dProp)
 	dSigs := <-decidedSigs
-	assert.Equal(t, 3, len(dSigs))
+	require.Len(t, dSigs, 3)
 	for _, sig := range dSigs {
 		if sig.ID != 2 && sig.ID != 3 && sig.ID != 4 {
-			assert.Fail(t, "signatures is from a different node with id", sig.ID)
+			require.Fail(t, "signatures is from a different node with id", sig.ID)
 		}
 	}
 
@@ -745,7 +745,7 @@ func TestNormalPath(t *testing.T) {
 	deciderWG.Wait()
 	// after deciding sequence 1 the view advertises the sequence it proposes next, which
 	// is the one followers compare their own sequence against
-	assert.Equal(t, bft.ViewSequence{ViewActive: true, ProposalSeq: 2}, viewSeq.Load().(bft.ViewSequence))
+	require.Equal(t, bft.ViewSequence{ViewActive: true, ProposalSeq: 2}, viewSeq.Load().(bft.ViewSequence))
 	dProp = <-decidedProposal
 	secondProposal := proposal
 	secondProposal.Metadata = bft.MarshalOrPanic(&protos.ViewMetadata{
@@ -753,12 +753,12 @@ func TestNormalPath(t *testing.T) {
 		LatestSequence:  1,
 		ViewId:          1,
 	})
-	assert.Equal(t, secondProposal, dProp)
+	require.Equal(t, secondProposal, dProp)
 	dSigs = <-decidedSigs
-	assert.Equal(t, 3, len(dSigs))
+	require.Len(t, dSigs, 3)
 	for _, sig := range dSigs {
 		if sig.ID != 2 && sig.ID != 3 && sig.ID != 4 {
-			assert.Fail(t, "signatures is from a different node with id", sig.ID)
+			require.Fail(t, "signatures is from a different node with id", sig.ID)
 		}
 	}
 
@@ -770,7 +770,7 @@ func TestTwoSequences(t *testing.T) {
 	// when all messages are sent in advanced for both sequences.
 
 	basicLog, err := zap.NewDevelopment()
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	log := basicLog.Sugar()
 	comm := &mocks.CommMock{}
 	commWG := sync.WaitGroup{}
@@ -874,22 +874,22 @@ func TestTwoSequences(t *testing.T) {
 
 	deciderWG.Wait()
 	dProp := <-decidedProposal
-	assert.Equal(t, proposal, dProp)
+	require.Equal(t, proposal, dProp)
 	dSigs := <-decidedSigs
-	assert.Equal(t, 3, len(dSigs))
+	require.Len(t, dSigs, 3)
 	for _, sig := range dSigs {
 		if sig.ID != 1 && sig.ID != 2 && sig.ID != 4 {
-			assert.Fail(t, "signatures is from a different node with id", sig.ID)
+			require.Fail(t, "signatures is from a different node with id", sig.ID)
 		}
 	}
 
 	dProp = <-decidedProposal
-	assert.Equal(t, secondProposal, dProp)
+	require.Equal(t, secondProposal, dProp)
 	dSigs = <-decidedSigs
-	assert.Equal(t, 3, len(dSigs))
+	require.Len(t, dSigs, 3)
 	for _, sig := range dSigs {
 		if sig.ID != 1 && sig.ID != 2 && sig.ID != 4 {
-			assert.Fail(t, "signatures is from a different node with id", sig.ID)
+			require.Fail(t, "signatures is from a different node with id", sig.ID)
 		}
 	}
 
@@ -951,7 +951,7 @@ func TestViewPersisted(t *testing.T) {
 			})
 
 			basicLog, err := zap.NewDevelopment()
-			assert.NoError(t, err)
+			require.NoError(t, err)
 			log := basicLog.Sugar()
 
 			signer := &mocks.SignerMock{}
@@ -996,7 +996,7 @@ func TestViewPersisted(t *testing.T) {
 
 			testDir := t.TempDir()
 			writeAheadLog, err := wal.Create(log, testDir, nil)
-			assert.NoError(t, err)
+			require.NoError(t, err)
 
 			persistedState := &bft.PersistedState{
 				InFlightProposal: &bft.InFlightData{},
@@ -1028,14 +1028,14 @@ func TestViewPersisted(t *testing.T) {
 
 				writeAheadLog.Close()
 				writeAheadLog, err = wal.Open(log, testDir, nil)
-				assert.NoError(t, err)
+				require.NoError(t, err)
 				persistedState.WAL = writeAheadLog
 
 				view = constructView()
 
 				// Recover the view from WAL.
 				persistedState.Entries, err = writeAheadLog.ReadAll()
-				assert.NoError(t, err)
+				require.NoError(t, err)
 				persistedState.Restore(view)
 
 				// It should broadcast prepare right after starting it.
@@ -1070,15 +1070,15 @@ func TestViewPersisted(t *testing.T) {
 
 				writeAheadLog.Close()
 				writeAheadLog, err = wal.Open(log, testDir, nil)
-				assert.NoError(t, err)
+				require.NoError(t, err)
 				persistedState.WAL = writeAheadLog
 
 				view = constructView()
 
 				// Recover the view from WAL.
 				persistedState.Entries, err = writeAheadLog.ReadAll()
-				assert.NoError(t, err)
-				assert.Equal(t, 2, len(persistedState.Entries))
+				require.NoError(t, err)
+				require.Len(t, persistedState.Entries, 2)
 				persistedState.Restore(view)
 
 				// It should broadcast a commit again after it is restored.
@@ -1099,12 +1099,12 @@ func TestViewPersisted(t *testing.T) {
 			deciderWG.Wait()
 
 			// The requests of the proposal are decided with it, also when the view was restored from the WAL.
-			assert.Equal(t, requests, decidedRequests)
+			require.Equal(t, requests, decidedRequests)
 			// The time it took to process the proposal is measured from when the view got it, or was restored with it.
 			latencies := histograms.observed("view_latency_batch_processing")
-			assert.Len(t, latencies, 1)
+			require.Len(t, latencies, 1)
 			for _, latency := range latencies {
-				assert.Less(t, latency, time.Minute.Seconds())
+				require.Less(t, latency, time.Minute.Seconds())
 			}
 
 			view.Abort()
@@ -1182,7 +1182,7 @@ func TestDiscoverDeliberateCensorship(t *testing.T) {
 	} {
 		t.Run(testCase.description, func(t *testing.T) {
 			basicLog, err := zap.NewDevelopment()
-			assert.NoError(t, err)
+			require.NoError(t, err)
 
 			makeCommit := func(view, seq uint64, digest string) *protos.Message {
 				return &protos.Message{
@@ -1242,7 +1242,7 @@ func TestDiscoverDeliberateCensorship(t *testing.T) {
 
 func TestTwoPrePreparesInARow(t *testing.T) {
 	basicLog, err := zap.NewDevelopment()
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	prePrepareNext := proto.Clone(prePrepare).(*protos.Message)
 	prePrepareNextGet := prePrepareNext.GetPrePrepare()
@@ -1337,8 +1337,8 @@ func TestTwoPrePreparesInARow(t *testing.T) {
 		loggedMessages = append(loggedMessages, logEntry)
 	}
 
-	assert.Contains(t, loggedMessages, "Got a pre-prepare for next sequence without processing previous one, dropping message")
-	assert.Contains(t, loggedMessages, "Got a pre-prepare for current sequence without processing previous one, dropping message")
+	require.Contains(t, loggedMessages, "Got a pre-prepare for next sequence without processing previous one, dropping message")
+	require.Contains(t, loggedMessages, "Got a pre-prepare for current sequence without processing previous one, dropping message")
 }
 
 func TestViewLaggingCatchup(t *testing.T) {
@@ -1526,7 +1526,7 @@ func newView(t *testing.T, selfID uint64, network map[uint64]*testedView) *teste
 	})
 
 	basicLog, err := zap.NewDevelopment()
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	log := basicLog.Sugar()
 
 	signer := &mocks.SignerMock{}

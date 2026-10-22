@@ -19,7 +19,7 @@ import (
 
 	"github.com/hyperledger/SmartBFT/internal/bft"
 	"github.com/hyperledger/SmartBFT/smartbftprotos"
-	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"google.golang.org/protobuf/proto"
@@ -54,7 +54,7 @@ func TestBasic(t *testing.T) {
 		data = append(data, d)
 	}
 	for i := range numberOfNodes - 1 {
-		assert.Equal(t, data[i], data[i+1])
+		require.Equal(t, data[i], data[i+1])
 	}
 }
 
@@ -184,7 +184,7 @@ func TestRestartFollowers(t *testing.T) {
 
 	data = append(data, d0, d1, d2, d3)
 	for i := range numberOfNodes - 1 {
-		assert.Equal(t, data[i], data[i+1])
+		require.Equal(t, data[i], data[i+1])
 	}
 
 	nodes[2].Restart()
@@ -202,7 +202,7 @@ func TestRestartFollowers(t *testing.T) {
 
 	data = append(data, d0, d1, d2, d3)
 	for i := range numberOfNodes - 1 {
-		assert.Equal(t, data[i], data[i+1])
+		require.Equal(t, data[i], data[i+1])
 	}
 }
 
@@ -220,9 +220,9 @@ func TestLeaderInPartition(t *testing.T) {
 		nodes = append(nodes, n)
 	}
 
-	assert.Equal(t, uint64(0), nodes[2].Consensus.GetLeaderID())
+	require.Equal(t, uint64(0), nodes[2].Consensus.GetLeaderID())
 	startNodes(nodes, network)
-	assert.Equal(t, uint64(1), nodes[2].Consensus.GetLeaderID())
+	require.Equal(t, uint64(1), nodes[2].Consensus.GetLeaderID())
 
 	nodes[0].Disconnect() // leader in partition
 
@@ -236,9 +236,9 @@ func TestLeaderInPartition(t *testing.T) {
 		data = append(data, d)
 	}
 	for i := range numberOfNodes - 2 {
-		assert.Equal(t, data[i], data[i+1])
+		require.Equal(t, data[i], data[i+1])
 	}
-	assert.LessOrEqual(t, uint64(2), nodes[2].Consensus.GetLeaderID())
+	require.LessOrEqual(t, uint64(2), nodes[2].Consensus.GetLeaderID())
 }
 
 func TestAfterDecisionLeaderInPartition(t *testing.T) {
@@ -264,7 +264,7 @@ func TestAfterDecisionLeaderInPartition(t *testing.T) {
 		data = append(data, d)
 	}
 	for i := range numberOfNodes - 1 {
-		assert.Equal(t, data[i], data[i+1])
+		require.Equal(t, data[i], data[i+1])
 	}
 
 	nodes[0].Submit(Request{ID: "2", ClientID: "alice"})
@@ -275,7 +275,7 @@ func TestAfterDecisionLeaderInPartition(t *testing.T) {
 		data = append(data, d)
 	}
 	for i := range numberOfNodes - 1 {
-		assert.Equal(t, data[i], data[i+1])
+		require.Equal(t, data[i], data[i+1])
 	}
 
 	nodes[0].Disconnect() // leader in partition
@@ -290,7 +290,7 @@ func TestAfterDecisionLeaderInPartition(t *testing.T) {
 		data = append(data, d)
 	}
 	for i := range numberOfNodes - 2 {
-		assert.Equal(t, data[i], data[i+1])
+		require.Equal(t, data[i], data[i+1])
 	}
 
 	for i := 1; i < numberOfNodes; i++ {
@@ -303,7 +303,7 @@ func TestAfterDecisionLeaderInPartition(t *testing.T) {
 		data = append(data, d)
 	}
 	for i := range numberOfNodes - 2 {
-		assert.Equal(t, data[i], data[i+1])
+		require.Equal(t, data[i], data[i+1])
 	}
 }
 
@@ -331,7 +331,7 @@ func TestLeaderInPartitionWithHealing(t *testing.T) {
 		data = append(data, d)
 	}
 	for i := range numberOfNodes - 1 {
-		assert.Equal(t, data[i], data[i+1])
+		require.Equal(t, data[i], data[i+1])
 	}
 
 	nodes[0].Submit(Request{ID: "2", ClientID: "alice"})
@@ -342,7 +342,7 @@ func TestLeaderInPartitionWithHealing(t *testing.T) {
 		data = append(data, d)
 	}
 	for i := range numberOfNodes - 1 {
-		assert.Equal(t, data[i], data[i+1])
+		require.Equal(t, data[i], data[i+1])
 	}
 
 	nodes[0].Disconnect() // leader in partition
@@ -358,16 +358,16 @@ func TestLeaderInPartitionWithHealing(t *testing.T) {
 		data = append(data, d)
 	}
 	for i := range numberOfNodes - 2 {
-		assert.Equal(t, data[i], data[i+1])
+		require.Equal(t, data[i], data[i+1])
 	}
 
-	assert.Len(t, nodes[0].Delivered, 0) // n0 did not receive it
+	require.Empty(t, nodes[0].Delivered) // n0 did not receive it
 
 	nodes[0].Connect() // partition heals, leader should eventually sync, become a follower, and deliver
 	t.Log("Connected n0")
 
 	data0 := <-nodes[0].Delivered
-	assert.Equal(t, data[0], data0)
+	require.Equal(t, data[0], data0)
 }
 
 func TestMultiLeadersPartition(t *testing.T) {
@@ -390,9 +390,9 @@ func TestMultiLeadersPartition(t *testing.T) {
 		n.viewChangeTime <- start
 		n.Setup()
 	}
-	assert.Equal(t, uint64(0), nodes[0].Consensus.GetLeaderID())
+	require.Equal(t, uint64(0), nodes[0].Consensus.GetLeaderID())
 	startNodes(nodes, network)
-	assert.Equal(t, uint64(1), nodes[0].Consensus.GetLeaderID())
+	require.Equal(t, uint64(1), nodes[0].Consensus.GetLeaderID())
 
 	nodes[0].Disconnect() // leader in partition
 	nodes[1].Disconnect() // next leader in partition
@@ -413,13 +413,13 @@ func TestMultiLeadersPartition(t *testing.T) {
 		data = append(data, d)
 	}
 	for i := range numberOfNodes - 3 {
-		assert.Equal(t, data[i], data[i+1])
+		require.Equal(t, data[i], data[i+1])
 	}
 
 	lID := nodes[2].Consensus.GetLeaderID()
-	assert.LessOrEqual(t, uint64(3), lID)
+	require.LessOrEqual(t, uint64(3), lID)
 	for i := 3; i < numberOfNodes; i++ {
-		assert.Equal(t, lID, nodes[i].Consensus.GetLeaderID())
+		require.Equal(t, lID, nodes[i].Consensus.GetLeaderID())
 	}
 }
 
@@ -479,7 +479,7 @@ func TestHeartbeatTimeoutCausesViewChange(t *testing.T) {
 		data = append(data, d)
 	}
 	for i := range numberOfNodes - 2 {
-		assert.Equal(t, data[i], data[i+1])
+		require.Equal(t, data[i], data[i+1])
 	}
 }
 
@@ -542,7 +542,7 @@ func TestMultiViewChangeWithNoRequestsTimeout(t *testing.T) {
 		data = append(data, d)
 	}
 	for i := range numberOfNodes - 3 {
-		assert.Equal(t, data[i], data[i+1])
+		require.Equal(t, data[i], data[i+1])
 	}
 }
 
@@ -596,7 +596,7 @@ func TestCatchingUpWithViewChange(t *testing.T) {
 		data = append(data, d)
 	}
 	for i := range numberOfNodes - 2 {
-		assert.Equal(t, data[i], data[i+1])
+		require.Equal(t, data[i], data[i+1])
 	}
 
 	nodes[3].Connect()
@@ -610,7 +610,7 @@ func TestCatchingUpWithViewChange(t *testing.T) {
 	accelerateTime(nodes, done, false, true, &counter)
 
 	data3 := <-nodes[3].Delivered // from catch up
-	assert.Equal(t, data[0], data3)
+	require.Equal(t, data[0], data3)
 
 	viewChangeFinishWG.Wait()
 	close(done)
@@ -621,7 +621,7 @@ func TestCatchingUpWithViewChange(t *testing.T) {
 		data = append(data, d)
 	}
 	for i := range numberOfNodes - 2 {
-		assert.Equal(t, data[i], data[i+1])
+		require.Equal(t, data[i], data[i+1])
 	}
 }
 
@@ -648,7 +648,7 @@ func TestLeaderCatchingUpAfterViewChange(t *testing.T) {
 		data = append(data, d)
 	}
 	for i := range numberOfNodes - 1 {
-		assert.Equal(t, data[i], data[i+1])
+		require.Equal(t, data[i], data[i+1])
 	}
 
 	nodes[0].Disconnect() // leader in partition
@@ -662,7 +662,7 @@ func TestLeaderCatchingUpAfterViewChange(t *testing.T) {
 		data = append(data, d)
 	}
 	for i := range numberOfNodes - 2 {
-		assert.Equal(t, data[i], data[i+1])
+		require.Equal(t, data[i], data[i+1])
 	}
 
 	nodes[0].Connect() // old leader woke up
@@ -744,7 +744,7 @@ func TestRestartAfterViewChangeAndRestoreNewView(t *testing.T) {
 		data = append(data, d)
 	}
 	for i := range numberOfNodes - 2 {
-		assert.Equal(t, data[i], data[i+1])
+		require.Equal(t, data[i], data[i+1])
 	}
 }
 
@@ -822,7 +822,7 @@ func TestRestoringViewChange(t *testing.T) {
 		data = append(data, d)
 	}
 	for i := range numberOfNodes - 3 {
-		assert.Equal(t, data[i], data[i+1])
+		require.Equal(t, data[i], data[i+1])
 	}
 }
 
@@ -856,8 +856,8 @@ func TestLeaderForwarding(t *testing.T) {
 		}
 	}
 
-	assert.Equal(t, committedBatches[0], committedBatches[1])
-	assert.Equal(t, committedBatches[0], committedBatches[2])
+	require.Equal(t, committedBatches[0], committedBatches[1])
+	require.Equal(t, committedBatches[0], committedBatches[2])
 }
 
 func TestLeaderExclusion(t *testing.T) {
@@ -1011,7 +1011,7 @@ func TestCatchingUpWithSyncAutonomous(t *testing.T) {
 	}
 
 	close(done)
-	assert.Equal(t, uint32(0), atomic.LoadUint32(&detectedSequenceGap))
+	require.Equal(t, uint32(0), atomic.LoadUint32(&detectedSequenceGap))
 }
 
 func TestSyncSameHeightPreservesDecisionsInView(t *testing.T) {
@@ -1088,7 +1088,7 @@ func TestSyncSameHeightPreservesDecisionsInView(t *testing.T) {
 	nodes[3].Consensus.HandleMessage(1, fakeHeartbeat)
 
 	// Wait for the sync to be processed by the controller's run loop.
-	assert.Eventually(t, func() bool {
+	require.Eventually(t, func() bool {
 		return atomic.LoadUint32(&syncProcessed) == 1
 	}, 30*time.Second, 50*time.Millisecond,
 		"Node 4 should process sync triggered by fake heartbeat")
@@ -1187,7 +1187,7 @@ func TestFollowerStateTransfer(t *testing.T) {
 		data = append(data, d)
 	}
 	for i := range numberOfNodes - 3 {
-		assert.Equal(t, data[i], data[i+1])
+		require.Equal(t, data[i], data[i+1])
 	}
 }
 
@@ -1297,14 +1297,14 @@ func TestLeaderModifiesPreprepare(t *testing.T) {
 				data = append(data, d)
 			}
 			for i := range numberOfNodes - 1 {
-				assert.Equal(t, data[i], data[i+1])
+				require.Equal(t, data[i], data[i+1])
 			}
 
 			md := &smartbftprotos.ViewMetadata{}
 			if err := proto.Unmarshal(data[0].Metadata, md); err != nil {
-				assert.NoError(t, err)
+				require.NoError(t, err)
 			}
-			assert.Equal(t, uint64(1), md.LatestSequence)
+			require.Equal(t, uint64(1), md.LatestSequence)
 
 			for i := 2; i <= numberOfNodes; i++ {
 				nodes[0].ClearMutateSend(uint64(i))
@@ -1366,7 +1366,7 @@ func TestLeaderCatchUpWithoutSync(t *testing.T) {
 		data = append(data, d)
 	}
 	for i := range numberOfNodes - 1 {
-		assert.Equal(t, data[i], data[i+1])
+		require.Equal(t, data[i], data[i+1])
 	}
 
 	nodes[0].Submit(Request{ID: "2", ClientID: "alice"})
@@ -1377,7 +1377,7 @@ func TestLeaderCatchUpWithoutSync(t *testing.T) {
 		data = append(data, d)
 	}
 	for i := range numberOfNodes - 1 {
-		assert.Equal(t, data[i], data[i+1])
+		require.Equal(t, data[i], data[i+1])
 	}
 }
 
@@ -1451,7 +1451,7 @@ func TestLeaderProposeAfterRestartWithoutSync(t *testing.T) {
 		data = append(data, d)
 	}
 	for i := range numberOfNodes - 1 {
-		assert.Equal(t, data[i], data[i+1])
+		require.Equal(t, data[i], data[i+1])
 	}
 
 	data = make([]*AppRecord, 0)
@@ -1460,7 +1460,7 @@ func TestLeaderProposeAfterRestartWithoutSync(t *testing.T) {
 		data = append(data, d)
 	}
 	for i := range numberOfNodes - 1 {
-		assert.Equal(t, data[i], data[i+1])
+		require.Equal(t, data[i], data[i+1])
 	}
 }
 
@@ -1489,10 +1489,10 @@ func TestGradualStart(t *testing.T) {
 	d0 := <-n0.Delivered
 	md := &smartbftprotos.ViewMetadata{}
 	if err := proto.Unmarshal(d0.Metadata, md); err != nil {
-		assert.NoError(t, err)
+		require.NoError(t, err)
 	}
-	assert.Equal(t, uint64(0), md.ViewId)
-	assert.Equal(t, uint64(1), md.LatestSequence)
+	require.Equal(t, uint64(0), md.ViewId)
+	require.Equal(t, uint64(1), md.LatestSequence)
 	first := d0
 
 	network.StopServe()
@@ -1511,21 +1511,21 @@ func TestGradualStart(t *testing.T) {
 	network.StartServe()
 
 	d1 := <-n1.Delivered
-	assert.Equal(t, d0, d1)
+	require.Equal(t, d0, d1)
 
 	n0.Submit(Request{ID: fmt.Sprintf("%d", 2), ClientID: "alice"})
 
 	d0 = <-n0.Delivered
 	md = &smartbftprotos.ViewMetadata{}
 	if err := proto.Unmarshal(d0.Metadata, md); err != nil {
-		assert.NoError(t, err)
+		require.NoError(t, err)
 	}
-	assert.Equal(t, uint64(0), md.ViewId)
-	assert.Equal(t, uint64(2), md.LatestSequence)
+	require.Equal(t, uint64(0), md.ViewId)
+	require.Equal(t, uint64(2), md.LatestSequence)
 	second := d0
 
 	d1 = <-n1.Delivered
-	assert.Equal(t, d0, d1)
+	require.Equal(t, d0, d1)
 
 	network.StopServe()
 
@@ -1545,24 +1545,24 @@ func TestGradualStart(t *testing.T) {
 	network.StartServe()
 
 	d2 := <-n2.Delivered
-	assert.Equal(t, first, d2)
+	require.Equal(t, first, d2)
 	d2 = <-n2.Delivered
-	assert.Equal(t, second, d2)
+	require.Equal(t, second, d2)
 
 	n0.Submit(Request{ID: fmt.Sprintf("%d", 3), ClientID: "alice"})
 
 	d0 = <-n0.Delivered
 	md = &smartbftprotos.ViewMetadata{}
 	if err := proto.Unmarshal(d0.Metadata, md); err != nil {
-		assert.NoError(t, err)
+		require.NoError(t, err)
 	}
-	assert.Equal(t, uint64(0), md.ViewId)
-	assert.Equal(t, uint64(3), md.LatestSequence)
+	require.Equal(t, uint64(0), md.ViewId)
+	require.Equal(t, uint64(3), md.LatestSequence)
 
 	d1 = <-n1.Delivered
-	assert.Equal(t, d0, d1)
+	require.Equal(t, d0, d1)
 	d2 = <-n2.Delivered
-	assert.Equal(t, d0, d2)
+	require.Equal(t, d0, d2)
 
 	n0.Disconnect() // disconnect the leader
 
@@ -1572,13 +1572,13 @@ func TestGradualStart(t *testing.T) {
 	d1 = <-n1.Delivered
 	md = &smartbftprotos.ViewMetadata{}
 	if err := proto.Unmarshal(d1.Metadata, md); err != nil {
-		assert.NoError(t, err)
+		require.NoError(t, err)
 	}
-	assert.Equal(t, uint64(1), md.ViewId) // view was changed
-	assert.Equal(t, uint64(4), md.LatestSequence)
+	require.Equal(t, uint64(1), md.ViewId) // view was changed
+	require.Equal(t, uint64(4), md.LatestSequence)
 
 	d2 = <-n2.Delivered
-	assert.Equal(t, d1, d2)
+	require.Equal(t, d1, d2)
 }
 
 func TestReconfigAndViewChange(t *testing.T) {
@@ -1610,7 +1610,7 @@ func TestReconfigAndViewChange(t *testing.T) {
 		data = append(data, d)
 	}
 	for i := range numberOfNodes - 1 {
-		assert.Equal(t, data[i], data[i+1])
+		require.Equal(t, data[i], data[i+1])
 	}
 
 	for i := range numberOfNodes {
@@ -1629,7 +1629,7 @@ func TestReconfigAndViewChange(t *testing.T) {
 	}
 
 	d := <-nodes[4].Delivered
-	assert.Equal(t, d, data[0]) // make sure the new added node (leader) is synced
+	require.Equal(t, d, data[0]) // make sure the new added node (leader) is synced
 
 	nodes[4].Disconnect() // leader in partition
 
@@ -1643,7 +1643,7 @@ func TestReconfigAndViewChange(t *testing.T) {
 		data = append(data, d)
 	}
 	for i := range numberOfNodes - 1 {
-		assert.Equal(t, data[i], data[i+1])
+		require.Equal(t, data[i], data[i+1])
 	}
 }
 
@@ -1711,7 +1711,7 @@ func TestRotateAndViewChange(t *testing.T) {
 		data = append(data, d)
 	}
 	for i := range numberOfNodes - 1 {
-		assert.Equal(t, data[i], data[i+1])
+		require.Equal(t, data[i], data[i+1])
 	}
 
 	nodes[1].Submit(Request{ID: "2", ClientID: "alice"}) // submit to second leader
@@ -1722,7 +1722,7 @@ func TestRotateAndViewChange(t *testing.T) {
 		data = append(data, d)
 	}
 	for i := range numberOfNodes - 1 {
-		assert.Equal(t, data[i], data[i+1])
+		require.Equal(t, data[i], data[i+1])
 	}
 
 	nodes[2].Submit(Request{ID: "3", ClientID: "alice"}) // submit to third leader
@@ -1733,7 +1733,7 @@ func TestRotateAndViewChange(t *testing.T) {
 		data = append(data, d)
 	}
 	for i := range numberOfNodes - 1 {
-		assert.Equal(t, data[i], data[i+1])
+		require.Equal(t, data[i], data[i+1])
 	}
 
 	nodes[3].Disconnect() // fourth leader in partition
@@ -1757,7 +1757,7 @@ func TestRotateAndViewChange(t *testing.T) {
 		data = append(data, d)
 	}
 	for i := range numberOfNodes - 1 {
-		assert.Equal(t, data[i], data[i+1])
+		require.Equal(t, data[i], data[i+1])
 	}
 }
 
@@ -1804,8 +1804,8 @@ func TestMigrateToBlacklistAndBackAgain(t *testing.T) { //nolint:tparallel // su
 			<-nodes[i].Delivered
 		}
 
-		assert.Equal(t, uint64(1), atomic.LoadUint64(&leaderRotationDisabled))
-		assert.Equal(t, uint64(0), atomic.LoadUint64(&boundCommitSignatures))
+		require.Equal(t, uint64(1), atomic.LoadUint64(&leaderRotationDisabled))
+		require.Equal(t, uint64(0), atomic.LoadUint64(&boundCommitSignatures))
 
 		nodes[0].Submit(Request{ID: "2", ClientID: "alice"})
 
@@ -1813,8 +1813,8 @@ func TestMigrateToBlacklistAndBackAgain(t *testing.T) { //nolint:tparallel // su
 			<-nodes[i].Delivered
 		}
 
-		assert.Equal(t, uint64(2), atomic.LoadUint64(&leaderRotationDisabled))
-		assert.Equal(t, uint64(0), atomic.LoadUint64(&boundCommitSignatures))
+		require.Equal(t, uint64(2), atomic.LoadUint64(&leaderRotationDisabled))
+		require.Equal(t, uint64(0), atomic.LoadUint64(&boundCommitSignatures))
 	})
 
 	t.Run("Activate leader rotation", func(t *testing.T) {
@@ -1834,8 +1834,8 @@ func TestMigrateToBlacklistAndBackAgain(t *testing.T) { //nolint:tparallel // su
 			<-nodes[i].Delivered
 		}
 
-		assert.Equal(t, uint64(2), atomic.LoadUint64(&leaderRotationDisabled))
-		assert.Equal(t, uint64(1), atomic.LoadUint64(&boundCommitSignatures))
+		require.Equal(t, uint64(2), atomic.LoadUint64(&leaderRotationDisabled))
+		require.Equal(t, uint64(1), atomic.LoadUint64(&boundCommitSignatures))
 
 		nodes[0].Submit(Request{ID: "4", ClientID: "alice"})
 
@@ -1843,8 +1843,8 @@ func TestMigrateToBlacklistAndBackAgain(t *testing.T) { //nolint:tparallel // su
 			<-nodes[i].Delivered
 		}
 
-		assert.Equal(t, uint64(2), atomic.LoadUint64(&leaderRotationDisabled))
-		assert.Equal(t, uint64(2), atomic.LoadUint64(&boundCommitSignatures))
+		require.Equal(t, uint64(2), atomic.LoadUint64(&leaderRotationDisabled))
+		require.Equal(t, uint64(2), atomic.LoadUint64(&boundCommitSignatures))
 	})
 
 	t.Run("Deactivate leader rotation", func(t *testing.T) {
@@ -1865,7 +1865,7 @@ func TestMigrateToBlacklistAndBackAgain(t *testing.T) { //nolint:tparallel // su
 			<-nodes[i].Delivered
 		}
 
-		assert.Equal(t, uint64(2), atomic.LoadUint64(&boundCommitSignatures))
+		require.Equal(t, uint64(2), atomic.LoadUint64(&boundCommitSignatures))
 
 		nodes[0].Submit(Request{ID: "6", ClientID: "alice"})
 
@@ -1873,7 +1873,7 @@ func TestMigrateToBlacklistAndBackAgain(t *testing.T) { //nolint:tparallel // su
 			<-nodes[i].Delivered
 		}
 
-		assert.Equal(t, uint64(2), atomic.LoadUint64(&boundCommitSignatures))
+		require.Equal(t, uint64(2), atomic.LoadUint64(&boundCommitSignatures))
 	})
 }
 
@@ -1966,17 +1966,19 @@ func TestNodeInFlightFails(t *testing.T) {
 	var doNotCommitWG sync.WaitGroup
 	doNotCommitWG.Add(numberOfNodes)
 
+	var committedTooEarly atomic.Bool
 	for i := range numberOfNodes {
 		go func(deliverChannel chan *AppRecord) {
 			defer doNotCommitWG.Done()
 			select {
 			case <-deliverChannel:
-				assert.Fail(t, "should not have committed because first commit message should have been lost")
+				committedTooEarly.Store(true)
 			case <-time.After(time.Second):
 			}
 		}(nodes[i].Delivered)
 	}
 	doNotCommitWG.Wait()
+	require.False(t, committedTooEarly.Load(), "should not have committed because first commit message should have been lost")
 
 	// Re-enable commit messages to flow to all nodes but the last node
 	atomic.StoreUint32(&blockCommits, 0)
@@ -2001,8 +2003,8 @@ func TestNodeInFlightFails(t *testing.T) {
 	}
 
 	// Ensure all nodes that committed, committed the same decision
-	assert.Equal(t, d1, d2)
-	assert.Equal(t, d2, d3)
+	require.Equal(t, d1, d2)
+	require.Equal(t, d2, d3)
 
 	// Wait for in-flight view of view changer to time out
 	timeoutExpiredWG.Wait()
@@ -2013,7 +2015,7 @@ func TestNodeInFlightFails(t *testing.T) {
 	// However, it eventually syncs successfully and delivers the proposal
 	select {
 	case d4 := <-nodes[3].Delivered:
-		assert.Equal(t, d3, d4)
+		require.Equal(t, d3, d4)
 	case <-time.After(time.Second * 30):
 		t.Fatalf("Didn't commit decision in a timely manner")
 	}
@@ -2089,9 +2091,9 @@ func TestBlacklistAndRedemption(t *testing.T) {
 	// Ensure we remain on view 1, and that node 1 is in the blacklist
 	md := &smartbftprotos.ViewMetadata{}
 	err := proto.Unmarshal(nodes[1].lastDecision.Proposal.Metadata, md)
-	assert.NoError(t, err)
-	assert.Equal(t, uint64(1), md.ViewId)
-	assert.Equal(t, []uint64{1}, md.BlackList)
+	require.NoError(t, err)
+	require.Equal(t, uint64(1), md.ViewId)
+	require.Equal(t, []uint64{1}, md.BlackList)
 
 	// Next, re-connect node 1
 	nodes[0].Connect()
@@ -2121,8 +2123,8 @@ func TestBlacklistAndRedemption(t *testing.T) {
 		}
 		md := &smartbftprotos.ViewMetadata{}
 		err = proto.Unmarshal(nodes[1].lastDecision.Proposal.Metadata, md)
-		assert.NoError(t, err)
-		assert.Equal(t, uint64(1), md.ViewId)
+		require.NoError(t, err)
+		require.Equal(t, uint64(1), md.ViewId)
 	}
 	go doInBackground(f, stop)
 	blacklistPrunedWG.Wait()
@@ -2211,9 +2213,9 @@ func TestBlacklistMultipleViewChanges(t *testing.T) {
 	// Ensure we remain on view 2, and that nodes 2,3 are in the blacklist
 	md := &smartbftprotos.ViewMetadata{}
 	err := proto.Unmarshal(nodes[5].lastDecision.Proposal.Metadata, md)
-	assert.NoError(t, err)
-	assert.Equal(t, uint64(3), md.ViewId)
-	assert.Equal(t, []uint64{2, 3}, md.BlackList)
+	require.NoError(t, err)
+	require.Equal(t, uint64(3), md.ViewId)
+	require.Equal(t, []uint64{2, 3}, md.BlackList)
 
 	// Next, re-connect nodes 2,3
 	nodes[1].Connect()
@@ -2243,8 +2245,8 @@ func TestBlacklistMultipleViewChanges(t *testing.T) {
 		}
 		md := &smartbftprotos.ViewMetadata{}
 		err = proto.Unmarshal(nodes[3].lastDecision.Proposal.Metadata, md)
-		assert.NoError(t, err)
-		assert.Equal(t, uint64(3), md.ViewId)
+		require.NoError(t, err)
+		require.Equal(t, uint64(3), md.ViewId)
 	}
 	go doInBackground(f, stop)
 	node2RemovedFromBlacklist.Wait()
@@ -2284,18 +2286,20 @@ func TestNodeInFlightThenViewChange(t *testing.T) {
 	var wg sync.WaitGroup
 	wg.Add(numberOfNodes)
 
+	var committedTooEarly atomic.Bool
 	for i := range numberOfNodes {
 		go func(deliverChannel chan *AppRecord) {
 			defer wg.Done()
 			select {
 			case <-deliverChannel:
-				assert.Fail(t, "should not have committed because first commit message should have been lost")
+				committedTooEarly.Store(true)
 			case <-time.After(time.Second):
 			}
 		}(nodes[i].Delivered)
 	}
 
 	wg.Wait()
+	require.False(t, committedTooEarly.Load(), "should not have committed because first commit message should have been lost")
 	atomic.StoreUint32(&blockCommits, 0)
 
 	nodes[len(nodes)-1].Disconnect() // Last node in partition
@@ -2415,8 +2419,8 @@ func TestNodeCommitTheRestPrepareAndCommittedNodeCrashesThenRecovers(t *testing.
 	<-nodes[2].Delivered
 	<-nodes[3].Delivered
 
-	assert.Len(t, firstReqs, 1)
-	assert.Len(t, secondReqs, 1)
+	require.Len(t, firstReqs, 1)
+	require.Len(t, secondReqs, 1)
 }
 
 func TestNodePreparesTheRestInPartitionThenPartitionHeals(t *testing.T) {
@@ -2509,7 +2513,7 @@ func TestNodePreparesTheRestInPartitionThenPartitionHeals(t *testing.T) {
 	<-nodes[2].Delivered
 	<-nodes[3].Delivered
 
-	assert.Len(t, secondReqs, 1)
+	require.Len(t, secondReqs, 1)
 }
 
 // TestViewChangeAfterTryingToFork - there is some redundancy in the test,
@@ -2748,7 +2752,7 @@ ExternalLoop:
 	}
 
 	for i := range numberOfNodes - 1 {
-		assert.Equal(t, data[i], data[i+1])
+		require.Equal(t, data[i], data[i+1])
 	}
 
 	if storeI == -1 {
@@ -2767,7 +2771,7 @@ ExternalLoop:
 	}
 
 	for i := range numberOfNodes - 1 {
-		assert.Equal(t, data1[i], data1[i+1])
+		require.Equal(t, data1[i], data1[i+1])
 	}
 }
 
@@ -2853,7 +2857,7 @@ func TestFetchStateWhenSyncReturnsPrevView(t *testing.T) {
 		data = append(data, d)
 	}
 	for i := range numberOfNodes - 2 {
-		assert.Equal(t, data[i], data[i+1])
+		require.Equal(t, data[i], data[i+1])
 	}
 
 	nodes[0].Disconnect() // leader in partition
@@ -2904,7 +2908,7 @@ func TestFetchStateWhenSyncReturnsPrevView(t *testing.T) {
 		data = append(data, d)
 	}
 	for i := range numberOfNodes - 2 {
-		assert.Equal(t, data[i], data[i+1])
+		require.Equal(t, data[i], data[i+1])
 	}
 }
 
@@ -3027,7 +3031,7 @@ func TestLeaderStopSendHeartbeat(t *testing.T) {
 	}
 
 	for i := range numberOfNodes - 1 {
-		assert.Equal(t, data[i], data[i+1])
+		require.Equal(t, data[i], data[i+1])
 	}
 }
 
@@ -3324,7 +3328,7 @@ ExternalLoop:
 	}
 
 	for i := range numberOfNodes - 1 {
-		assert.Equal(t, data[i], data[i+1])
+		require.Equal(t, data[i], data[i+1])
 	}
 
 	if storeI == -1 {
@@ -3343,7 +3347,7 @@ ExternalLoop:
 	}
 
 	for i := range numberOfNodes - 1 {
-		assert.Equal(t, data1[i], data1[i+1])
+		require.Equal(t, data1[i], data1[i+1])
 	}
 }
 
@@ -3412,7 +3416,7 @@ func TestDecideAndAbortViewAtSameTime(t *testing.T) {
 		data = append(data, d)
 	}
 	for i := range numberOfNodes - 1 {
-		assert.Equal(t, data[i], data[i+1])
+		require.Equal(t, data[i], data[i+1])
 	}
 
 	nodes[0].Submit(Request{ID: "2", ClientID: "alice"})
@@ -3441,7 +3445,7 @@ func TestDecideAndAbortViewAtSameTime(t *testing.T) {
 	}
 
 	for i := range numberOfNodes - 1 {
-		assert.Equal(t, data[i], data[i+1])
+		require.Equal(t, data[i], data[i+1])
 	}
 }
 

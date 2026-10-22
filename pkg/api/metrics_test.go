@@ -5,7 +5,7 @@ import (
 
 	"github.com/hyperledger/SmartBFT/pkg/api"
 	"github.com/hyperledger/SmartBFT/pkg/metrics"
-	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 var countOpts = metrics.GaugeOpts{
@@ -29,13 +29,13 @@ var nodesOpts = metrics.GaugeOpts{
 func TestMakeStatsdFormat(t *testing.T) {
 	countOptsTmp := api.NewGaugeOpts(countOpts, []string{"label2", "label1"})
 	nodesOptsTmp := api.NewGaugeOpts(nodesOpts, []string{"label2", "label1"})
-	assert.Equal(t, "%{#fqname}.%{label1}.%{label2}", countOptsTmp.StatsdFormat)
-	assert.Equal(t, "%{#fqname}.%{id}.%{label1}.%{label2}", nodesOptsTmp.StatsdFormat)
+	require.Equal(t, "%{#fqname}.%{label1}.%{label2}", countOptsTmp.StatsdFormat)
+	require.Equal(t, "%{#fqname}.%{id}.%{label1}.%{label2}", nodesOptsTmp.StatsdFormat)
 }
 
 func TestMakeLabelNames(t *testing.T) {
 	countOptsTmp := api.NewGaugeOpts(countOpts, []string{"label2", "label1"})
 	nodesOptsTmp := api.NewGaugeOpts(nodesOpts, []string{"label2", "label1"})
-	assert.Equal(t, []string{"label1", "label2"}, countOptsTmp.LabelNames)
-	assert.Equal(t, []string{"id", "label1", "label2"}, nodesOptsTmp.LabelNames)
+	require.Equal(t, []string{"label1", "label2"}, countOptsTmp.LabelNames)
+	require.Equal(t, []string{"id", "label1", "label2"}, nodesOptsTmp.LabelNames)
 }

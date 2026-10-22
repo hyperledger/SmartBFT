@@ -11,7 +11,7 @@ import (
 
 	"github.com/hyperledger/SmartBFT/pkg/types"
 	protos "github.com/hyperledger/SmartBFT/smartbftprotos"
-	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 	"google.golang.org/protobuf/proto"
 )
@@ -23,7 +23,7 @@ func TestControllerDecideDoesNotBlockIfDeliveryWaiterLeft(t *testing.T) {
 	requireReturns(t, func() {
 		controller.decide(newDecision(t, view))
 	})
-	assert.Equal(t, uint64(1), controller.getCurrentDecisionsInView())
+	require.Equal(t, uint64(1), controller.getCurrentDecisionsInView())
 }
 
 func TestControllerDecideSkipsViewBookkeepingIfDecidingViewIsGone(t *testing.T) {
@@ -35,8 +35,8 @@ func TestControllerDecideSkipsViewBookkeepingIfDecidingViewIsGone(t *testing.T) 
 		requireReturns(t, func() {
 			controller.decide(newDecision(t, view))
 		})
-		assert.Equal(t, uint64(0), controller.getCurrentDecisionsInView())
-		assert.Empty(t, controller.leaderToken)
+		require.Equal(t, uint64(0), controller.getCurrentDecisionsInView())
+		require.Empty(t, controller.leaderToken)
 	})
 
 	t.Run("view replaced", func(t *testing.T) {
@@ -47,8 +47,8 @@ func TestControllerDecideSkipsViewBookkeepingIfDecidingViewIsGone(t *testing.T) 
 		requireReturns(t, func() {
 			controller.decide(newDecision(t, view))
 		})
-		assert.Equal(t, uint64(0), controller.getCurrentDecisionsInView())
-		assert.Empty(t, controller.leaderToken)
+		require.Equal(t, uint64(0), controller.getCurrentDecisionsInView())
+		require.Empty(t, controller.leaderToken)
 	})
 }
 
@@ -70,7 +70,7 @@ func TestViewChangerDecideDoesNotBlockIfInFlightWaiterLeft(t *testing.T) {
 	requireReturns(t, func() {
 		viewChanger.decideInFlight(attempt, types.Proposal{}, nil, nil)
 	})
-	assert.True(t, inFlightView.Stopped())
+	require.True(t, inFlightView.Stopped())
 }
 
 func TestViewChangerSyncDoesNotBlockIfInFlightWaiterLeft(t *testing.T) {
@@ -94,7 +94,7 @@ func TestViewChangerSyncDoesNotBlockIfInFlightWaiterLeft(t *testing.T) {
 // would normally acquire the leader token.
 func newDecidingController(t *testing.T, currView Proposer) *Controller {
 	metadata, err := proto.Marshal(&protos.ViewMetadata{})
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	checkpoint := &types.Checkpoint{}
 	checkpoint.Set(types.Proposal{Metadata: metadata}, nil)
@@ -115,7 +115,7 @@ func newDecidingController(t *testing.T, currView Proposer) *Controller {
 
 func newDecision(t *testing.T, view Proposer) decision {
 	metadata, err := proto.Marshal(&protos.ViewMetadata{})
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	return decision{
 		proposal:  types.Proposal{Metadata: metadata},

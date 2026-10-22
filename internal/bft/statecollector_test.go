@@ -14,7 +14,7 @@ import (
 	"github.com/hyperledger/SmartBFT/internal/bft"
 	"github.com/hyperledger/SmartBFT/pkg/types"
 	protos "github.com/hyperledger/SmartBFT/smartbftprotos"
-	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
@@ -23,7 +23,7 @@ func TestBasicTimeout(t *testing.T) {
 	t.Parallel()
 
 	basicLog, err := zap.NewDevelopment()
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	log := basicLog.Sugar()
 
 	collector := &bft.StateCollector{
@@ -37,7 +37,7 @@ func TestBasicTimeout(t *testing.T) {
 
 	collector.ClearCollected()
 	response := collector.CollectStateResponses()
-	assert.Nil(t, response)
+	require.Nil(t, response)
 
 	collector.Stop()
 }
@@ -116,7 +116,7 @@ func TestCollect(t *testing.T) {
 	} {
 		t.Run(test.description, func(t *testing.T) {
 			basicLog, err := zap.NewDevelopment()
-			assert.NoError(t, err)
+			require.NoError(t, err)
 			startWG := sync.WaitGroup{}
 			startWG.Add(1)
 			log := basicLog.WithOptions(zap.Hooks(func(entry zapcore.Entry) error {
@@ -156,11 +156,11 @@ func TestCollect(t *testing.T) {
 			response := <-responseChan
 
 			if test.isNil {
-				assert.Nil(t, response)
+				require.Nil(t, response)
 			} else {
-				assert.NotNil(t, response)
-				assert.Equal(t, test.view, response.View)
-				assert.Equal(t, test.seq, response.Seq)
+				require.NotNil(t, response)
+				require.Equal(t, test.view, response.View)
+				require.Equal(t, test.seq, response.Seq)
 			}
 			collector.Stop()
 		})

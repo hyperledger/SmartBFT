@@ -13,7 +13,7 @@ import (
 	smart "github.com/hyperledger/SmartBFT/pkg/api"
 	"github.com/hyperledger/SmartBFT/pkg/metrics/disabled"
 	"github.com/hyperledger/SmartBFT/pkg/wal"
-	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 	"google.golang.org/protobuf/proto"
 )
@@ -25,7 +25,7 @@ func TestTxn(t *testing.T) {
 	}
 	rawTxn := txn.ToBytes()
 	txn2 := TransactionFromBytes(rawTxn)
-	assert.Equal(t, txn, txn2)
+	require.Equal(t, txn, txn2)
 }
 
 func TestBlock(t *testing.T) {
@@ -52,7 +52,7 @@ func TestBlock(t *testing.T) {
 
 	rawBlock := block.ToBytes()
 	block2 := BlockDataFromBytes(rawBlock)
-	assert.Equal(t, block, block2)
+	require.Equal(t, block, block2)
 }
 
 func TestBlockHeader(t *testing.T) {
@@ -64,7 +64,7 @@ func TestBlockHeader(t *testing.T) {
 
 	headerBytes := blockHeader.ToBytes()
 	blockHeader2 := BlockHeaderFromBytes(headerBytes)
-	assert.Equal(t, blockHeader, blockHeader2)
+	require.Equal(t, blockHeader, blockHeader2)
 }
 
 func TestChain(t *testing.T) {
@@ -80,12 +80,12 @@ func TestChain(t *testing.T) {
 			ClientID: "alice",
 			ID:       fmt.Sprintf("tx%d", blockSeq),
 		})
-		assert.NoError(t, err)
+		require.NoError(t, err)
 		for i := 1; i <= numNodes; i++ {
 			chain := chains[i]
 			block := chain.Listen()
-			assert.Equal(t, uint64(blockSeq), block.Sequence)
-			assert.Equal(t, []Transaction{{ID: fmt.Sprintf("tx%d", blockSeq), ClientID: "alice"}}, block.Transactions)
+			require.Equal(t, uint64(blockSeq), block.Sequence)
+			require.Equal(t, []Transaction{{ID: fmt.Sprintf("tx%d", blockSeq), ClientID: "alice"}}, block.Transactions)
 		}
 	}
 
@@ -106,7 +106,7 @@ func setupNode(t *testing.T, id int, opt NetworkOptions, network map[int]map[int
 	}
 
 	basicLog, err := zap.NewDevelopment()
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	logger := basicLog.Sugar()
 	met := &disabled.Provider{}
 	walMet := wal.NewMetrics(met, "label1")

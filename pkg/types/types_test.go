@@ -10,12 +10,12 @@ import (
 
 	"github.com/hyperledger/SmartBFT/pkg/types"
 	"github.com/hyperledger/SmartBFT/smartbftprotos"
-	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestRequestInfoString(t *testing.T) {
 	ri := types.RequestInfo{ClientID: "alice", ID: "1"}
-	assert.Equal(t, "alice:1", ri.String())
+	require.Equal(t, "alice:1", ri.String())
 }
 
 func TestProposalDigest(t *testing.T) {
@@ -27,8 +27,8 @@ func TestProposalDigest(t *testing.T) {
 	}
 
 	digest := proposal.Digest()
-	assert.Len(t, digest, 64)
-	assert.Equal(t, digest, proposal.Digest())
+	require.Len(t, digest, 64)
+	require.Equal(t, digest, proposal.Digest())
 
 	for _, tst := range []struct {
 		name   string
@@ -42,7 +42,7 @@ func TestProposalDigest(t *testing.T) {
 		t.Run(tst.name, func(t *testing.T) {
 			other := proposal
 			tst.mutate(&other)
-			assert.NotEqual(t, digest, other.Digest())
+			require.NotEqual(t, digest, other.Digest())
 		})
 	}
 }
@@ -51,8 +51,8 @@ func TestCheckpoint(t *testing.T) {
 	var checkpoint types.Checkpoint
 
 	proposal, signatures := checkpoint.Get()
-	assert.Equal(t, &smartbftprotos.Proposal{}, proposal)
-	assert.Empty(t, signatures)
+	require.Equal(t, &smartbftprotos.Proposal{}, proposal)
+	require.Empty(t, signatures)
 
 	checkpoint.Set(types.Proposal{
 		Payload:              []byte{1},
@@ -65,13 +65,13 @@ func TestCheckpoint(t *testing.T) {
 	})
 
 	proposal, signatures = checkpoint.Get()
-	assert.Equal(t, &smartbftprotos.Proposal{
+	require.Equal(t, &smartbftprotos.Proposal{
 		Payload:              []byte{1},
 		Header:               []byte{2},
 		Metadata:             []byte{3},
 		VerificationSequence: 4,
 	}, proposal)
-	assert.Equal(t, []*smartbftprotos.Signature{
+	require.Equal(t, []*smartbftprotos.Signature{
 		{Signer: 1, Value: []byte{5}, Msg: []byte{6}},
 		{Signer: 2, Value: []byte{7}, Msg: []byte{8}},
 	}, signatures)

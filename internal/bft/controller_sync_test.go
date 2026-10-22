@@ -11,7 +11,7 @@ import (
 
 	"github.com/hyperledger/SmartBFT/pkg/types"
 	protos "github.com/hyperledger/SmartBFT/smartbftprotos"
-	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 )
 
@@ -51,7 +51,7 @@ func TestSyncDecisionsInView(t *testing.T) {
 		t.Helper()
 
 		basicLog, err := zap.NewDevelopment()
-		assert.NoError(t, err)
+		require.NoError(t, err)
 		log := basicLog.Sugar()
 
 		// Checkpoint metadata determines latestSeq() return value.
@@ -114,11 +114,11 @@ func TestSyncDecisionsInView(t *testing.T) {
 
 		viewNum, seq, decisions := c.sync()
 
-		assert.Equal(t, controllerView, viewNum, "view number should be preserved")
-		assert.Equal(t, controllerSeq+1, seq, "proposal sequence should be controllerSeq+1")
+		require.Equal(t, controllerView, viewNum, "view number should be preserved")
+		require.Equal(t, controllerSeq+1, seq, "proposal sequence should be controllerSeq+1")
 		// newDecisionsInView should be initialized from the controller's in-memory
 		// state (getCurrentDecisionsInView), which is controllerDecisions+1.
-		assert.Equal(t, controllerDecisions+1, decisions,
+		require.Equal(t, controllerDecisions+1, decisions,
 			"DecisionsInView must be preserved when sync returns same height")
 	})
 
@@ -142,9 +142,9 @@ func TestSyncDecisionsInView(t *testing.T) {
 
 		viewNum, seq, decisions := c.sync()
 
-		assert.Equal(t, controllerView, viewNum, "view number should be preserved")
-		assert.Equal(t, controllerSeq+2, seq, "proposal sequence should be syncSeq+1")
-		assert.Equal(t, syncDecisions+1, decisions,
+		require.Equal(t, controllerView, viewNum, "view number should be preserved")
+		require.Equal(t, controllerSeq+2, seq, "proposal sequence should be syncSeq+1")
+		require.Equal(t, syncDecisions+1, decisions,
 			"DecisionsInView should be latestDecisionDecisions+1 when sync returns higher height")
 	})
 }

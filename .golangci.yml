@@ -51,6 +51,7 @@ linters:
     - spancheck
     - staticcheck
     - testableexamples
+    - testifylint
     - tparallel
     - unconvert
     - unparam

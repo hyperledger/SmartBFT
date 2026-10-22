@@ -14,8 +14,8 @@ import (
 	"github.com/hyperledger/SmartBFT/pkg/metrics/disabled"
 	"github.com/hyperledger/SmartBFT/pkg/types"
 	protos "github.com/hyperledger/SmartBFT/smartbftprotos"
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 	"google.golang.org/protobuf/proto"
 )
@@ -173,7 +173,7 @@ func TestStateRestore(t *testing.T) {
 	} {
 		t.Run(testCase.description, func(t *testing.T) {
 			basicLog, err := zap.NewDevelopment()
-			assert.NoError(t, err)
+			require.NoError(t, err)
 			log := basicLog.Sugar()
 
 			state := &bft.PersistedState{
@@ -194,14 +194,14 @@ func TestStateRestore(t *testing.T) {
 			err = state.Restore(view)
 
 			if testCase.expectedError == "" {
-				assert.NoError(t, err)
-				assert.Equal(t, testCase.expectedPhase, view.Phase)
-				assert.Equal(t, testCase.expectedViewNumber, view.Number)
-				assert.Equal(t, testCase.expectedProposalSeq, view.ProposalSequence)
-				assert.Equal(t, testCase.expectedInFlightProposal, state.InFlightProposal.InFlightProposal())
-				assert.Equal(t, testCase.expectedInFlightPrepared, state.InFlightProposal.IsInFlightPrepared())
+				require.NoError(t, err)
+				require.Equal(t, testCase.expectedPhase, view.Phase)
+				require.Equal(t, testCase.expectedViewNumber, view.Number)
+				require.Equal(t, testCase.expectedProposalSeq, view.ProposalSequence)
+				require.Equal(t, testCase.expectedInFlightProposal, state.InFlightProposal.InFlightProposal())
+				require.Equal(t, testCase.expectedInFlightPrepared, state.InFlightProposal.IsInFlightPrepared())
 			} else {
-				assert.Contains(t, err.Error(), testCase.expectedError)
+				require.Contains(t, err.Error(), testCase.expectedError)
 			}
 		})
 	}
@@ -267,7 +267,7 @@ func TestStateLoadIfApplicable(t *testing.T) {
 	} {
 		t.Run(testCase.description, func(t *testing.T) {
 			basicLog, err := zap.NewDevelopment()
-			assert.NoError(t, err)
+			require.NoError(t, err)
 
 			state := &bft.PersistedState{
 				Entries: testCase.WALContent,
@@ -276,22 +276,22 @@ func TestStateLoadIfApplicable(t *testing.T) {
 
 			viewAndSeq, err := state.LoadNewViewIfApplicable()
 			if testCase.expectedError != "" {
-				assert.ErrorContains(t, err, testCase.expectedError)
+				require.ErrorContains(t, err, testCase.expectedError)
 			} else {
-				assert.NoError(t, err)
+				require.NoError(t, err)
 			}
-			assert.Equal(t, testCase.expectedViewAndSeq, viewAndSeq)
+			require.Equal(t, testCase.expectedViewAndSeq, viewAndSeq)
 
 			vc, err := state.LoadViewChangeIfApplicable()
 			if testCase.expectedError != "" {
-				assert.ErrorContains(t, err, testCase.expectedError)
+				require.ErrorContains(t, err, testCase.expectedError)
 			} else {
-				assert.NoError(t, err)
+				require.NoError(t, err)
 			}
 			if testCase.expectedViewChange == nil {
-				assert.Nil(t, vc)
+				require.Nil(t, vc)
 			} else {
-				assert.True(t, proto.Equal(testCase.expectedViewChange, vc))
+				require.True(t, proto.Equal(testCase.expectedViewChange, vc))
 			}
 		})
 	}

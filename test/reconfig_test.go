@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/hyperledger/SmartBFT/pkg/types"
-	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestBasicReconfig(t *testing.T) {
@@ -34,7 +34,7 @@ func TestBasicReconfig(t *testing.T) {
 		data = append(data, d)
 	}
 	for i := range numberOfNodes - 1 {
-		assert.Equal(t, data[i], data[i+1])
+		require.Equal(t, data[i], data[i+1])
 	}
 
 	newConfig := fastConfig
@@ -58,7 +58,7 @@ func TestBasicReconfig(t *testing.T) {
 		data = append(data, d)
 	}
 	for i := range numberOfNodes - 1 {
-		assert.Equal(t, data[i], data[i+1])
+		require.Equal(t, data[i], data[i+1])
 	}
 
 	nodes[0].Submit(Request{ID: "11", ClientID: "alice"})
@@ -68,7 +68,7 @@ func TestBasicReconfig(t *testing.T) {
 		data = append(data, d)
 	}
 	for i := range numberOfNodes - 1 {
-		assert.Equal(t, data[i], data[i+1])
+		require.Equal(t, data[i], data[i+1])
 	}
 }
 
@@ -98,7 +98,7 @@ func TestPoolPrunedAfterReconfig(t *testing.T) {
 
 	follower := nodes[1]
 	follower.Submit(Request{ID: "1", ClientID: "bob"})
-	assert.Equal(t, 1, follower.Consensus.Pool.Size())
+	require.Equal(t, 1, follower.Consensus.Pool.Size())
 
 	newConfig := fastConfig
 	newConfig.RequestForwardTimeout = forwardTimeout
@@ -120,10 +120,10 @@ func TestPoolPrunedAfterReconfig(t *testing.T) {
 		data = append(data, d)
 	}
 	for i := range numberOfNodes - 1 {
-		assert.Equal(t, data[i], data[i+1])
+		require.Equal(t, data[i], data[i+1])
 	}
 
-	assert.Eventually(t, func() bool {
+	require.Eventually(t, func() bool {
 		return follower.Consensus.Pool.Size() == 0
 	}, 10*time.Second, 100*time.Millisecond)
 
@@ -134,7 +134,7 @@ func TestPoolPrunedAfterReconfig(t *testing.T) {
 		data = append(data, d)
 	}
 	for i := range numberOfNodes - 1 {
-		assert.Equal(t, data[i], data[i+1])
+		require.Equal(t, data[i], data[i+1])
 	}
 }
 
@@ -163,7 +163,7 @@ func TestBasicAddNodes(t *testing.T) {
 		data1 = append(data1, d)
 	}
 	for i := range numberOfNodes - 1 {
-		assert.Equal(t, data1[i], data1[i+1])
+		require.Equal(t, data1[i], data1[i+1])
 	}
 
 	newNode1 := newNode(5, network, t.Name(), testDir, true, decisions)
@@ -189,7 +189,7 @@ func TestBasicAddNodes(t *testing.T) {
 		data2 = append(data2, d)
 	}
 	for i := range numberOfNodes - 1 {
-		assert.Equal(t, data2[i], data2[i+1])
+		require.Equal(t, data2[i], data2[i+1])
 	}
 
 	nodes = append(nodes, newNode1, newNode2)
@@ -197,12 +197,12 @@ func TestBasicAddNodes(t *testing.T) {
 
 	d1 := <-nodes[4].Delivered
 	d2 := <-nodes[5].Delivered
-	assert.Equal(t, data1[0], d1)
-	assert.Equal(t, data1[0], d2)
+	require.Equal(t, data1[0], d1)
+	require.Equal(t, data1[0], d2)
 	d1 = <-nodes[4].Delivered
 	d2 = <-nodes[5].Delivered
-	assert.Equal(t, data2[0], d1)
-	assert.Equal(t, data2[0], d2)
+	require.Equal(t, data2[0], d1)
+	require.Equal(t, data2[0], d2)
 
 	nodes[0].Submit(Request{ID: "11", ClientID: "alice"})
 	numberOfNodes = 6
@@ -212,7 +212,7 @@ func TestBasicAddNodes(t *testing.T) {
 		data = append(data, d)
 	}
 	for i := range numberOfNodes - 1 {
-		assert.Equal(t, data[i], data[i+1])
+		require.Equal(t, data[i], data[i+1])
 	}
 }
 
@@ -245,7 +245,7 @@ func TestBasicRemoveNodes(t *testing.T) {
 		data = append(data, d)
 	}
 	for i := range numberOfNodes - 1 {
-		assert.Equal(t, data[i], data[i+1])
+		require.Equal(t, data[i], data[i+1])
 	}
 
 	newConfig := fastConfig
@@ -268,7 +268,7 @@ func TestBasicRemoveNodes(t *testing.T) {
 		data = append(data, d)
 	}
 	for i := range numberOfNodes - 1 {
-		assert.Equal(t, data[i], data[i+1])
+		require.Equal(t, data[i], data[i+1])
 	}
 
 	nodes[4].Disconnect()
@@ -283,7 +283,7 @@ func TestBasicRemoveNodes(t *testing.T) {
 		data = append(data, d)
 	}
 	for i := range numberOfNodes - 1 {
-		assert.Equal(t, data[i], data[i+1])
+		require.Equal(t, data[i], data[i+1])
 	}
 }
 
@@ -312,7 +312,7 @@ func TestAddRemoveNodes(t *testing.T) {
 		data1 = append(data1, d)
 	}
 	for i := range numberOfNodes - 1 {
-		assert.Equal(t, data1[i], data1[i+1])
+		require.Equal(t, data1[i], data1[i+1])
 	}
 
 	for i := 5; i <= 10; i++ {
@@ -340,7 +340,7 @@ func TestAddRemoveNodes(t *testing.T) {
 		data2 = append(data2, d)
 	}
 	for i := range numberOfNodes - 1 {
-		assert.Equal(t, data2[i], data2[i+1])
+		require.Equal(t, data2[i], data2[i+1])
 	}
 
 	startNodes(nodes[4:], network)
@@ -353,7 +353,7 @@ func TestAddRemoveNodes(t *testing.T) {
 		data = append(data, d)
 	}
 	for i := range numberOfNodes - 4 {
-		assert.Equal(t, data[i], data1[0])
+		require.Equal(t, data[i], data1[0])
 	}
 	data = make([]*AppRecord, 0)
 	for i := 4; i < numberOfNodes; i++ {
@@ -361,7 +361,7 @@ func TestAddRemoveNodes(t *testing.T) {
 		data = append(data, d)
 	}
 	for i := range numberOfNodes - 4 {
-		assert.Equal(t, data[i], data2[0])
+		require.Equal(t, data[i], data2[0])
 	}
 
 	nodes[9].Submit(Request{ID: "11", ClientID: "alice"})
@@ -371,7 +371,7 @@ func TestAddRemoveNodes(t *testing.T) {
 		data3 = append(data3, d)
 	}
 	for i := range numberOfNodes - 1 {
-		assert.Equal(t, data3[i], data3[i+1])
+		require.Equal(t, data3[i], data3[i+1])
 	}
 
 	nodesToRemove := 4
@@ -398,7 +398,7 @@ func TestAddRemoveNodes(t *testing.T) {
 			data = append(data, d)
 		}
 		for i := range numberOfNodes - r {
-			assert.Equal(t, data[i], data[i+1])
+			require.Equal(t, data[i], data[i+1])
 		}
 
 		nodes[r-1].Disconnect()
@@ -411,7 +411,7 @@ func TestAddRemoveNodes(t *testing.T) {
 		data = append(data, d)
 	}
 	for i := range numberOfNodes - nodesToRemove - 1 {
-		assert.Equal(t, data[i], data[i+1])
+		require.Equal(t, data[i], data[i+1])
 	}
 }
 
@@ -439,7 +439,7 @@ func TestAddRemoveAddNodes(t *testing.T) {
 		data1 = append(data1, d)
 	}
 	for i := range numberOfNodes - 1 {
-		assert.Equal(t, data1[i], data1[i+1])
+		require.Equal(t, data1[i], data1[i+1])
 	}
 
 	newNode := newNode(uint64(5), network, t.Name(), testDir, false, 0)
@@ -465,7 +465,7 @@ func TestAddRemoveAddNodes(t *testing.T) {
 		data2 = append(data2, d)
 	}
 	for i := range numberOfNodes - 1 {
-		assert.Equal(t, data2[i], data2[i+1])
+		require.Equal(t, data2[i], data2[i+1])
 	}
 
 	startNodes(nodes[4:], network)
@@ -473,7 +473,7 @@ func TestAddRemoveAddNodes(t *testing.T) {
 	<-nodes[4].Delivered
 	d := <-nodes[4].Delivered
 
-	assert.Equal(t, "10", requestFromBytes(d.Batch.Requests[0]).ID)
+	require.Equal(t, "10", requestFromBytes(d.Batch.Requests[0]).ID)
 
 	nodes[4].Disconnect()
 
@@ -484,7 +484,7 @@ func TestAddRemoveAddNodes(t *testing.T) {
 		data3 = append(data3, d)
 	}
 	for i := range numberOfNodes - 1 {
-		assert.Equal(t, data3[i], data3[i+1])
+		require.Equal(t, data3[i], data3[i+1])
 	}
 
 	nodes[0].Submit(Request{ID: "12", ClientID: "alice"})
@@ -494,7 +494,7 @@ func TestAddRemoveAddNodes(t *testing.T) {
 		data4 = append(data4, d)
 	}
 	for i := range numberOfNodes - 1 {
-		assert.Equal(t, data4[i], data4[i+1])
+		require.Equal(t, data4[i], data4[i+1])
 	}
 
 	nodes[0].Submit(Request{ID: "13", ClientID: "alice"})
@@ -504,7 +504,7 @@ func TestAddRemoveAddNodes(t *testing.T) {
 		data5 = append(data5, d)
 	}
 	for i := range numberOfNodes - 1 {
-		assert.Equal(t, data5[i], data5[i+1])
+		require.Equal(t, data5[i], data5[i+1])
 	}
 
 	nodes[4].logger.Infof("--------------------------------")
@@ -531,7 +531,7 @@ func TestAddRemoveAddNodes(t *testing.T) {
 		}
 	}
 	for i := range numberOfNodes {
-		assert.Equal(t, data6[i], data6[i+1])
+		require.Equal(t, data6[i], data6[i+1])
 	}
 }
 
@@ -562,7 +562,7 @@ func TestViewChangeAfterReconfig(t *testing.T) {
 		data = append(data, d)
 	}
 	for i := range numberOfNodes - 1 {
-		assert.Equal(t, data[i], data[i+1])
+		require.Equal(t, data[i], data[i+1])
 	}
 
 	newNode := newNode(1, network, t.Name(), testDir, false, 0)
@@ -590,7 +590,7 @@ func TestViewChangeAfterReconfig(t *testing.T) {
 		data = append(data, d)
 	}
 	for i := range numberOfNodes - 1 {
-		assert.Equal(t, data[i], data[i+1])
+		require.Equal(t, data[i], data[i+1])
 	}
 
 	for i := range numberOfNodes {
@@ -602,7 +602,7 @@ func TestViewChangeAfterReconfig(t *testing.T) {
 		data = append(data, d)
 	}
 	for i := range numberOfNodes - 1 {
-		assert.Equal(t, data[i], data[i+1])
+		require.Equal(t, data[i], data[i+1])
 	}
 }
 
@@ -634,7 +634,7 @@ func TestAddNodeAfterManyRotations(t *testing.T) {
 			data = append(data, d)
 		}
 		for i := range numberOfNodes - 1 {
-			assert.Equal(t, data[i], data[i+1])
+			require.Equal(t, data[i], data[i+1])
 		}
 		blocks = append(blocks, data[0])
 	}
@@ -662,7 +662,7 @@ func TestAddNodeAfterManyRotations(t *testing.T) {
 		reconfigBlock = append(reconfigBlock, d)
 	}
 	for i := range numberOfNodes - 1 {
-		assert.Equal(t, reconfigBlock[i], reconfigBlock[i+1])
+		require.Equal(t, reconfigBlock[i], reconfigBlock[i+1])
 	}
 
 	nodes = append(nodes, newNode)
@@ -671,12 +671,12 @@ func TestAddNodeAfterManyRotations(t *testing.T) {
 	// make sure the new node synced with the many delivered blocks
 	for j := 1; j <= blocksNum; j++ {
 		d := <-nodes[4].Delivered
-		assert.Equal(t, blocks[j-1], d)
+		require.Equal(t, blocks[j-1], d)
 	}
 
 	// make sure the new node synced with the reconfig block
 	d := <-nodes[4].Delivered
-	assert.Equal(t, reconfigBlock[0], d)
+	require.Equal(t, reconfigBlock[0], d)
 
 	// submit another transaction and make sure all got it
 	nodes[0].Submit(Request{ID: "11", ClientID: "alice"})
@@ -687,6 +687,6 @@ func TestAddNodeAfterManyRotations(t *testing.T) {
 		data = append(data, d)
 	}
 	for i := range numberOfNodes - 1 {
-		assert.Equal(t, data[i], data[i+1])
+		require.Equal(t, data[i], data[i+1])
 	}
 }

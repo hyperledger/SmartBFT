@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/hyperledger/SmartBFT/smartbftprotos"
-	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 )
 
@@ -60,7 +60,7 @@ func (h heartbeatEventHandler) Sync() {
 
 func TestHeartbeatWasSent(t *testing.T) {
 	basicLog, err := zap.NewDevelopment()
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	log := basicLog.Sugar()
 
 	var heartBeatsSent uint32
@@ -91,5 +91,5 @@ func TestHeartbeatWasSent(t *testing.T) {
 
 	hm.Close()
 
-	assert.Equal(t, uint32(2), atomic.LoadUint32(&heartBeatsSent))
+	require.Equal(t, uint32(2), atomic.LoadUint32(&heartBeatsSent))
 }

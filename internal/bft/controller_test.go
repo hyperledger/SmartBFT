@@ -19,15 +19,15 @@ import (
 	"github.com/hyperledger/SmartBFT/pkg/types"
 	"github.com/hyperledger/SmartBFT/pkg/wal"
 	protos "github.com/hyperledger/SmartBFT/smartbftprotos"
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 	"google.golang.org/protobuf/proto"
 )
 
 func TestControllerBasic(t *testing.T) {
 	basicLog, err := zap.NewDevelopment()
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	log := basicLog.Sugar()
 	app := &mocks.ApplicationMock{}
 	app.On("Deliver", mock.Anything, mock.Anything)
@@ -78,7 +78,7 @@ func TestControllerBasic(t *testing.T) {
 
 func TestControllerLeaderBasic(t *testing.T) {
 	basicLog, err := zap.NewDevelopment()
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	log := basicLog.Sugar()
 	batcher := &mocks.Batcher{}
 	batcher.On("Close")
@@ -129,7 +129,7 @@ func TestControllerLeaderBasic(t *testing.T) {
 
 func TestLeaderPropose(t *testing.T) {
 	basicLog, err := zap.NewDevelopment()
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	log := basicLog.Sugar()
 	req := []byte{1}
 	batcher := &mocks.Batcher{}
@@ -184,7 +184,7 @@ func TestLeaderPropose(t *testing.T) {
 
 	testDir := t.TempDir()
 	wal, err := wal.Create(log, testDir, nil)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	synchronizer := &mocks.SynchronizerMock{}
 	synchronizer.On("Sync").Run(func(args mock.Arguments) {}).Return(types.SyncResponse{Latest: types.Decision{
@@ -263,12 +263,12 @@ func TestLeaderPropose(t *testing.T) {
 		VerificationSequence: uint64(proposal.VerificationSequence),
 	}
 	proposal, signatures := controller.Checkpoint.Get()
-	assert.Equal(t, expected, proposal)
+	require.Equal(t, expected, proposal)
 	signaturesBySigners := make(map[uint64]*protos.Signature)
 	for _, sig := range signatures {
 		signaturesBySigners[sig.Signer] = sig
 	}
-	assert.Equal(t, map[uint64]*protos.Signature{
+	require.Equal(t, map[uint64]*protos.Signature{
 		17: {Signer: 17, Value: []byte{4}},
 		23: {Signer: 23, Value: []byte{4}},
 		37: {Signer: 37, Value: []byte{4}},
@@ -281,7 +281,7 @@ func TestLeaderPropose(t *testing.T) {
 
 func TestViewChanged(t *testing.T) {
 	basicLog, err := zap.NewDevelopment()
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	log := basicLog.Sugar()
 	req := []byte{1}
 	batcher := &mocks.Batcher{}
@@ -321,7 +321,7 @@ func TestViewChanged(t *testing.T) {
 
 	testDir := t.TempDir()
 	wal, err := wal.Create(log, testDir, nil)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	synchronizer := &mocks.SynchronizerMock{}
 	synchronizer.On("Sync").Run(func(args mock.Arguments) {}).Return(types.SyncResponse{Latest: types.Decision{
@@ -381,7 +381,7 @@ func TestViewChanged(t *testing.T) {
 
 func TestSyncPrevView(t *testing.T) {
 	basicLog, err := zap.NewDevelopment()
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	log := basicLog.Sugar()
 	app := &mocks.ApplicationMock{}
 	appWG := sync.WaitGroup{}
@@ -433,7 +433,7 @@ func TestSyncPrevView(t *testing.T) {
 
 	testDir := t.TempDir()
 	wal, err := wal.Create(log, testDir, nil)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	collector := bft.StateCollector{
 		SelfID:         0,
@@ -571,7 +571,7 @@ func TestControllerLeaderRequestHandling(t *testing.T) {
 			var submittedToPool sync.WaitGroup
 
 			basicLog, err := zap.NewDevelopment()
-			assert.NoError(t, err)
+			require.NoError(t, err)
 
 			log := basicLog.Sugar()
 
@@ -695,7 +695,7 @@ func configureProposerBuilder(controller *bft.Controller) *atomic.Value {
 
 func TestSyncInform(t *testing.T) {
 	basicLog, err := zap.NewDevelopment()
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	log := basicLog.Sugar()
 	req := []byte{1}
 	batcher := &mocks.Batcher{}
@@ -751,7 +751,7 @@ func TestSyncInform(t *testing.T) {
 
 	testDir := t.TempDir()
 	wal, err := wal.Create(log, testDir, nil)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	synchronizer := &mocks.SynchronizerMock{}
 	synchronizerWG := sync.WaitGroup{}
@@ -836,8 +836,8 @@ func TestSyncInform(t *testing.T) {
 
 	vc.StartViewChange(2, true)
 	msg := <-msgChan
-	assert.NotNil(t, msg.GetViewChange())
-	assert.Equal(t, syncToView+1, msg.GetViewChange().NextView) // view number did change according to info
+	require.NotNil(t, msg.GetViewChange())
+	require.Equal(t, syncToView+1, msg.GetViewChange().NextView) // view number did change according to info
 
 	batcher.AssertNumberOfCalls(t, "NextBatch", 1)
 	assembler.AssertNumberOfCalls(t, "AssembleProposal", 1)
@@ -852,12 +852,12 @@ func TestSyncInform(t *testing.T) {
 
 func TestRotateFromLeaderToFollower(t *testing.T) {
 	basicLog, err := zap.NewDevelopment()
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	log := basicLog.Sugar()
 
 	testDir := t.TempDir()
 	wal, err := wal.Create(log, testDir, nil)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	defer wal.Close()
 
 	var restartTimersWG sync.WaitGroup
@@ -1012,12 +1012,12 @@ func TestRotateFromLeaderToFollower(t *testing.T) {
 
 func TestRotateFromFollowerToLeader(t *testing.T) {
 	basicLog, err := zap.NewDevelopment()
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	log := basicLog.Sugar()
 
 	testDir := t.TempDir()
 	wal, err := wal.Create(log, testDir, nil)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	defer wal.Close()
 
 	var restartTimersWG sync.WaitGroup
@@ -1191,12 +1191,12 @@ func TestDeliverTwiceOnceFromSyncAndOnceFromViewData(t *testing.T) {
 	// If the checkpoint was updated correctly then this decision should not be delivered twice.
 
 	basicLog, err := zap.NewDevelopment()
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	log := basicLog.Sugar()
 
 	testDir := t.TempDir()
 	wal, err := wal.Create(log, testDir, nil)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	comm := &mocks.CommMock{}
 	comm.On("BroadcastConsensus", mock.Anything)

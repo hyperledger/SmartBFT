@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/hyperledger/SmartBFT/pkg/types"
-	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestConfigurationValidate(t *testing.T) {
@@ -20,7 +20,7 @@ func TestConfigurationValidate(t *testing.T) {
 		return config
 	}
 
-	assert.NoError(t, validConfig().Validate())
+	require.NoError(t, validConfig().Validate())
 
 	for _, tst := range []struct {
 		name        string
@@ -165,7 +165,7 @@ func TestConfigurationValidate(t *testing.T) {
 		t.Run(tst.name, func(t *testing.T) {
 			config := validConfig()
 			tst.mutate(&config)
-			assert.EqualError(t, config.Validate(), tst.expectedErr)
+			require.EqualError(t, config.Validate(), tst.expectedErr)
 		})
 	}
 
@@ -173,6 +173,6 @@ func TestConfigurationValidate(t *testing.T) {
 		config := validConfig()
 		config.LeaderRotation = false
 		config.DecisionsPerLeader = 0
-		assert.NoError(t, config.Validate())
+		require.NoError(t, config.Validate())
 	})
 }

@@ -18,14 +18,14 @@ import (
 	"github.com/hyperledger/SmartBFT/internal/bft"
 	"github.com/hyperledger/SmartBFT/internal/bft/mocks"
 	"github.com/hyperledger/SmartBFT/pkg/types"
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 )
 
 func TestReqPoolBasic(t *testing.T) {
 	basicLog, err := zap.NewDevelopment()
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	log := basicLog.Sugar()
 
 	insp := &testRequestInspector{}
@@ -38,15 +38,15 @@ func TestReqPoolBasic(t *testing.T) {
 
 		pool := bft.NewPool(log, insp, timeoutHandler, bft.PoolOptions{QueueSize: 3, ForwardTimeout: time.Hour}, submittedChan)
 
-		assert.Equal(t, 0, pool.Size())
+		require.Equal(t, 0, pool.Size())
 		err = pool.Submit(byteReq1)
-		assert.NoError(t, err)
-		assert.Equal(t, 1, pool.Size())
+		require.NoError(t, err)
+		require.Equal(t, 1, pool.Size())
 		pool.Close()
-		assert.Equal(t, 0, pool.Size())
+		require.Equal(t, 0, pool.Size())
 
 		err = pool.Submit(byteReq1)
-		assert.EqualError(t, err, "pool closed, request rejected: {1 1}")
+		require.EqualError(t, err, "pool closed, request rejected: {1 1}")
 	})
 
 	t.Run("submit remove next", func(t *testing.T) {
@@ -55,10 +55,10 @@ func TestReqPoolBasic(t *testing.T) {
 		pool := bft.NewPool(log, insp, timeoutHandler, bft.PoolOptions{QueueSize: 3, ForwardTimeout: time.Hour}, submittedChan)
 		defer pool.Close()
 
-		assert.Equal(t, 0, pool.Size())
+		require.Equal(t, 0, pool.Size())
 		err = pool.Submit(byteReq1)
-		assert.NoError(t, err)
-		assert.Equal(t, 1, pool.Size())
+		require.NoError(t, err)
+		require.Equal(t, 1, pool.Size())
 		req1 := types.RequestInfo{
 			ID:       "1",
 			ClientID: "1",
@@ -69,17 +69,17 @@ func TestReqPoolBasic(t *testing.T) {
 			ClientID: "11",
 		}
 		err = pool.Submit(byteReq1)
-		assert.Error(t, err)
-		assert.Equal(t, 1, pool.Size())
+		require.Error(t, err)
+		require.Equal(t, 1, pool.Size())
 		err = pool.RemoveRequest(req1)
-		assert.NoError(t, err)
-		assert.Equal(t, 0, pool.Size())
+		require.NoError(t, err)
+		require.Equal(t, 0, pool.Size())
 		err = pool.Submit(byteReq11)
-		assert.NoError(t, err)
-		assert.Equal(t, 1, pool.Size())
+		require.NoError(t, err)
+		require.Equal(t, 1, pool.Size())
 		err = pool.RemoveRequest(req11)
-		assert.NoError(t, err)
-		assert.Equal(t, 0, pool.Size())
+		require.NoError(t, err)
+		require.Equal(t, 0, pool.Size())
 
 		byteReq2 := makeTestRequest("2", "2", "bar")
 		byteReq22 := makeTestRequest("22", "22", "bar")
@@ -88,69 +88,69 @@ func TestReqPoolBasic(t *testing.T) {
 			ClientID: "22",
 		}
 		err = pool.Submit(byteReq2)
-		assert.NoError(t, err)
-		assert.Equal(t, 1, pool.Size())
+		require.NoError(t, err)
+		require.Equal(t, 1, pool.Size())
 		err = pool.Submit(byteReq22)
-		assert.NoError(t, err)
-		assert.Equal(t, 2, pool.Size())
+		require.NoError(t, err)
+		require.Equal(t, 2, pool.Size())
 		err = pool.Submit(byteReq22)
-		assert.Error(t, err)
+		require.Error(t, err)
 		err = pool.Submit(byteReq2)
-		assert.Error(t, err)
+		require.Error(t, err)
 		err = pool.RemoveRequest(req22)
-		assert.NoError(t, err)
+		require.NoError(t, err)
 		byteReq23 := makeTestRequest("23", "23", "bar")
 		req23 := types.RequestInfo{
 			ID:       "23",
 			ClientID: "23",
 		}
 		err = pool.Submit(byteReq23)
-		assert.NoError(t, err)
+		require.NoError(t, err)
 		req2 := types.RequestInfo{
 			ID:       "2",
 			ClientID: "2",
 		}
 		err = pool.RemoveRequest(req2)
-		assert.NoError(t, err)
+		require.NoError(t, err)
 		byteReq24 := makeTestRequest("24", "24", "bar")
 		req24 := types.RequestInfo{
 			ID:       "24",
 			ClientID: "24",
 		}
 		err = pool.Submit(byteReq24)
-		assert.NoError(t, err)
+		require.NoError(t, err)
 
 		byteReq3 := makeTestRequest("3", "3", "bog")
 		err = pool.Submit(byteReq3)
-		assert.NoError(t, err)
+		require.NoError(t, err)
 
 		next, full := pool.NextRequests(4, 10000000, false)
-		assert.Equal(t, "23", insp.RequestID(next[0]).ID)
-		assert.Equal(t, "24", insp.RequestID(next[1]).ID)
-		assert.Equal(t, "3", insp.RequestID(next[2]).ID)
-		assert.Len(t, next, 3)
-		assert.False(t, full)
+		require.Equal(t, "23", insp.RequestID(next[0]).ID)
+		require.Equal(t, "24", insp.RequestID(next[1]).ID)
+		require.Equal(t, "3", insp.RequestID(next[2]).ID)
+		require.Len(t, next, 3)
+		require.False(t, full)
 
 		err = pool.RemoveRequest(req24)
-		assert.NoError(t, err)
+		require.NoError(t, err)
 
 		next, _ = pool.NextRequests(4, 10000000, false)
-		assert.Equal(t, "23", insp.RequestID(next[0]).ID)
-		assert.Equal(t, "3", insp.RequestID(next[1]).ID)
-		assert.Len(t, next, 2)
-		assert.False(t, full)
+		require.Equal(t, "23", insp.RequestID(next[0]).ID)
+		require.Equal(t, "3", insp.RequestID(next[1]).ID)
+		require.Len(t, next, 2)
+		require.False(t, full)
 
 		next, _ = pool.NextRequests(4, 10000000, true)
-		assert.Nil(t, next)
-		assert.False(t, full)
+		require.Nil(t, next)
+		require.False(t, full)
 
 		next, full = pool.NextRequests(1, 10000000, false)
-		assert.Equal(t, "23", insp.RequestID(next[0]).ID)
-		assert.Len(t, next, 1)
-		assert.True(t, full)
+		require.Equal(t, "23", insp.RequestID(next[0]).ID)
+		require.Len(t, next, 1)
+		require.True(t, full)
 
 		err = pool.RemoveRequest(req23)
-		assert.NoError(t, err)
+		require.NoError(t, err)
 
 		req3 := types.RequestInfo{
 			ID:       "3",
@@ -158,10 +158,10 @@ func TestReqPoolBasic(t *testing.T) {
 		}
 
 		err = pool.RemoveRequest(req3)
-		assert.NoError(t, err)
+		require.NoError(t, err)
 
 		next, _ = pool.NextRequests(1, 10000000, false)
-		assert.Len(t, next, 0)
+		require.Empty(t, next)
 
 		timeoutHandler.AssertNumberOfCalls(t, "OnRequestTimeout", 0)
 		timeoutHandler.AssertNumberOfCalls(t, "OnLeaderFwdRequestTimeout", 0)
@@ -172,7 +172,7 @@ func TestReqPoolBasic(t *testing.T) {
 func TestReqPoolCapacity(t *testing.T) {
 	numReq := 100
 	basicLog, err := zap.NewDevelopment()
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	log := basicLog.Sugar()
 	insp := &testRequestInspector{}
 	submittedChan := make(chan struct{}, 1)
@@ -210,7 +210,7 @@ func TestReqPoolCapacity(t *testing.T) {
 		}
 		wg.Wait()
 
-		assert.Equal(t, 0, pool.Size())
+		require.Equal(t, 0, pool.Size())
 		timeoutHandler.AssertNumberOfCalls(t, "OnRequestTimeout", 0)
 		timeoutHandler.AssertNumberOfCalls(t, "OnLeaderFwdRequestTimeout", .0)
 		pool.Close()
@@ -227,33 +227,33 @@ func TestReqPoolCapacity(t *testing.T) {
 			r := makeTestRequest("1", fmt.Sprintf("%d", i), "aaaaaa")
 			lengths = append(lengths, len(r))
 			err := pool.Submit(r)
-			assert.NoError(t, err)
+			require.NoError(t, err)
 			totalLength += len(r)
 		}
 
 		next, full := pool.NextRequests(5, 10000000, false)
-		assert.Equal(t, 5, len(next))
-		assert.True(t, full)
+		require.Len(t, next, 5)
+		require.True(t, full)
 
 		next, full = pool.NextRequests(20, 10000000, false)
-		assert.Equal(t, 10, len(next))
-		assert.False(t, full)
+		require.Len(t, next, 10)
+		require.False(t, full)
 
 		next, full = pool.NextRequests(20, uint64(lengths[0]+lengths[1]), false)
-		assert.Equal(t, 2, len(next))
-		assert.True(t, full)
+		require.Len(t, next, 2)
+		require.True(t, full)
 
 		next, full = pool.NextRequests(20, uint64(lengths[0]+lengths[1]+lengths[2]+lengths[3]/2), false)
-		assert.Equal(t, 3, len(next))
-		assert.True(t, full)
+		require.Len(t, next, 3)
+		require.True(t, full)
 
 		next, full = pool.NextRequests(4, uint64(lengths[0]+lengths[1]+lengths[2]+lengths[3]), false)
-		assert.Equal(t, 4, len(next))
-		assert.True(t, full)
+		require.Len(t, next, 4)
+		require.True(t, full)
 
 		next, full = pool.NextRequests(20, uint64(totalLength), false)
-		assert.Equal(t, 10, len(next))
-		assert.True(t, full)
+		require.Len(t, next, 10)
+		require.True(t, full)
 
 		timeoutHandler.AssertNumberOfCalls(t, "OnRequestTimeout", 0)
 		timeoutHandler.AssertNumberOfCalls(t, "OnLeaderFwdRequestTimeout", 0)
@@ -263,7 +263,7 @@ func TestReqPoolCapacity(t *testing.T) {
 
 func TestReqPoolPrune(t *testing.T) {
 	basicLog, err := zap.NewDevelopment()
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	log := basicLog.Sugar()
 
 	insp := &testRequestInspector{}
@@ -275,13 +275,13 @@ func TestReqPoolPrune(t *testing.T) {
 	pool := bft.NewPool(log, insp, timeoutHandler, bft.PoolOptions{QueueSize: 3, ForwardTimeout: time.Hour}, submittedChan)
 	defer pool.Close()
 
-	assert.Equal(t, 0, pool.Size())
+	require.Equal(t, 0, pool.Size())
 
 	err = pool.Submit(byteReq1)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	err = pool.Submit(byteReq2)
-	assert.NoError(t, err)
-	assert.Equal(t, 2, pool.Size())
+	require.NoError(t, err)
+	require.Equal(t, 2, pool.Size())
 
 	pool.Prune(func(payload []byte) error {
 		if bytes.Equal(byteReq1, payload) {
@@ -290,11 +290,11 @@ func TestReqPoolPrune(t *testing.T) {
 		return nil
 	})
 
-	assert.Equal(t, 1, pool.Size())
+	require.Equal(t, 1, pool.Size())
 	req, _ := pool.NextRequests(1, 10000000, false)
 	client, tx, _ := parseTestRequest(req[0])
-	assert.Equal(t, "2", client)
-	assert.Equal(t, "2", tx)
+	require.Equal(t, "2", client)
+	require.Equal(t, "2", tx)
 
 	timeoutHandler.AssertNumberOfCalls(t, "OnRequestTimeout", 0)
 	timeoutHandler.AssertNumberOfCalls(t, "OnLeaderFwdRequestTimeout", 0)
@@ -303,7 +303,7 @@ func TestReqPoolPrune(t *testing.T) {
 
 func TestReqPoolTimeout(t *testing.T) {
 	basicLog, err := zap.NewDevelopment()
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	log := basicLog.Sugar()
 
 	byteReq1 := makeTestRequest("1", "1", "foo")
@@ -334,9 +334,9 @@ func TestReqPoolTimeout(t *testing.T) {
 		payload := make([]byte, 2048)
 		rand.Read(payload)
 		request := makeTestRequest("1", "1", string(payload))
-		assert.Equal(t, 0, pool.Size())
+		require.Equal(t, 0, pool.Size())
 		err = pool.Submit(request)
-		assert.Contains(t, err.Error(), "is bigger than request max bytes")
+		require.Contains(t, err.Error(), "is bigger than request max bytes")
 	})
 	t.Run("change request size", func(t *testing.T) {
 		timeoutHandler := &mocks.RequestTimeoutHandler{}
@@ -360,9 +360,9 @@ func TestReqPoolTimeout(t *testing.T) {
 		payload := make([]byte, 2048)
 		rand.Read(payload)
 		request := makeTestRequest("1", "1", string(payload))
-		assert.Equal(t, 0, pool.Size())
+		require.Equal(t, 0, pool.Size())
 		err = pool.Submit(request)
-		assert.Contains(t, err.Error(), "is bigger than request max bytes")
+		require.Contains(t, err.Error(), "is bigger than request max bytes")
 
 		pool.StopTimers()
 		opts := bft.PoolOptions{
@@ -375,8 +375,8 @@ func TestReqPoolTimeout(t *testing.T) {
 		pool.RestartTimers()
 
 		err = pool.Submit(request)
-		assert.NoError(t, err)
-		assert.Equal(t, 1, pool.Size())
+		require.NoError(t, err)
+		require.Equal(t, 1, pool.Size())
 	})
 	t.Run("request timeout", func(t *testing.T) {
 		timeoutHandler := &mocks.RequestTimeoutHandler{}
@@ -388,11 +388,11 @@ func TestReqPoolTimeout(t *testing.T) {
 		}).Return()
 
 		timeoutHandler.On("OnLeaderFwdRequestTimeout", byteReq1, insp.RequestID(byteReq1)).Run(func(args mock.Arguments) {
-			assert.Fail(t, "called OnLeaderFwdRequestTimeout")
+			require.Fail(t, "called OnLeaderFwdRequestTimeout")
 		}).Return()
 
 		timeoutHandler.On("OnAutoRemoveTimeout", insp.RequestID(byteReq1)).Run(func(args mock.Arguments) {
-			assert.Fail(t, "called OnAutoRemoveTimeout")
+			require.Fail(t, "called OnAutoRemoveTimeout")
 		}).Return()
 
 		pool := bft.NewPool(log, insp, timeoutHandler,
@@ -406,10 +406,10 @@ func TestReqPoolTimeout(t *testing.T) {
 		)
 		defer pool.Close()
 
-		assert.Equal(t, 0, pool.Size())
+		require.Equal(t, 0, pool.Size())
 		err = pool.Submit(byteReq1)
-		assert.NoError(t, err)
-		assert.Equal(t, 1, pool.Size())
+		require.NoError(t, err)
+		require.Equal(t, 1, pool.Size())
 
 		toWG.Wait()
 
@@ -418,7 +418,7 @@ func TestReqPoolTimeout(t *testing.T) {
 		timeoutHandler.AssertNumberOfCalls(t, "OnAutoRemoveTimeout", 0)
 
 		err := pool.RemoveRequest(insp.RequestID(byteReq1))
-		assert.NoError(t, err)
+		require.NoError(t, err)
 	})
 
 	t.Run("leader fwd timeout", func(t *testing.T) {
@@ -437,7 +437,7 @@ func TestReqPoolTimeout(t *testing.T) {
 		}).Return()
 
 		timeoutHandler.On("OnAutoRemoveTimeout", insp.RequestID(byteReq1)).Run(func(args mock.Arguments) {
-			assert.Fail(t, "called OnAutoRemoveTimeout")
+			require.Fail(t, "called OnAutoRemoveTimeout")
 		}).Return()
 
 		pool := bft.NewPool(log, insp, timeoutHandler,
@@ -451,10 +451,10 @@ func TestReqPoolTimeout(t *testing.T) {
 		)
 		defer pool.Close()
 
-		assert.Equal(t, 0, pool.Size())
+		require.Equal(t, 0, pool.Size())
 		err = pool.Submit(byteReq1)
-		assert.NoError(t, err)
-		assert.Equal(t, 1, pool.Size())
+		require.NoError(t, err)
+		require.Equal(t, 1, pool.Size())
 
 		to1WG.Wait()
 		timeoutHandler.AssertNumberOfCalls(t, "OnRequestTimeout", 1)
@@ -463,7 +463,7 @@ func TestReqPoolTimeout(t *testing.T) {
 		timeoutHandler.AssertNumberOfCalls(t, "OnAutoRemoveTimeout", 0)
 
 		err := pool.RemoveRequest(insp.RequestID(byteReq1))
-		assert.NoError(t, err)
+		require.NoError(t, err)
 	})
 
 	t.Run("auto remove", func(t *testing.T) {
@@ -498,10 +498,10 @@ func TestReqPoolTimeout(t *testing.T) {
 		)
 		defer pool.Close()
 
-		assert.Equal(t, 0, pool.Size())
+		require.Equal(t, 0, pool.Size())
 		err = pool.Submit(byteReq1)
-		assert.NoError(t, err)
-		assert.Equal(t, 1, pool.Size())
+		require.NoError(t, err)
+		require.Equal(t, 1, pool.Size())
 
 		to1WG.Wait()
 		timeoutHandler.AssertNumberOfCalls(t, "OnRequestTimeout", 1)
@@ -510,7 +510,7 @@ func TestReqPoolTimeout(t *testing.T) {
 		to3WG.Wait()
 		timeoutHandler.AssertNumberOfCalls(t, "OnAutoRemoveTimeout", 1)
 
-		assert.Equal(t, 0, pool.Size())
+		require.Equal(t, 0, pool.Size())
 	})
 
 	t.Run("stop restart", func(t *testing.T) {
@@ -519,18 +519,18 @@ func TestReqPoolTimeout(t *testing.T) {
 		toWG := &sync.WaitGroup{}
 		toWG.Add(1)
 		timeoutHandler.On("OnRequestTimeout", byteReq1, insp.RequestID(byteReq1)).Run(func(args mock.Arguments) {
-			assert.Fail(t, "called OnLeaderFwdRequestTimeout")
+			require.Fail(t, "called OnLeaderFwdRequestTimeout")
 		}).Return()
 		timeoutHandler.On("OnRequestTimeout", byteReq2, insp.RequestID(byteReq2)).Run(func(args mock.Arguments) {
 			toWG.Done()
 		}).Return()
 
 		timeoutHandler.On("OnLeaderFwdRequestTimeout", byteReq1, insp.RequestID(byteReq1)).Run(func(args mock.Arguments) {
-			assert.Fail(t, "called OnLeaderFwdRequestTimeout")
+			require.Fail(t, "called OnLeaderFwdRequestTimeout")
 		}).Return()
 
 		timeoutHandler.On("OnAutoRemoveTimeout", insp.RequestID(byteReq1)).Run(func(args mock.Arguments) {
-			assert.Fail(t, "called OnAutoRemoveTimeout")
+			require.Fail(t, "called OnAutoRemoveTimeout")
 		}).Return()
 
 		pool := bft.NewPool(log, insp, timeoutHandler,
@@ -543,22 +543,22 @@ func TestReqPoolTimeout(t *testing.T) {
 			submittedChan,
 		)
 		defer pool.Close()
-		assert.Equal(t, 0, pool.Size())
+		require.Equal(t, 0, pool.Size())
 		err = pool.Submit(byteReq1)
-		assert.NoError(t, err)
-		assert.Equal(t, 1, pool.Size())
+		require.NoError(t, err)
+		require.Equal(t, 1, pool.Size())
 
 		pool.StopTimers()
 		time.Sleep(500 * time.Millisecond)
 
 		err = pool.RemoveRequest(insp.RequestID(byteReq1))
-		assert.NoError(t, err)
+		require.NoError(t, err)
 		err = pool.Submit(byteReq2)
-		assert.NoError(t, err)
+		require.NoError(t, err)
 
 		pool.RestartTimers()
 		err = pool.Submit(byteReq2)
-		assert.Equal(t, bft.ErrReqAlreadyExists, err)
+		require.Equal(t, bft.ErrReqAlreadyExists, err)
 		pool.StopTimers()
 		pool.RestartTimers()
 
@@ -569,23 +569,23 @@ func TestReqPoolTimeout(t *testing.T) {
 		timeoutHandler.AssertNumberOfCalls(t, "OnAutoRemoveTimeout", 0)
 
 		err := pool.RemoveRequest(insp.RequestID(byteReq2))
-		assert.NoError(t, err)
+		require.NoError(t, err)
 	})
 }
 
 func TestMakeRequest(t *testing.T) {
 	r := makeTestRequest("AB", "CDE", "FGHI")
-	assert.Equal(t, 21, len(r))
+	require.Len(t, r, 21)
 
 	clientID, txID, data := parseTestRequest(r)
-	assert.Equal(t, "AB", clientID)
-	assert.Equal(t, "CDE", txID)
-	assert.Equal(t, "FGHI", data)
+	require.Equal(t, "AB", clientID)
+	require.Equal(t, "CDE", txID)
+	require.Equal(t, "FGHI", data)
 
 	ins := &testRequestInspector{}
 	info := ins.RequestID(r)
-	assert.Equal(t, "AB", info.ClientID)
-	assert.Equal(t, "CDE", info.ID)
+	require.Equal(t, "AB", info.ClientID)
+	require.Equal(t, "CDE", info.ID)
 }
 
 func makeTestRequest(clientID, txID, data string) []byte {

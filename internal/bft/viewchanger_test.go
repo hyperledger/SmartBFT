@@ -21,8 +21,8 @@ import (
 	"github.com/hyperledger/SmartBFT/pkg/metrics/disabled"
 	"github.com/hyperledger/SmartBFT/pkg/types"
 	protos "github.com/hyperledger/SmartBFT/smartbftprotos"
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"google.golang.org/protobuf/proto"
@@ -98,7 +98,7 @@ func TestStartViewChange(t *testing.T) {
 	reqTimer := &mocks.RequestsTimer{}
 	reqTimer.On("StopTimers").Once()
 	basicLog, err := zap.NewDevelopment()
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	log := basicLog.Sugar()
 	controller := &mocks.ViewController{}
 	controller.On("AbortView", mock.Anything)
@@ -118,7 +118,7 @@ func TestStartViewChange(t *testing.T) {
 
 	vc.StartViewChange(0, true)
 	msg := <-msgChan
-	assert.NotNil(t, msg.GetViewChange())
+	require.NotNil(t, msg.GetViewChange())
 
 	vc.Stop()
 
@@ -157,7 +157,7 @@ func TestViewChangeProcess(t *testing.T) {
 			signer := &mocks.SignerMock{}
 			signer.On("Sign", mock.Anything).Return([]byte{1, 2, 3})
 			basicLog, err := zap.NewDevelopment()
-			assert.NoError(t, err)
+			require.NoError(t, err)
 			log := basicLog.Sugar()
 			reqTimer := &mocks.RequestsTimer{}
 			reqTimer.On("StopTimers")
@@ -191,9 +191,9 @@ func TestViewChangeProcess(t *testing.T) {
 				vc.HandleMessage(3, viewChangeMsg)
 			}
 			m := <-broadcastChan
-			assert.NotNil(t, m.GetViewChange())
+			require.NotNil(t, m.GetViewChange())
 			m = <-sendChan
-			assert.NotNil(t, m.GetViewData())
+			require.NotNil(t, m.GetViewData())
 			comm.AssertCalled(t, "SendConsensus", uint64(1), mock.Anything)
 			state.AssertNumberOfCalls(t, "Save", 1)
 
@@ -222,9 +222,9 @@ func TestViewChangeProcess(t *testing.T) {
 				vc.HandleMessage(3, msg2)
 			}
 			m = <-broadcastChan
-			assert.NotNil(t, m.GetViewChange())
+			require.NotNil(t, m.GetViewChange())
 			m = <-sendChan
-			assert.NotNil(t, m.GetViewData())
+			require.NotNil(t, m.GetViewData())
 			comm.AssertCalled(t, "SendConsensus", uint64(2), mock.Anything)
 
 			reqTimer.AssertNumberOfCalls(t, "StopTimers", 2)
@@ -246,7 +246,7 @@ func TestViewDataProcess(t *testing.T) {
 		broadcastChan <- m
 	}).Once()
 	basicLog, err := zap.NewDevelopment()
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	log := basicLog.Sugar()
 	verifier := &mocks.VerifierMock{}
 	verifierSigWG := sync.WaitGroup{}
@@ -307,12 +307,12 @@ func TestViewDataProcess(t *testing.T) {
 	verifierSigWG.Add(4)
 	vc.HandleMessage(2, msg2)
 	m := <-broadcastChan
-	assert.NotNil(t, m.GetNewView())
+	require.NotNil(t, m.GetNewView())
 	verifierSigWG.Wait()
 	num := <-viewNumChan
-	assert.Equal(t, uint64(1), num)
+	require.Equal(t, uint64(1), num)
 	num = <-seqNumChan
-	assert.Equal(t, uint64(2), num)
+	require.Equal(t, uint64(2), num)
 
 	vc.Stop()
 	reqTimer.AssertCalled(t, "RestartTimers")
@@ -323,7 +323,7 @@ func TestNewViewProcess(t *testing.T) {
 	// Test the new view messages handling and process until calling controller
 
 	basicLog, err := zap.NewDevelopment()
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	log := basicLog.Sugar()
 	verifier := &mocks.VerifierMock{}
 	verifierSigWG := sync.WaitGroup{}
@@ -392,9 +392,9 @@ func TestNewViewProcess(t *testing.T) {
 	vc.HandleMessage(2, msg)
 	verifierSigWG.Wait()
 	num := <-viewNumChan
-	assert.Equal(t, uint64(2), num)
+	require.Equal(t, uint64(2), num)
 	num = <-seqNumChan
-	assert.Equal(t, uint64(2), num)
+	require.Equal(t, uint64(2), num)
 
 	vc.Stop()
 	reqTimer.AssertCalled(t, "RestartTimers")
@@ -411,7 +411,7 @@ func TestNormalProcess(t *testing.T) {
 		msgChan <- m
 	})
 	basicLog, err := zap.NewDevelopment()
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	log := basicLog.Sugar()
 	signer := &mocks.SignerMock{}
 	signer.On("Sign", mock.Anything).Return([]byte{1, 2, 3})
@@ -458,19 +458,19 @@ func TestNormalProcess(t *testing.T) {
 	vc.HandleMessage(2, viewChangeMsg)
 	vc.HandleMessage(3, viewChangeMsg)
 	m := <-msgChan
-	assert.NotNil(t, m.GetViewChange())
+	require.NotNil(t, m.GetViewChange())
 
 	vc.HandleMessage(0, viewDataMsg1)
 	msg2 := proto.Clone(viewDataMsg1).(*protos.Message)
 	msg2.GetViewData().Signer = 2
 	vc.HandleMessage(2, msg2)
 	m = <-msgChan
-	assert.NotNil(t, m.GetNewView())
+	require.NotNil(t, m.GetNewView())
 
 	num := <-viewNumChan
-	assert.Equal(t, uint64(1), num)
+	require.Equal(t, uint64(1), num)
 	num = <-seqNumChan
-	assert.Equal(t, uint64(2), num)
+	require.Equal(t, uint64(2), num)
 
 	controller.AssertNumberOfCalls(t, "AbortView", 2)
 	state.AssertNumberOfCalls(t, "Save", 2)
@@ -640,7 +640,7 @@ func TestBadViewDataMessage(t *testing.T) {
 	} {
 		t.Run(test.description, func(t *testing.T) {
 			basicLog, err := zap.NewDevelopment()
-			assert.NoError(t, err)
+			require.NoError(t, err)
 			var warningMsgLogged sync.WaitGroup
 			warningMsgLogged.Add(1)
 			log := basicLog.WithOptions(zap.Hooks(func(entry zapcore.Entry) error {
@@ -861,7 +861,7 @@ func TestBadNewViewMessage(t *testing.T) {
 	} {
 		t.Run(test.description, func(t *testing.T) {
 			basicLog, err := zap.NewDevelopment()
-			assert.NoError(t, err)
+			require.NoError(t, err)
 			var warningMsgLogged sync.WaitGroup
 			warningMsgLogged.Add(1)
 			log := basicLog.WithOptions(zap.Hooks(func(entry zapcore.Entry) error {
@@ -963,7 +963,7 @@ func TestResendViewChangeMessage(t *testing.T) {
 	reqTimer.On("StopTimers").Once()
 	ticker := make(chan time.Time)
 	basicLog, err := zap.NewDevelopment()
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	log := basicLog.Sugar()
 	controller := &mocks.ViewController{}
 	controller.On("AbortView", mock.Anything)
@@ -986,7 +986,7 @@ func TestResendViewChangeMessage(t *testing.T) {
 
 	vc.StartViewChange(0, true)
 	m := <-msgChan
-	assert.NotNil(t, m.GetViewChange())
+	require.NotNil(t, m.GetViewChange())
 
 	// no resend
 	ticker <- startTime.Add(time.Millisecond)
@@ -994,12 +994,12 @@ func TestResendViewChangeMessage(t *testing.T) {
 	// resend
 	ticker <- startTime.Add(2 * time.Second)
 	m = <-msgChan
-	assert.NotNil(t, m.GetViewChange())
+	require.NotNil(t, m.GetViewChange())
 
 	// resend again
 	ticker <- startTime.Add(4 * time.Second)
 	m = <-msgChan
-	assert.NotNil(t, m.GetViewChange())
+	require.NotNil(t, m.GetViewChange())
 
 	vc.Stop()
 
@@ -1018,7 +1018,7 @@ func TestViewChangerTimeout(t *testing.T) {
 	})
 	ticker := make(chan time.Time)
 	basicLog, err := zap.NewDevelopment()
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	log := basicLog.Sugar()
 	synchronizer := &mocks.Synchronizer{}
 	synchronizerWG := sync.WaitGroup{}
@@ -1076,7 +1076,7 @@ func TestBackOff(t *testing.T) {
 	})
 	ticker := make(chan time.Time)
 	basicLog, err := zap.NewDevelopment()
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	log := basicLog.Sugar()
 	synchronizer := &mocks.Synchronizer{}
 	synchronizerWG := sync.WaitGroup{}
@@ -1140,7 +1140,7 @@ func TestCommitLastDecision(t *testing.T) {
 		msgChan <- m
 	})
 	basicLog, err := zap.NewDevelopment()
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	log := basicLog.Sugar()
 	signer := &mocks.SignerMock{}
 	signer.On("Sign", mock.Anything).Return([]byte{1, 2, 3})
@@ -1200,7 +1200,7 @@ func TestCommitLastDecision(t *testing.T) {
 	vc.HandleMessage(2, viewChangeMsg)
 	vc.HandleMessage(3, viewChangeMsg)
 	m := <-msgChan
-	assert.NotNil(t, m.GetViewChange())
+	require.NotNil(t, m.GetViewChange())
 
 	nextViewData := proto.Clone(vd).(*protos.ViewData)
 	nextViewData.LastDecision.Metadata = bft.MarshalOrPanic(&protos.ViewMetadata{
@@ -1216,12 +1216,12 @@ func TestCommitLastDecision(t *testing.T) {
 	msg2.GetViewData().Signer = 2
 	vc.HandleMessage(2, msg2)
 	m = <-msgChan
-	assert.NotNil(t, m.GetNewView())
+	require.NotNil(t, m.GetNewView())
 
 	num := <-viewNumChan
-	assert.Equal(t, uint64(1), num)
+	require.Equal(t, uint64(1), num)
 	num = <-seqNumChan
-	assert.Equal(t, uint64(3), num)
+	require.Equal(t, uint64(3), num)
 
 	controller.AssertNumberOfCalls(t, "AbortView", 2)
 	app.AssertNumberOfCalls(t, "Deliver", 1)
@@ -1237,7 +1237,7 @@ func TestFarBehindLastDecisionAndSync(t *testing.T) {
 	// the node calls sync to catch up.
 
 	basicLog, err := zap.NewDevelopment()
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	log := basicLog.Sugar()
 	checkpoint := types.Checkpoint{}
 	checkpoint.Set(lastDecision, lastDecisionSignatures)
@@ -1361,7 +1361,7 @@ func TestInFlightProposalInViewData(t *testing.T) {
 			signer := &mocks.SignerMock{}
 			signer.On("Sign", mock.Anything).Return([]byte{1, 2, 3})
 			basicLog, err := zap.NewDevelopment()
-			assert.NoError(t, err)
+			require.NoError(t, err)
 			log := basicLog.Sugar()
 			reqTimer := &mocks.RequestsTimer{}
 			reqTimer.On("StopTimers")
@@ -1392,17 +1392,17 @@ func TestInFlightProposalInViewData(t *testing.T) {
 			vc.HandleMessage(1, viewChangeMsg)
 			vc.HandleMessage(2, viewChangeMsg)
 			m := <-broadcastChan
-			assert.NotNil(t, m.GetViewChange())
+			require.NotNil(t, m.GetViewChange())
 			m = <-sendChan
-			assert.NotNil(t, m.GetViewData())
+			require.NotNil(t, m.GetViewData())
 			viewData := &protos.ViewData{}
-			assert.NoError(t, proto.Unmarshal(m.GetViewData().RawViewData, viewData))
+			require.NoError(t, proto.Unmarshal(m.GetViewData().RawViewData, viewData))
 			if test.expectInflight {
-				assert.NotNil(t, viewData.InFlightProposal)
+				require.NotNil(t, viewData.InFlightProposal)
 			} else {
-				assert.Nil(t, viewData.InFlightProposal)
+				require.Nil(t, viewData.InFlightProposal)
 			}
-			assert.NotNil(t, viewData.LastDecision)
+			require.NotNil(t, viewData.LastDecision)
 			comm.AssertCalled(t, "SendConsensus", uint64(1), mock.Anything)
 
 			vc.Stop()
@@ -1514,11 +1514,11 @@ func TestValidateLastDecision(t *testing.T) {
 			test.mutateVerify(verifier)
 			seq, err := bft.ValidateLastDecision(test.viewData, 3, 4, verifier)
 			if test.valid {
-				assert.NoError(t, err)
+				require.NoError(t, err)
 			} else {
-				assert.Error(t, err)
+				require.Error(t, err)
 			}
-			assert.Equal(t, test.sequence, seq)
+			require.Equal(t, test.sequence, seq)
 		})
 	}
 }
@@ -1562,9 +1562,9 @@ func TestValidateInFlight(t *testing.T) {
 		t.Run(test.description, func(t *testing.T) {
 			err := bft.ValidateInFlight(test.inFlightProposal, test.sequence)
 			if test.valid {
-				assert.NoError(t, err)
+				require.NoError(t, err)
 			} else {
-				assert.Error(t, err)
+				require.Error(t, err)
 			}
 		})
 	}
@@ -1583,7 +1583,7 @@ func TestInformViewChanger(t *testing.T) {
 		informed <- struct{}{} // the view changer restarts the timers once it is informed of a new view
 	})
 	basicLog, err := zap.NewDevelopment()
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	log := basicLog.Sugar()
 	controller := &mocks.ViewController{}
 	controller.On("AbortView", mock.Anything)
@@ -1607,8 +1607,8 @@ func TestInformViewChanger(t *testing.T) {
 
 	vc.StartViewChange(2, true)
 	msg := <-msgChan
-	assert.NotNil(t, msg.GetViewChange())
-	assert.Equal(t, info+1, msg.GetViewChange().NextView) // view number did change according to info
+	require.NotNil(t, msg.GetViewChange())
+	require.Equal(t, info+1, msg.GetViewChange().NextView) // view number did change according to info
 
 	vc.Stop()
 
@@ -1632,7 +1632,7 @@ func TestInformNewViewDoesNotBlock(t *testing.T) {
 		informed <- struct{}{} // the view changer restarts the timers once it is informed of a new view
 	})
 	basicLog, err := zap.NewDevelopment()
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	controller := &mocks.ViewController{}
 	controller.On("AbortView", mock.Anything)
 
@@ -1660,21 +1660,21 @@ func TestInformNewViewDoesNotBlock(t *testing.T) {
 	select {
 	case <-returned:
 	case <-time.After(3 * time.Second):
-		assert.Fail(t, "informing the view changer of a new view blocked")
+		require.Fail(t, "informing the view changer of a new view blocked")
 	}
 
 	vc.ControllerStartedWG.Done()
 	select {
 	case <-informed:
 	case <-time.After(3 * time.Second):
-		assert.Fail(t, "the view changer did not process the views it was informed of")
+		require.Fail(t, "the view changer did not process the views it was informed of")
 	}
 	vc.StartViewChange(3, true)
 	select {
 	case msg := <-msgChan:
-		assert.Equal(t, uint64(4), msg.GetViewChange().GetNextView(), "the view changer is not in the latest view it was informed of")
+		require.Equal(t, uint64(4), msg.GetViewChange().GetNextView(), "the view changer is not in the latest view it was informed of")
 	case <-time.After(3 * time.Second):
-		assert.Fail(t, "the view changer did not start a view change")
+		require.Fail(t, "the view changer did not start a view change")
 	}
 
 	vc.Stop()
@@ -1695,7 +1695,7 @@ func TestRestoreViewChange(t *testing.T) {
 	signer := &mocks.SignerMock{}
 	signer.On("Sign", mock.Anything).Return([]byte{1, 2, 3})
 	basicLog, err := zap.NewDevelopment()
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	log := basicLog.Sugar()
 	reqTimer := &mocks.RequestsTimer{}
 	reqTimer.On("StopTimers")
@@ -1723,10 +1723,10 @@ func TestRestoreViewChange(t *testing.T) {
 
 	vc.Start(5)
 	m := <-broadcastChan
-	assert.NotNil(t, m.GetViewChange())
-	assert.Equal(t, uint64(6), m.GetViewChange().NextView)
+	require.NotNil(t, m.GetViewChange())
+	require.Equal(t, uint64(6), m.GetViewChange().NextView)
 	m = <-sendChan
-	assert.NotNil(t, m.GetViewData())
+	require.NotNil(t, m.GetViewData())
 
 	comm.AssertNumberOfCalls(t, "SendConsensus", 1)
 	vc.Stop()
@@ -1813,8 +1813,8 @@ func TestCheckInFlightNoProposal(t *testing.T) {
 			}
 			test.mutateMessages(messages)
 			ok, _, _, err := bft.CheckInFlight(viewDataBySender(messages), 1, 3, 4, verifier)
-			assert.NoError(t, err)
-			assert.True(t, ok)
+			require.NoError(t, err)
+			require.True(t, ok)
 		})
 	}
 }
@@ -1973,10 +1973,10 @@ func TestCheckInFlightWithProposal(t *testing.T) {
 			}
 			test.mutateMessages(messages)
 			ok, no, proposal, err := bft.CheckInFlight(viewDataBySender(messages), 1, 3, 4, verifier)
-			assert.NoError(t, err)
-			assert.Equal(t, test.ok, ok)
-			assert.Equal(t, test.no, no)
-			assert.Equal(t, test.proposal, proposal)
+			require.NoError(t, err)
+			require.Equal(t, test.ok, ok)
+			require.Equal(t, test.no, no)
+			require.Equal(t, test.proposal, proposal)
 		})
 	}
 }
@@ -1989,7 +1989,7 @@ func TestCommitInFlight(t *testing.T) {
 		msgChan <- m
 	})
 	basicLog, err := zap.NewDevelopment()
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	log := basicLog.Sugar()
 	signer := &mocks.SignerMock{}
 	signer.On("Sign", mock.Anything).Return([]byte{1, 2, 3})
@@ -2061,7 +2061,7 @@ func TestCommitInFlight(t *testing.T) {
 	vc.HandleMessage(2, viewChangeMsg)
 	vc.HandleMessage(3, viewChangeMsg)
 	m := <-msgChan
-	assert.NotNil(t, m.GetViewChange())
+	require.NotNil(t, m.GetViewChange())
 
 	inFlightProposal := types.Proposal{
 		Payload: []byte{1},
@@ -2092,7 +2092,7 @@ func TestCommitInFlight(t *testing.T) {
 	msg2.GetViewData().Signer = 2
 	vc.HandleMessage(2, msg2)
 	m = <-msgChan
-	assert.NotNil(t, m.GetNewView())
+	require.NotNil(t, m.GetNewView())
 
 	go func() {
 		sched <- time.Now()
@@ -2120,15 +2120,15 @@ func TestCommitInFlight(t *testing.T) {
 	vc.HandleViewMessage(2, commitMsg2)
 
 	m = <-msgChan
-	assert.NotNil(t, m.GetCommit())
+	require.NotNil(t, m.GetCommit())
 
 	delivered := <-appChan
-	assert.Equal(t, inFlightProposal, delivered)
+	require.Equal(t, inFlightProposal, delivered)
 
 	num := <-viewNumChan
-	assert.Equal(t, uint64(1), num)
+	require.Equal(t, uint64(1), num)
 	num = <-seqNumChan
-	assert.Equal(t, uint64(3), num)
+	require.Equal(t, uint64(3), num)
 
 	controller.AssertNumberOfCalls(t, "AbortView", 2)
 	pruner.AssertNumberOfCalls(t, "MaybePruneRevokedRequests", 1)
@@ -2138,9 +2138,9 @@ func TestCommitInFlight(t *testing.T) {
 	}
 	// the time it took to process the in flight proposal is measured from when its view started
 	latencies := histograms.observed("view_latency_batch_processing")
-	assert.Len(t, latencies, 1)
+	require.Len(t, latencies, 1)
 	for _, latency := range latencies {
-		assert.Less(t, latency, time.Minute.Seconds())
+		require.Less(t, latency, time.Minute.Seconds())
 	}
 
 	vc.Stop()
@@ -2190,7 +2190,7 @@ func TestInFlightViewMessageFromItselfWithWrongView(t *testing.T) {
 		msgChan <- args.Get(0).(*protos.Message)
 	})
 	basicLog, err := zap.NewDevelopment()
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	panicked := make(chan string, 1)
 	log := basicLog.WithOptions(zap.WithPanicHook(zapcore.WriteThenGoexit), zap.Hooks(func(entry zapcore.Entry) error {
 		if entry.Level == zapcore.PanicLevel {
@@ -2258,7 +2258,7 @@ func TestInFlightViewMessageFromItselfWithWrongView(t *testing.T) {
 	vc.HandleMessage(2, viewChangeMsg)
 	vc.HandleMessage(3, viewChangeMsg)
 	m := <-msgChan
-	assert.NotNil(t, m.GetViewChange())
+	require.NotNil(t, m.GetViewChange())
 
 	inFlightProposal := types.Proposal{
 		Payload: []byte{1},
@@ -2284,13 +2284,13 @@ func TestInFlightViewMessageFromItselfWithWrongView(t *testing.T) {
 	msg2.GetViewData().Signer = 2
 	vc.HandleMessage(2, msg2)
 	m = <-msgChan
-	assert.NotNil(t, m.GetNewView())
+	require.NotNil(t, m.GetNewView())
 
 	// the view of the in flight proposal starts after two ticks
 	<-signed
 	sched <- time.Now()
 	sched <- time.Now()
-	assert.Eventually(t, func() bool {
+	require.Eventually(t, func() bool {
 		select {
 		case m := <-msgChan:
 			return m.GetCommit() != nil
@@ -2316,12 +2316,12 @@ func TestInFlightViewMessageFromItselfWithWrongView(t *testing.T) {
 
 	select {
 	case message := <-panicked:
-		assert.Fail(t, "the view of the in flight proposal panicked", message)
+		require.Fail(t, "the view of the in flight proposal panicked", message)
 		return // the view changer is gone, so it cannot be stopped
 	case <-synced:
 		// the view of the in flight proposal stopped and asked to sync, since the message is from a newer view
 	case <-time.After(3 * time.Second):
-		assert.Fail(t, "the view of the in flight proposal neither stopped nor panicked")
+		require.Fail(t, "the view of the in flight proposal neither stopped nor panicked")
 	}
 
 	vc.Stop()
@@ -2339,7 +2339,7 @@ func TestCommitWhileHavingInFlight(t *testing.T) {
 	reasonAboutInFlightLowerThanLatestDecision.Add(1)
 
 	basicLog, err := zap.NewDevelopment()
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	log := basicLog.WithOptions(zap.Hooks(func(entry zapcore.Entry) error {
 		if strings.Contains(entry.Message, "Node 1's in flight proposal sequence is 1 while already committed decision 2, but that is because it committed it during the view change") {
 			reasonAboutInFlightLowerThanLatestDecision.Done()
@@ -2412,7 +2412,7 @@ func TestCommitWhileHavingInFlight(t *testing.T) {
 	vc.HandleMessage(2, viewChangeMsg)
 	vc.HandleMessage(3, viewChangeMsg)
 	m := <-msgChan
-	assert.NotNil(t, m.GetViewChange())
+	require.NotNil(t, m.GetViewChange())
 
 	viewData := proto.Clone(vd).(*protos.ViewData)
 	viewData.LastDecision.Metadata = bft.MarshalOrPanic(&protos.ViewMetadata{
@@ -2428,7 +2428,7 @@ func TestCommitWhileHavingInFlight(t *testing.T) {
 
 	// Wait for committing the block
 	commit := <-appChan
-	assert.Equal(t, viewData.LastDecision.Metadata, commit.Metadata)
+	require.Equal(t, viewData.LastDecision.Metadata, commit.Metadata)
 
 	// Get the second view data message, this time our latest decision is higher by 1
 
@@ -2441,7 +2441,7 @@ func TestCommitWhileHavingInFlight(t *testing.T) {
 
 func TestDontCommitInFlight(t *testing.T) {
 	basicLog, err := zap.NewDevelopment()
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	log := basicLog.Sugar()
 	verifier := &mocks.VerifierMock{}
 	verifier.On("VerifySignature", mock.Anything).Return(nil)
@@ -2527,9 +2527,9 @@ func TestDontCommitInFlight(t *testing.T) {
 	vc.HandleMessage(1, msg)
 
 	num := <-viewNumChan
-	assert.Equal(t, uint64(1), num)
+	require.Equal(t, uint64(1), num)
 	num = <-seqNumChan
-	assert.Equal(t, uint64(3), num)
+	require.Equal(t, uint64(3), num)
 
 	vc.Stop()
 
@@ -2540,7 +2540,7 @@ func TestDontCommitInFlight(t *testing.T) {
 // which is the state a node is in after it delivered the decision on sequence 1.
 func newViewChangerWithInFlight(t *testing.T, verifier api.Verifier) (*bft.ViewChanger, *mocks.ApplicationMock, chan uint64) {
 	basicLog, err := zap.NewDevelopment()
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	log := basicLog.Sugar()
 	viewChangedChan := make(chan uint64, 1)
 	controller := &mocks.ViewController{}
@@ -2672,7 +2672,7 @@ func TestNewViewWithForgedQuorum(t *testing.T) {
 
 			select {
 			case <-viewChangedChan:
-				assert.Fail(t, "the view was changed although a single node reported the in flight proposal as prepared")
+				require.Fail(t, "the view was changed although a single node reported the in flight proposal as prepared")
 			case <-time.After(100 * time.Millisecond):
 			}
 
@@ -2680,7 +2680,7 @@ func TestNewViewWithForgedQuorum(t *testing.T) {
 				select {
 				case <-logged:
 				case <-time.After(3 * time.Second):
-					assert.Fail(t, "the faulty leader was not reported", test.expectedLog)
+					require.Fail(t, "the faulty leader was not reported", test.expectedLog)
 				}
 			}
 
@@ -2754,16 +2754,16 @@ func TestNewViewWithoutQuorumSyncs(t *testing.T) {
 			vc.HandleMessage(1, msg)
 			vc.HandleMessage(1, msg) // the leader may resend the new view, the node should not sync again
 
-			assert.Eventually(t, func() bool {
+			require.Eventually(t, func() bool {
 				return syncCount.Load() == 1
 			}, 3*time.Second, 10*time.Millisecond, "the node did not sync, although it "+test.expected)
 
 			time.Sleep(100 * time.Millisecond)
-			assert.Equal(t, int32(1), syncCount.Load(), "the node synced more than once for the same view")
+			require.Equal(t, int32(1), syncCount.Load(), "the node synced more than once for the same view")
 
 			select {
 			case <-viewChangedChan:
-				assert.Fail(t, "the view was changed although the new view message "+test.expected)
+				require.Fail(t, "the view was changed although the new view message "+test.expected)
 			case <-time.After(100 * time.Millisecond):
 			}
 
@@ -2830,9 +2830,9 @@ func TestNewViewOfCurrentViewIsIgnored(t *testing.T) {
 			vc.HandleMessage(1, msg)
 			select {
 			case view := <-viewChangedChan:
-				assert.Equal(t, uint64(1), view)
+				require.Equal(t, uint64(1), view)
 			case <-time.After(3 * time.Second):
-				assert.Fail(t, "the view was not changed by the new view message")
+				require.Fail(t, "the view was not changed by the new view message")
 			}
 
 			// the node makes progress in the new view
@@ -2849,9 +2849,9 @@ func TestNewViewOfCurrentViewIsIgnored(t *testing.T) {
 			vc.HandleMessage(1, msg)
 			select {
 			case <-viewChangedChan:
-				assert.Fail(t, "the view was changed again by a new view message for the current view")
+				require.Fail(t, "the view was changed again by a new view message for the current view")
 			case message := <-panicked:
-				assert.Fail(t, "a new view message for the current view made the node panic", message)
+				require.Fail(t, "a new view message for the current view made the node panic", message)
 				return // the view changer is gone, so it cannot be stopped
 			case <-time.After(100 * time.Millisecond):
 			}
@@ -2936,7 +2936,7 @@ func TestNewViewWithoutLeaderViewData(t *testing.T) {
 	} {
 		t.Run(test.description, func(t *testing.T) {
 			basicLog, err := zap.NewDevelopment()
-			assert.NoError(t, err)
+			require.NoError(t, err)
 
 			rejected := make(chan struct{}, 1)
 			log := basicLog.WithOptions(zap.Hooks(func(entry zapcore.Entry) error {
@@ -3018,17 +3018,17 @@ func TestNewViewWithoutLeaderViewData(t *testing.T) {
 			vc.HandleMessage(1, msg)
 
 			if test.accepted {
-				assert.Equal(t, uint64(1), <-viewNumChan)
-				assert.Equal(t, uint64(2), <-seqNumChan)
+				require.Equal(t, uint64(1), <-viewNumChan)
+				require.Equal(t, uint64(2), <-seqNumChan)
 			} else {
 				select {
 				case <-rejected:
 				case <-time.After(5 * time.Second):
-					assert.Fail(t, "the new view message was not rejected", "expected log: %q", test.expectedRejection)
+					require.Fail(t, "the new view message was not rejected", "expected log: %q", test.expectedRejection)
 				}
 				select {
 				case <-viewNumChan:
-					assert.Fail(t, "the view was changed even though the new view message was rejected")
+					require.Fail(t, "the view was changed even though the new view message was rejected")
 				default:
 				}
 			}
