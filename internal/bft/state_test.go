@@ -17,6 +17,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"go.uber.org/zap"
+	"google.golang.org/protobuf/proto"
 )
 
 func TestStateRestore(t *testing.T) {
@@ -201,6 +202,96 @@ func TestStateRestore(t *testing.T) {
 				assert.Equal(t, testCase.expectedInFlightPrepared, state.InFlightProposal.IsInFlightPrepared())
 			} else {
 				assert.Contains(t, err.Error(), testCase.expectedError)
+			}
+		})
+	}
+}
+
+func TestStateLoadIfApplicable(t *testing.T) {
+	newView := &protos.SavedMessage{
+		Content: &protos.SavedMessage_NewView{
+			NewView: &protos.ViewMetadata{
+				ViewId:         5,
+				LatestSequence: 10,
+			},
+		},
+	}
+
+	viewChange := &protos.ViewChange{
+		NextView: 6,
+		Reason:   "leader is unresponsive",
+	}
+	savedViewChange := &protos.SavedMessage{
+		Content: &protos.SavedMessage_ViewChange{
+			ViewChange: viewChange,
+		},
+	}
+
+	proposedRecord := &protos.SavedMessage{
+		Content: &protos.SavedMessage_ProposedRecord{
+			ProposedRecord: &protos.ProposedRecord{
+				PrePrepare: &protos.PrePrepare{Seq: 11, View: 5},
+			},
+		},
+	}
+
+	for _, testCase := range []struct {
+		description        string
+		WALContent         [][]byte
+		expectedError      string
+		expectedViewAndSeq *types.ViewAndSeq
+		expectedViewChange *protos.ViewChange
+	}{
+		{
+			description: "empty",
+		},
+		{
+			description:   "malformed record",
+			WALContent:    [][]byte{{1, 2, 3}},
+			expectedError: "failed unmarshaling last entry from WAL: proto:",
+		},
+		{
+			description: "last record is a proposal",
+			WALContent:  [][]byte{bft.MarshalOrPanic(newView), bft.MarshalOrPanic(proposedRecord)},
+		},
+		{
+			description:        "last record is a new view",
+			WALContent:         [][]byte{bft.MarshalOrPanic(savedViewChange), bft.MarshalOrPanic(newView)},
+			expectedViewAndSeq: &types.ViewAndSeq{View: 5, Seq: 10},
+		},
+		{
+			description:        "last record is a view change",
+			WALContent:         [][]byte{bft.MarshalOrPanic(newView), bft.MarshalOrPanic(savedViewChange)},
+			expectedViewChange: viewChange,
+		},
+	} {
+		t.Run(testCase.description, func(t *testing.T) {
+			basicLog, err := zap.NewDevelopment()
+			assert.NoError(t, err)
+
+			state := &bft.PersistedState{
+				Entries: testCase.WALContent,
+				Logger:  basicLog.Sugar(),
+			}
+
+			viewAndSeq, err := state.LoadNewViewIfApplicable()
+			if testCase.expectedError != "" {
+				assert.ErrorContains(t, err, testCase.expectedError)
+			} else {
+				assert.NoError(t, err)
+			}
+			assert.Equal(t, testCase.expectedViewAndSeq, viewAndSeq)
+
+			vc, err := state.LoadViewChangeIfApplicable()
+			if testCase.expectedError != "" {
+				assert.ErrorContains(t, err, testCase.expectedError)
+			} else {
+				assert.NoError(t, err)
+			}
+			if testCase.expectedViewChange == nil {
+				assert.Nil(t, vc)
+			} else {
+				assert.True(t, proto.Equal(testCase.expectedViewChange, vc))
 			}
 		})
 	}
