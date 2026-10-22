@@ -88,11 +88,11 @@ func (vt *viewTracker) hook(id uint64) func(zapcore.Entry) error {
 // after returns the remainder of msg once marker has been found, trimmed of anything that is not
 // part of the number that follows it.
 func after(msg, marker string) string {
-	i := strings.Index(msg, marker)
-	if i < 0 {
+	_, after, ok := strings.Cut(msg, marker)
+	if !ok {
 		return ""
 	}
-	rest := strings.TrimSpace(msg[i+len(marker):])
+	rest := strings.TrimSpace(after)
 	end := 0
 	for end < len(rest) && rest[end] >= '0' && rest[end] <= '9' {
 		end++

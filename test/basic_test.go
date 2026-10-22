@@ -950,12 +950,12 @@ func TestCatchingUpWithSyncAutonomous(t *testing.T) {
 		nodes = append(nodes, n)
 	}
 
-	var detectedSequenceGap uint32
+	var detectedSequenceGap atomic.Uint32
 
 	baseLogger := nodes[3].Consensus.Logger.(*zap.SugaredLogger).Desugar()
 	nodes[3].Consensus.Logger = baseLogger.WithOptions(zap.Hooks(func(entry zapcore.Entry) error {
 		if strings.Contains(entry.Message, "Leader's sequence is 10 and ours is 1") {
-			atomic.StoreUint32(&detectedSequenceGap, 1)
+			detectedSequenceGap.Store(1)
 		}
 		return nil
 	})).Sugar()
@@ -1011,7 +1011,7 @@ func TestCatchingUpWithSyncAutonomous(t *testing.T) {
 	}
 
 	close(done)
-	require.Equal(t, uint32(0), atomic.LoadUint32(&detectedSequenceGap))
+	require.Equal(t, uint32(0), detectedSequenceGap.Load())
 }
 
 func TestSyncSameHeightPreservesDecisionsInView(t *testing.T) {
@@ -1036,12 +1036,12 @@ func TestSyncSameHeightPreservesDecisionsInView(t *testing.T) {
 	// Hook node 4's logger to detect:
 	// 1. When sync is processed (so we know it's safe to submit more proposals)
 	// 2. The bug symptom: "Expected decisions in view" validation failure
-	var syncProcessed uint32
+	var syncProcessed atomic.Uint32
 	bugDetected := make(chan struct{}, 1)
 	baseLogger := nodes[3].Consensus.Logger.(*zap.SugaredLogger).Desugar()
 	nodes[3].Consensus.Logger = baseLogger.WithOptions(zap.Hooks(func(entry zapcore.Entry) error {
 		if strings.Contains(entry.Message, "get msg from syncChan") {
-			atomic.StoreUint32(&syncProcessed, 1)
+			syncProcessed.Store(1)
 		}
 		if strings.Contains(entry.Message, "Expected decisions in view") {
 			select {
@@ -1089,7 +1089,7 @@ func TestSyncSameHeightPreservesDecisionsInView(t *testing.T) {
 
 	// Wait for the sync to be processed by the controller's run loop.
 	require.Eventually(t, func() bool {
-		return atomic.LoadUint32(&syncProcessed) == 1
+		return syncProcessed.Load() == 1
 	}, 30*time.Second, 50*time.Millisecond,
 		"Node 4 should process sync triggered by fake heartbeat")
 
@@ -1334,9 +1334,9 @@ func TestLeaderCatchUpWithoutSync(t *testing.T) {
 	restoredWG := sync.WaitGroup{}
 	restoredWG.Add(1)
 
-	var blockCommits uint32
+	var blockCommits atomic.Uint32
 	nodes[0].LoseMessages(func(msg *smartbftprotos.Message) bool {
-		return msg.GetCommit() != nil && atomic.LoadUint32(&blockCommits) == 1
+		return msg.GetCommit() != nil && blockCommits.Load() == 1
 	})
 	baseLogger := nodes[0].logger.Desugar()
 	nodes[0].logger = baseLogger.WithOptions(zap.Hooks(func(entry zapcore.Entry) error {
@@ -1349,7 +1349,7 @@ func TestLeaderCatchUpWithoutSync(t *testing.T) {
 		return nil
 	})).Sugar()
 	nodes[0].Setup()
-	atomic.StoreUint32(&blockCommits, 1)
+	blockCommits.Store(1)
 
 	startNodes(nodes, network)
 
@@ -1357,7 +1357,7 @@ func TestLeaderCatchUpWithoutSync(t *testing.T) {
 
 	restartWG.Wait()
 	nodes[0].RestartSync(false)
-	atomic.StoreUint32(&blockCommits, 0)
+	blockCommits.Store(0)
 	restoredWG.Wait()
 
 	data := make([]*AppRecord, 0)
@@ -1405,9 +1405,9 @@ func TestLeaderProposeAfterRestartWithoutSync(t *testing.T) {
 	contViewWG := sync.WaitGroup{}
 	contViewWG.Add(2)
 
-	var blockCommits uint32
+	var blockCommits atomic.Uint32
 	nodes[0].LoseMessages(func(msg *smartbftprotos.Message) bool {
-		return msg.GetCommit() != nil && atomic.LoadUint32(&blockCommits) == 1
+		return msg.GetCommit() != nil && blockCommits.Load() == 1
 	})
 	baseLogger := nodes[0].logger.Desugar()
 	nodes[0].logger = baseLogger.WithOptions(zap.Hooks(func(entry zapcore.Entry) error {
@@ -1432,7 +1432,7 @@ func TestLeaderProposeAfterRestartWithoutSync(t *testing.T) {
 		return nil
 	})).Sugar()
 	nodes[0].Setup()
-	atomic.StoreUint32(&blockCommits, 1)
+	blockCommits.Store(1)
 
 	startNodes(nodes, network)
 
@@ -1440,7 +1440,7 @@ func TestLeaderProposeAfterRestartWithoutSync(t *testing.T) {
 
 	restartWG.Wait()
 	nodes[0].RestartSync(false)
-	atomic.StoreUint32(&blockCommits, 0)
+	blockCommits.Store(0)
 	restoredWG.Wait()
 
 	nodes[0].Submit(Request{ID: "2", ClientID: "alice"})
@@ -1499,13 +1499,13 @@ func TestGradualStart(t *testing.T) {
 
 	// add a second node
 	n1 := newNode(uint64(2), network, t.Name(), testDir, true, 1)
-	atomic.AddUint64(&n1.verificationSeq, 1)
+	n1.verificationSeq.Add(1)
 
 	if err := n1.Consensus.Start(); err != nil {
 		n1.logger.Panicf("Consensus returned an error : %v", err)
 	}
 
-	atomic.AddUint64(&n0.verificationSeq, 1)
+	n0.verificationSeq.Add(1)
 	n0.Restart()
 
 	network.StartServe()
@@ -1531,14 +1531,14 @@ func TestGradualStart(t *testing.T) {
 
 	// add a third node
 	n2 := newNode(uint64(3), network, t.Name(), testDir, true, 1)
-	atomic.AddUint64(&n2.verificationSeq, 2)
+	n2.verificationSeq.Add(2)
 
 	if err := n2.Consensus.Start(); err != nil {
 		n2.logger.Panicf("Consensus returned an error : %v", err)
 	}
 
-	atomic.AddUint64(&n1.verificationSeq, 1)
-	atomic.AddUint64(&n0.verificationSeq, 1)
+	n1.verificationSeq.Add(1)
+	n0.verificationSeq.Add(1)
 	n0.Restart()
 	n1.Restart()
 
@@ -1764,7 +1764,9 @@ func TestRotateAndViewChange(t *testing.T) {
 func TestMigrateToBlacklistAndBackAgain(t *testing.T) { //nolint:tparallel // subtests are sequential phases sharing the same nodes
 	t.Parallel()
 	network := NewNetwork()
-	defer network.Shutdown()
+	t.Cleanup(func() {
+		network.Shutdown()
+	})
 
 	testDir := t.TempDir()
 
@@ -1775,16 +1777,16 @@ func TestMigrateToBlacklistAndBackAgain(t *testing.T) { //nolint:tparallel // su
 		nodes = append(nodes, n)
 	}
 
-	var leaderRotationDisabled uint64
-	var boundCommitSignatures uint64
+	var leaderRotationDisabled atomic.Uint64
+	var boundCommitSignatures atomic.Uint64
 
 	setupLogger := func(node *App) {
 		node.logger = node.logger.Desugar().WithOptions(zap.Hooks(func(entry zapcore.Entry) error {
 			if strings.Contains(entry.Message, "Bound 3 commit signatures to proposal") {
-				atomic.AddUint64(&boundCommitSignatures, 1)
+				boundCommitSignatures.Add(1)
 			}
 			if strings.Contains(entry.Message, "Leader rotation is disabled, will not bind signatures to proposals") {
-				atomic.AddUint64(&leaderRotationDisabled, 1)
+				leaderRotationDisabled.Add(1)
 			}
 			return nil
 		})).Sugar()
@@ -1804,8 +1806,8 @@ func TestMigrateToBlacklistAndBackAgain(t *testing.T) { //nolint:tparallel // su
 			<-nodes[i].Delivered
 		}
 
-		require.Equal(t, uint64(1), atomic.LoadUint64(&leaderRotationDisabled))
-		require.Equal(t, uint64(0), atomic.LoadUint64(&boundCommitSignatures))
+		require.Equal(t, uint64(1), leaderRotationDisabled.Load())
+		require.Equal(t, uint64(0), boundCommitSignatures.Load())
 
 		nodes[0].Submit(Request{ID: "2", ClientID: "alice"})
 
@@ -1813,8 +1815,8 @@ func TestMigrateToBlacklistAndBackAgain(t *testing.T) { //nolint:tparallel // su
 			<-nodes[i].Delivered
 		}
 
-		require.Equal(t, uint64(2), atomic.LoadUint64(&leaderRotationDisabled))
-		require.Equal(t, uint64(0), atomic.LoadUint64(&boundCommitSignatures))
+		require.Equal(t, uint64(2), leaderRotationDisabled.Load())
+		require.Equal(t, uint64(0), boundCommitSignatures.Load())
 	})
 
 	t.Run("Activate leader rotation", func(t *testing.T) {
@@ -1834,8 +1836,8 @@ func TestMigrateToBlacklistAndBackAgain(t *testing.T) { //nolint:tparallel // su
 			<-nodes[i].Delivered
 		}
 
-		require.Equal(t, uint64(2), atomic.LoadUint64(&leaderRotationDisabled))
-		require.Equal(t, uint64(1), atomic.LoadUint64(&boundCommitSignatures))
+		require.Equal(t, uint64(2), leaderRotationDisabled.Load())
+		require.Equal(t, uint64(1), boundCommitSignatures.Load())
 
 		nodes[0].Submit(Request{ID: "4", ClientID: "alice"})
 
@@ -1843,8 +1845,8 @@ func TestMigrateToBlacklistAndBackAgain(t *testing.T) { //nolint:tparallel // su
 			<-nodes[i].Delivered
 		}
 
-		require.Equal(t, uint64(2), atomic.LoadUint64(&leaderRotationDisabled))
-		require.Equal(t, uint64(2), atomic.LoadUint64(&boundCommitSignatures))
+		require.Equal(t, uint64(2), leaderRotationDisabled.Load())
+		require.Equal(t, uint64(2), boundCommitSignatures.Load())
 	})
 
 	t.Run("Deactivate leader rotation", func(t *testing.T) {
@@ -1864,8 +1866,8 @@ func TestMigrateToBlacklistAndBackAgain(t *testing.T) { //nolint:tparallel // su
 			<-nodes[i].Delivered
 		}
 
-		require.Equal(t, uint64(3), atomic.LoadUint64(&leaderRotationDisabled))
-		require.Equal(t, uint64(2), atomic.LoadUint64(&boundCommitSignatures))
+		require.Equal(t, uint64(3), leaderRotationDisabled.Load())
+		require.Equal(t, uint64(2), boundCommitSignatures.Load())
 
 		nodes[0].Submit(Request{ID: "6", ClientID: "alice"})
 
@@ -1873,8 +1875,8 @@ func TestMigrateToBlacklistAndBackAgain(t *testing.T) { //nolint:tparallel // su
 			<-nodes[i].Delivered
 		}
 
-		require.Equal(t, uint64(4), atomic.LoadUint64(&leaderRotationDisabled))
-		require.Equal(t, uint64(2), atomic.LoadUint64(&boundCommitSignatures))
+		require.Equal(t, uint64(4), leaderRotationDisabled.Load())
+		require.Equal(t, uint64(2), boundCommitSignatures.Load())
 	})
 }
 
@@ -1900,8 +1902,8 @@ func TestNodeInFlightFails(t *testing.T) {
 	var inFlightCommit sync.WaitGroup
 	inFlightCommit.Add(2)
 
-	var blockCommits uint32
-	var blockCommitsForLastNode uint32
+	var blockCommits atomic.Uint32
+	var blockCommitsForLastNode atomic.Uint32
 
 	for i := 1; i <= numberOfNodes; i++ {
 		n := newNode(uint64(i), network, t.Name(), testDir, false, 0)
@@ -1917,7 +1919,7 @@ func TestNodeInFlightFails(t *testing.T) {
 
 		id := n.ID
 		n.Consensus.Logger = baseLogger.WithOptions(zap.Hooks(func(entry zapcore.Entry) error {
-			if strings.Contains(entry.Message, "collected 2 prepares") && atomic.LoadUint32(&blockCommits) == 1 {
+			if strings.Contains(entry.Message, "collected 2 prepares") && blockCommits.Load() == 1 {
 				collectPreparesWG.Done()
 			}
 
@@ -1944,19 +1946,19 @@ func TestNodeInFlightFails(t *testing.T) {
 			if msg.GetCommit() == nil {
 				return false
 			}
-			return atomic.LoadUint32(&blockCommits) == 1
+			return blockCommits.Load() == 1
 		})
 	}
 
 	// However the last node never receives any commits.
 	nodes[len(nodes)-1].LoseMessages(func(msg *smartbftprotos.Message) bool {
-		return msg.GetCommit() != nil && atomic.LoadUint32(&blockCommitsForLastNode) == 1
+		return msg.GetCommit() != nil && blockCommitsForLastNode.Load() == 1
 	})
 
 	startNodes(nodes, network)
 
-	atomic.StoreUint32(&blockCommits, 1)
-	atomic.StoreUint32(&blockCommitsForLastNode, 1)
+	blockCommits.Store(1)
+	blockCommitsForLastNode.Store(1)
 
 	nodes[0].Submit(Request{ID: "first request", ClientID: "alice"})
 
@@ -1982,7 +1984,7 @@ func TestNodeInFlightFails(t *testing.T) {
 	require.False(t, committedTooEarly.Load(), "should not have committed because first commit message should have been lost")
 
 	// Re-enable commit messages to flow to all nodes but the last node
-	atomic.StoreUint32(&blockCommits, 0)
+	blockCommits.Store(0)
 
 	// Disconnect leader to force view change
 	nodes[0].Disconnect()
@@ -2010,7 +2012,7 @@ func TestNodeInFlightFails(t *testing.T) {
 	// Wait for in-flight view of view changer to time out
 	timeoutExpiredWG.Wait()
 	// Re-enable commits to flow to the last node
-	atomic.StoreUint32(&blockCommitsForLastNode, 0)
+	blockCommitsForLastNode.Store(0)
 	// Ensure the last node failed changing the view
 	failedViewChange.Wait()
 	// However, it eventually syncs successfully and delivers the proposal
@@ -2265,7 +2267,7 @@ func TestNodeInFlightThenViewChange(t *testing.T) {
 	numberOfNodes := 4
 	nodes := make([]*App, 0)
 
-	var blockCommits uint32
+	var blockCommits atomic.Uint32
 
 	for i := 1; i <= numberOfNodes; i++ {
 		n := newNode(uint64(i), network, t.Name(), testDir, false, 0)
@@ -2273,13 +2275,13 @@ func TestNodeInFlightThenViewChange(t *testing.T) {
 			if msg.GetCommit() == nil {
 				return false
 			}
-			return atomic.LoadUint32(&blockCommits) == 1
+			return blockCommits.Load() == 1
 		})
 		nodes = append(nodes, n)
 	}
 	startNodes(nodes, network)
 
-	atomic.StoreUint32(&blockCommits, 1)
+	blockCommits.Store(1)
 
 	nodes[0].Submit(Request{ID: "first request", ClientID: "alice"})
 
@@ -2301,7 +2303,7 @@ func TestNodeInFlightThenViewChange(t *testing.T) {
 
 	wg.Wait()
 	require.False(t, committedTooEarly.Load(), "should not have committed because first commit message should have been lost")
-	atomic.StoreUint32(&blockCommits, 0)
+	blockCommits.Store(0)
 
 	nodes[len(nodes)-1].Disconnect() // Last node in partition
 
@@ -2352,7 +2354,7 @@ func TestNodeCommitTheRestPrepareAndCommittedNodeCrashesThenRecovers(t *testing.
 	numberOfNodes := 4
 	nodes := make([]*App, 0)
 
-	var blockCommits uint32
+	var blockCommits atomic.Uint32
 
 	for i := 1; i <= numberOfNodes; i++ {
 		n := newNode(uint64(i), network, t.Name(), testDir, false, 0)
@@ -2362,7 +2364,7 @@ func TestNodeCommitTheRestPrepareAndCommittedNodeCrashesThenRecovers(t *testing.
 				if msg.GetCommit() == nil {
 					return false
 				}
-				return atomic.LoadUint32(&blockCommits) == 1
+				return blockCommits.Load() == 1
 			})
 		}
 
@@ -2370,7 +2372,7 @@ func TestNodeCommitTheRestPrepareAndCommittedNodeCrashesThenRecovers(t *testing.
 	}
 	startNodes(nodes, network)
 
-	atomic.StoreUint32(&blockCommits, 1)
+	blockCommits.Store(1)
 
 	nodes[0].Submit(Request{ID: "first request", ClientID: "alice"})
 
@@ -2384,7 +2386,7 @@ func TestNodeCommitTheRestPrepareAndCommittedNodeCrashesThenRecovers(t *testing.
 	nodes[0].Disconnect()
 
 	// Unblock commits
-	atomic.StoreUint32(&blockCommits, 0)
+	blockCommits.Store(0)
 
 	// Submit second request to all nodes to trigger view change
 	nodes[1].Submit(Request{ID: "second request", ClientID: "alice"})
@@ -2434,7 +2436,7 @@ func TestNodePreparesTheRestInPartitionThenPartitionHeals(t *testing.T) {
 	numberOfNodes := 4
 	nodes := make([]*App, 0)
 
-	var blockPrepares uint32
+	var blockPrepares atomic.Uint32
 
 	for i := 1; i <= numberOfNodes; i++ {
 		n := newNode(uint64(i), network, t.Name(), testDir, false, 0)
@@ -2444,7 +2446,7 @@ func TestNodePreparesTheRestInPartitionThenPartitionHeals(t *testing.T) {
 				if msg.GetPrepare() == nil {
 					return false
 				}
-				return atomic.LoadUint32(&blockPrepares) == 1
+				return blockPrepares.Load() == 1
 			})
 		}
 
@@ -2458,7 +2460,7 @@ func TestNodePreparesTheRestInPartitionThenPartitionHeals(t *testing.T) {
 	baseLogger := nodes[0].logger.Desugar()
 	nodes[0].logger = baseLogger.WithOptions(zap.Hooks(func(entry zapcore.Entry) error {
 		// Only make not of log appends if we are interested in blocking prepares
-		if atomic.LoadUint32(&blockPrepares) == 0 {
+		if blockPrepares.Load() == 0 {
 			return nil
 		}
 		if strings.Contains(entry.Message, "LogRecord appended successfully") {
@@ -2470,7 +2472,7 @@ func TestNodePreparesTheRestInPartitionThenPartitionHeals(t *testing.T) {
 
 	startNodes(nodes, network)
 
-	atomic.StoreUint32(&blockPrepares, 1)
+	blockPrepares.Store(1)
 
 	nodes[0].Submit(Request{ID: "first request", ClientID: "alice"})
 
@@ -2480,7 +2482,7 @@ func TestNodePreparesTheRestInPartitionThenPartitionHeals(t *testing.T) {
 	// Disconnect node 0
 	nodes[0].Disconnect()
 
-	atomic.StoreUint32(&blockPrepares, 0)
+	blockPrepares.Store(0)
 
 	// Submit second request to all nodes to trigger view change
 	nodes[1].Submit(Request{ID: "second request", ClientID: "alice"})

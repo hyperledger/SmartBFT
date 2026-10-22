@@ -159,9 +159,7 @@ func TestViewDataInFlightWhileStored(t *testing.T) {
 
 	done := make(chan struct{})
 	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		for i := 0; ; i++ {
 			select {
 			case <-done:
@@ -173,7 +171,7 @@ func TestViewDataInFlightWhileStored(t *testing.T) {
 				vc.InFlight.StorePrepares(0, 0)
 			}
 		}
-	}()
+	})
 
 	inconsistent := 0
 	for range 100000 {
