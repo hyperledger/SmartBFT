@@ -6,7 +6,6 @@
 package bft_test
 
 import (
-	"fmt"
 	"strconv"
 	"testing"
 	"time"
@@ -138,7 +137,7 @@ func TestBatcherWhileSubmitting(t *testing.T) {
 	res := batcher.NextBatch()
 	require.Len(t, res, 100)
 	for i := range 100 {
-		iStr := fmt.Sprintf("%d", i)
+		iStr := strconv.Itoa(i)
 		reqInfo := insp.RequestID(res[i])
 		require.Equal(t, iStr, reqInfo.ID)
 		err := pool.RemoveRequest(reqInfo)
@@ -148,7 +147,7 @@ func TestBatcherWhileSubmitting(t *testing.T) {
 	res = batcher.NextBatch()
 	require.Len(t, res, 100)
 	for i := range 100 {
-		iStr := fmt.Sprintf("%d", i+100)
+		iStr := strconv.Itoa(i + 100)
 		reqInfo := insp.RequestID(res[i])
 		require.Equal(t, iStr, reqInfo.ID)
 		err := pool.RemoveRequest(reqInfo)
@@ -158,7 +157,7 @@ func TestBatcherWhileSubmitting(t *testing.T) {
 	res = batcher.NextBatch()
 	require.Len(t, res, 100)
 	for i := range 100 {
-		iStr := fmt.Sprintf("%d", i+200)
+		iStr := strconv.Itoa(i + 200)
 		reqInfo := insp.RequestID(res[i])
 		require.Equal(t, iStr, reqInfo.ID)
 		err := pool.RemoveRequest(reqInfo)

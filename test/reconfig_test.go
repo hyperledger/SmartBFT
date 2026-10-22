@@ -1,7 +1,7 @@
 package test
 
 import (
-	"fmt"
+	"strconv"
 	"testing"
 	"time"
 
@@ -384,7 +384,7 @@ func TestAddRemoveNodes(t *testing.T) {
 
 		nodes[9].Submit(Request{
 			ClientID: "reconfig",
-			ID:       fmt.Sprintf("%d", 50+r),
+			ID:       strconv.Itoa(50 + r),
 			Reconfig: Reconfig{
 				InLatestDecision: true,
 				CurrentNodes:     currentNodes,
@@ -627,7 +627,7 @@ func TestAddNodeAfterManyRotations(t *testing.T) {
 	// deliver many blocks and rotate after each block
 	blocks := make([]*AppRecord, 0)
 	for j := 1; j <= blocksNum; j++ {
-		nodes[0].Submit(Request{ID: fmt.Sprintf("%d", j), ClientID: "alice"})
+		nodes[0].Submit(Request{ID: strconv.Itoa(j), ClientID: "alice"})
 		data := make([]*AppRecord, 0)
 		for i := range numberOfNodes {
 			d := <-nodes[i].Delivered

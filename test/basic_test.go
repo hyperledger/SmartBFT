@@ -45,7 +45,7 @@ func TestBasic(t *testing.T) {
 	startNodes(nodes, network)
 
 	for i := 1; i < 5; i++ {
-		nodes[0].Submit(Request{ID: fmt.Sprintf("%d", i), ClientID: "alice"})
+		nodes[0].Submit(Request{ID: strconv.Itoa(i), ClientID: "alice"})
 	}
 
 	data := make([]*AppRecord, 0)
@@ -669,8 +669,8 @@ func TestLeaderCatchingUpAfterViewChange(t *testing.T) {
 
 	// We create new batches until it catches up
 	for reqID := 3; reqID < 100; reqID++ {
-		nodes[1].Submit(Request{ID: fmt.Sprintf("%d", reqID), ClientID: "alice"})
-		nodes[2].Submit(Request{ID: fmt.Sprintf("%d", reqID), ClientID: "alice"})
+		nodes[1].Submit(Request{ID: strconv.Itoa(reqID), ClientID: "alice"})
+		nodes[2].Submit(Request{ID: strconv.Itoa(reqID), ClientID: "alice"})
 		<-nodes[1].Delivered // Wait for new leader to commit
 		<-nodes[2].Delivered // Wait for follower to commit
 		caughtUp := waitForCatchup(reqID, nodes[0].Delivered)
@@ -882,7 +882,7 @@ func TestLeaderExclusion(t *testing.T) {
 
 	// We create new batches until the disconnected node catches up the quorum.
 	for reqID := 1; reqID < 100; reqID++ {
-		nodes[1].Submit(Request{ID: fmt.Sprintf("%d", reqID), ClientID: "alice"})
+		nodes[1].Submit(Request{ID: strconv.Itoa(reqID), ClientID: "alice"})
 		<-nodes[1].Delivered // Wait for follower to commit
 		caughtUp := waitForCatchup(reqID, nodes[3].Delivered)
 		if caughtUp {
@@ -911,7 +911,7 @@ func TestCatchingUpWithSyncAssisted(t *testing.T) {
 
 	for i := 1; i <= 10; i++ {
 		for j := range 3 {
-			nodes[j].Submit(Request{ID: fmt.Sprintf("%d", i), ClientID: "alice"})
+			nodes[j].Submit(Request{ID: strconv.Itoa(i), ClientID: "alice"})
 		}
 		for j := range 3 {
 			<-nodes[j].Delivered
@@ -923,7 +923,7 @@ func TestCatchingUpWithSyncAssisted(t *testing.T) {
 	// We create new batches until it catches up the quorum.
 	for reqID := 11; reqID < 100; reqID++ {
 		for j := range 3 {
-			nodes[j].Submit(Request{ID: fmt.Sprintf("%d", reqID), ClientID: "alice"})
+			nodes[j].Submit(Request{ID: strconv.Itoa(reqID), ClientID: "alice"})
 		}
 		for j := range 3 {
 			<-nodes[j].Delivered
@@ -976,7 +976,7 @@ func TestCatchingUpWithSyncAutonomous(t *testing.T) {
 
 	for i := 1; i <= 5; i++ {
 		for j := range 3 {
-			nodes[j].Submit(Request{ID: fmt.Sprintf("%d", i), ClientID: "alice"})
+			nodes[j].Submit(Request{ID: strconv.Itoa(i), ClientID: "alice"})
 		}
 		for j := range 3 {
 			<-nodes[j].Delivered
@@ -1056,7 +1056,7 @@ func TestSyncSameHeightPreservesDecisionsInView(t *testing.T) {
 
 	// Phase 1: Submit 5 proposals to build up DecisionsInView on all nodes.
 	for i := 1; i <= 5; i++ {
-		nodes[0].Submit(Request{ID: fmt.Sprintf("%d", i), ClientID: "alice"})
+		nodes[0].Submit(Request{ID: strconv.Itoa(i), ClientID: "alice"})
 		for j := range numberOfNodes {
 			<-nodes[j].Delivered
 		}
@@ -1097,7 +1097,7 @@ func TestSyncSameHeightPreservesDecisionsInView(t *testing.T) {
 	// restarted with DecisionsInView=0, so it rejects proposals from the
 	// leader (which has DecisionsInView=5).
 	for i := 6; i <= 10; i++ {
-		nodes[0].Submit(Request{ID: fmt.Sprintf("%d", i), ClientID: "alice"})
+		nodes[0].Submit(Request{ID: strconv.Itoa(i), ClientID: "alice"})
 		for j := range numberOfNodes {
 			select {
 			case <-nodes[j].Delivered:
@@ -1212,7 +1212,7 @@ func TestLeaderModifiesPreprepare(t *testing.T) {
 				if m.GetPrePrepare() == nil {
 					return
 				}
-				incReq := Request{ID: fmt.Sprintf("%d", target), ClientID: "alice"}
+				incReq := Request{ID: strconv.FormatUint(target, 10), ClientID: "alice"}
 				incData := batch{
 					Requests: [][]byte{incReq.ToBytes()},
 				}
@@ -1286,7 +1286,7 @@ func TestLeaderModifiesPreprepare(t *testing.T) {
 			}
 
 			for i := range numberOfNodes {
-				nodes[i].Submit(Request{ID: fmt.Sprintf("%d", 1), ClientID: "alice"})
+				nodes[i].Submit(Request{ID: strconv.Itoa(1), ClientID: "alice"})
 			}
 
 			viewChangeWG.Wait()
@@ -1484,7 +1484,7 @@ func TestGradualStart(t *testing.T) {
 	}
 	network.StartServe()
 
-	n0.Submit(Request{ID: fmt.Sprintf("%d", 1), ClientID: "alice"})
+	n0.Submit(Request{ID: strconv.Itoa(1), ClientID: "alice"})
 
 	d0 := <-n0.Delivered
 	md := &smartbftprotos.ViewMetadata{}
@@ -1513,7 +1513,7 @@ func TestGradualStart(t *testing.T) {
 	d1 := <-n1.Delivered
 	require.Equal(t, d0, d1)
 
-	n0.Submit(Request{ID: fmt.Sprintf("%d", 2), ClientID: "alice"})
+	n0.Submit(Request{ID: strconv.Itoa(2), ClientID: "alice"})
 
 	d0 = <-n0.Delivered
 	md = &smartbftprotos.ViewMetadata{}
@@ -1549,7 +1549,7 @@ func TestGradualStart(t *testing.T) {
 	d2 = <-n2.Delivered
 	require.Equal(t, second, d2)
 
-	n0.Submit(Request{ID: fmt.Sprintf("%d", 3), ClientID: "alice"})
+	n0.Submit(Request{ID: strconv.Itoa(3), ClientID: "alice"})
 
 	d0 = <-n0.Delivered
 	md = &smartbftprotos.ViewMetadata{}
@@ -1566,8 +1566,8 @@ func TestGradualStart(t *testing.T) {
 
 	n0.Disconnect() // disconnect the leader
 
-	n1.Submit(Request{ID: fmt.Sprintf("%d", 4), ClientID: "alice"})
-	n2.Submit(Request{ID: fmt.Sprintf("%d", 4), ClientID: "alice"})
+	n1.Submit(Request{ID: strconv.Itoa(4), ClientID: "alice"})
+	n2.Submit(Request{ID: strconv.Itoa(4), ClientID: "alice"})
 
 	d1 = <-n1.Delivered
 	md = &smartbftprotos.ViewMetadata{}
@@ -1601,7 +1601,7 @@ func TestReconfigAndViewChange(t *testing.T) {
 	startNodes(nodes, network)
 
 	for i := 1; i < 5; i++ {
-		nodes[0].Submit(Request{ID: fmt.Sprintf("%d", i), ClientID: "alice"})
+		nodes[0].Submit(Request{ID: strconv.Itoa(i), ClientID: "alice"})
 	}
 
 	data := make([]*AppRecord, 0)
@@ -2083,7 +2083,7 @@ func TestBlacklistAndRedemption(t *testing.T) {
 	// Rotate the leader and ensure the view doesn't change, which proves
 	// node 1 never became the leader again
 	for j := range numberOfNodes {
-		nodes[1].Submit(Request{ID: fmt.Sprintf("%d", j), ClientID: "alice"})
+		nodes[1].Submit(Request{ID: strconv.Itoa(j), ClientID: "alice"})
 		for i := 1; i < numberOfNodes; i++ {
 			<-nodes[i].Delivered
 		}
@@ -2205,7 +2205,7 @@ func TestBlacklistMultipleViewChanges(t *testing.T) {
 	// Rotate the leader and ensure the view doesn't change, which proves
 	// nodes 2 and 3 never became the leader again
 	for j := range numberOfNodes {
-		nodes[5].Submit(Request{ID: fmt.Sprintf("%d", j), ClientID: "alice"})
+		nodes[5].Submit(Request{ID: strconv.Itoa(j), ClientID: "alice"})
 		for i := 3; i < numberOfNodes; i++ {
 			<-nodes[i].Delivered
 		}

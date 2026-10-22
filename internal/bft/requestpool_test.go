@@ -10,7 +10,7 @@ import (
 	"crypto/rand"
 	"encoding/binary"
 	"errors"
-	"fmt"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -193,7 +193,7 @@ func TestReqPoolCapacity(t *testing.T) {
 					errors.Is(err, bft.ErrReqAlreadyProcessed) {
 					wg.Done()
 				}
-			}(fmt.Sprintf("%d", i))
+			}(strconv.Itoa(i))
 		}
 
 		time.Sleep(10 * time.Millisecond)
@@ -206,7 +206,7 @@ func TestReqPoolCapacity(t *testing.T) {
 				}
 				_ = pool.RemoveRequest(req)
 				wg.Done()
-			}(fmt.Sprintf("%d", i))
+			}(strconv.Itoa(i))
 		}
 		wg.Wait()
 
@@ -224,7 +224,7 @@ func TestReqPoolCapacity(t *testing.T) {
 		var lengths []int
 		var totalLength int
 		for i := range 10 {
-			r := makeTestRequest("1", fmt.Sprintf("%d", i), "aaaaaa")
+			r := makeTestRequest("1", strconv.Itoa(i), "aaaaaa")
 			lengths = append(lengths, len(r))
 			err := pool.Submit(r)
 			require.NoError(t, err)
