@@ -467,11 +467,9 @@ func newNode(id uint64, network *Network, testName string, testDir string, rotat
 			sugaredLogger.Panicf("Failed to initialize WAL: %s", err)
 		}
 
-		if app.Consensus != nil && app.Consensus.Config.DecisionsPerLeader > 0 {
+		if app.Consensus != nil {
 			config.DecisionsPerLeader = app.Consensus.Config.DecisionsPerLeader
-		}
-		if app.Consensus != nil && app.Consensus.Config.LeaderRotation {
-			config.LeaderRotation = true
+			config.LeaderRotation = app.Consensus.Config.LeaderRotation
 		}
 
 		c := &consensus.Consensus{

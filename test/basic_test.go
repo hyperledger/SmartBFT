@@ -1848,7 +1848,6 @@ func TestMigrateToBlacklistAndBackAgain(t *testing.T) { //nolint:tparallel // su
 	})
 
 	t.Run("Deactivate leader rotation", func(t *testing.T) {
-		t.Skip()
 		network.StopServe()
 
 		for _, n := range nodes {
@@ -1865,6 +1864,7 @@ func TestMigrateToBlacklistAndBackAgain(t *testing.T) { //nolint:tparallel // su
 			<-nodes[i].Delivered
 		}
 
+		require.Equal(t, uint64(3), atomic.LoadUint64(&leaderRotationDisabled))
 		require.Equal(t, uint64(2), atomic.LoadUint64(&boundCommitSignatures))
 
 		nodes[0].Submit(Request{ID: "6", ClientID: "alice"})
@@ -1873,6 +1873,7 @@ func TestMigrateToBlacklistAndBackAgain(t *testing.T) { //nolint:tparallel // su
 			<-nodes[i].Delivered
 		}
 
+		require.Equal(t, uint64(4), atomic.LoadUint64(&leaderRotationDisabled))
 		require.Equal(t, uint64(2), atomic.LoadUint64(&boundCommitSignatures))
 	})
 }
