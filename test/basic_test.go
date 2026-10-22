@@ -1304,7 +1304,7 @@ func TestLeaderModifiesPreprepare(t *testing.T) {
 			if err := proto.Unmarshal(data[0].Metadata, md); err != nil {
 				require.NoError(t, err)
 			}
-			require.Equal(t, uint64(1), md.LatestSequence)
+			require.Equal(t, uint64(1), md.GetLatestSequence())
 
 			for i := 2; i <= numberOfNodes; i++ {
 				nodes[0].ClearMutateSend(uint64(i))
@@ -1491,8 +1491,8 @@ func TestGradualStart(t *testing.T) {
 	if err := proto.Unmarshal(d0.Metadata, md); err != nil {
 		require.NoError(t, err)
 	}
-	require.Equal(t, uint64(0), md.ViewId)
-	require.Equal(t, uint64(1), md.LatestSequence)
+	require.Equal(t, uint64(0), md.GetViewId())
+	require.Equal(t, uint64(1), md.GetLatestSequence())
 	first := d0
 
 	network.StopServe()
@@ -1520,8 +1520,8 @@ func TestGradualStart(t *testing.T) {
 	if err := proto.Unmarshal(d0.Metadata, md); err != nil {
 		require.NoError(t, err)
 	}
-	require.Equal(t, uint64(0), md.ViewId)
-	require.Equal(t, uint64(2), md.LatestSequence)
+	require.Equal(t, uint64(0), md.GetViewId())
+	require.Equal(t, uint64(2), md.GetLatestSequence())
 	second := d0
 
 	d1 = <-n1.Delivered
@@ -1556,8 +1556,8 @@ func TestGradualStart(t *testing.T) {
 	if err := proto.Unmarshal(d0.Metadata, md); err != nil {
 		require.NoError(t, err)
 	}
-	require.Equal(t, uint64(0), md.ViewId)
-	require.Equal(t, uint64(3), md.LatestSequence)
+	require.Equal(t, uint64(0), md.GetViewId())
+	require.Equal(t, uint64(3), md.GetLatestSequence())
 
 	d1 = <-n1.Delivered
 	require.Equal(t, d0, d1)
@@ -1574,8 +1574,8 @@ func TestGradualStart(t *testing.T) {
 	if err := proto.Unmarshal(d1.Metadata, md); err != nil {
 		require.NoError(t, err)
 	}
-	require.Equal(t, uint64(1), md.ViewId) // view was changed
-	require.Equal(t, uint64(4), md.LatestSequence)
+	require.Equal(t, uint64(1), md.GetViewId()) // view was changed
+	require.Equal(t, uint64(4), md.GetLatestSequence())
 
 	d2 = <-n2.Delivered
 	require.Equal(t, d1, d2)
@@ -2093,8 +2093,8 @@ func TestBlacklistAndRedemption(t *testing.T) {
 	md := &smartbftprotos.ViewMetadata{}
 	err := proto.Unmarshal(nodes[1].lastDecision.Proposal.Metadata, md)
 	require.NoError(t, err)
-	require.Equal(t, uint64(1), md.ViewId)
-	require.Equal(t, []uint64{1}, md.BlackList)
+	require.Equal(t, uint64(1), md.GetViewId())
+	require.Equal(t, []uint64{1}, md.GetBlackList())
 
 	// Next, re-connect node 1
 	nodes[0].Connect()
@@ -2125,7 +2125,7 @@ func TestBlacklistAndRedemption(t *testing.T) {
 		md := &smartbftprotos.ViewMetadata{}
 		err = proto.Unmarshal(nodes[1].lastDecision.Proposal.Metadata, md)
 		require.NoError(t, err)
-		require.Equal(t, uint64(1), md.ViewId)
+		require.Equal(t, uint64(1), md.GetViewId())
 	}
 	go doInBackground(f, stop)
 	blacklistPrunedWG.Wait()
@@ -2215,8 +2215,8 @@ func TestBlacklistMultipleViewChanges(t *testing.T) {
 	md := &smartbftprotos.ViewMetadata{}
 	err := proto.Unmarshal(nodes[5].lastDecision.Proposal.Metadata, md)
 	require.NoError(t, err)
-	require.Equal(t, uint64(3), md.ViewId)
-	require.Equal(t, []uint64{2, 3}, md.BlackList)
+	require.Equal(t, uint64(3), md.GetViewId())
+	require.Equal(t, []uint64{2, 3}, md.GetBlackList())
 
 	// Next, re-connect nodes 2,3
 	nodes[1].Connect()
@@ -2247,7 +2247,7 @@ func TestBlacklistMultipleViewChanges(t *testing.T) {
 		md := &smartbftprotos.ViewMetadata{}
 		err = proto.Unmarshal(nodes[3].lastDecision.Proposal.Metadata, md)
 		require.NoError(t, err)
-		require.Equal(t, uint64(3), md.ViewId)
+		require.Equal(t, uint64(3), md.GetViewId())
 	}
 	go doInBackground(f, stop)
 	node2RemovedFromBlacklist.Wait()

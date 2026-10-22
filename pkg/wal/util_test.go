@@ -530,7 +530,7 @@ func make8LogFiles(t *testing.T, logger api.Logger, testDir string) {
 	}
 
 	for range 30 {
-		err = wal.Append(rec1.Data, rec1.TruncateTo)
+		err = wal.Append(rec1.GetData(), rec1.GetTruncateTo())
 		require.NoError(t, err)
 	}
 

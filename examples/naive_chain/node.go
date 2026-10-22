@@ -119,7 +119,7 @@ func (n *Node) AssembleProposal(metadata []byte, requests [][]byte) bft.Proposal
 		Header: BlockHeader{
 			PrevHash: n.prevHash,
 			DataHash: computeDigest(blockData),
-			Sequence: int64(md.LatestSequence),
+			Sequence: int64(md.GetLatestSequence()),
 		}.ToBytes(),
 		Payload:  BlockData{Transactions: requests}.ToBytes(),
 		Metadata: metadata,
@@ -236,7 +236,7 @@ func (n *Node) Start() {
 					case *smartbftprotos.Message:
 						n.consensus.HandleMessage(id, m)
 					case *FwdMessage:
-						n.consensus.SubmitRequest(m.Payload)
+						n.consensus.SubmitRequest(m.GetPayload())
 					}
 				}
 			}

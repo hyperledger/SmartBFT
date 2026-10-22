@@ -234,7 +234,7 @@ func (node *Node) serve() {
 				}
 				handler.HandleMessage(uint64(m.from), msg)
 			default:
-				handler.HandleRequest(uint64(m.from), msg.(*FwdMessage).Payload)
+				handler.HandleRequest(uint64(m.from), msg.(*FwdMessage).GetPayload())
 			}
 		}
 	}

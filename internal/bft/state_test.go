@@ -37,10 +37,10 @@ func TestStateRestore(t *testing.T) {
 	}
 
 	expectedInFlightProposal := &types.Proposal{
-		VerificationSequence: int64(prePrepare.Proposal.VerificationSequence),
-		Metadata:             prePrepare.Proposal.Metadata,
-		Payload:              prePrepare.Proposal.Payload,
-		Header:               prePrepare.Proposal.Header,
+		VerificationSequence: int64(prePrepare.GetProposal().GetVerificationSequence()),
+		Metadata:             prePrepare.GetProposal().GetMetadata(),
+		Payload:              prePrepare.GetProposal().GetPayload(),
+		Header:               prePrepare.GetProposal().GetHeader(),
 	}
 
 	proposedRecord := &protos.SavedMessage{

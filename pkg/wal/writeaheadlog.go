@@ -484,7 +484,7 @@ func (w *WriteAheadLogFile) append(record *protos.LogRecord) error {
 		return fmt.Errorf("wal: failed to get offset from log file: %w", err)
 	}
 
-	if record.TruncateTo {
+	if record.GetTruncateTo() {
 		w.truncateIndex = w.index
 	}
 
@@ -558,13 +558,13 @@ FileLoop:
 				break ReadLoop
 			}
 
-			if rec.TruncateTo {
+			if rec.GetTruncateTo() {
 				items = items[0:0]
 				w.truncateIndex = w.index
 			}
 
-			if rec.Type == protos.LogRecord_ENTRY {
-				items = append(items, rec.Data)
+			if rec.GetType() == protos.LogRecord_ENTRY {
+				items = append(items, rec.GetData())
 			}
 
 			w.logger.Debugf("Read record #%d, file: %s", i, r.fileName)

@@ -563,9 +563,9 @@ func parseRecordAt(data []byte, pos int64) (recordView, bool) {
 		return view, false
 	}
 
-	switch record.Type {
+	switch record.GetType() {
 	case protos.LogRecord_ENTRY, protos.LogRecord_CONTROL, protos.LogRecord_CRC_ANCHOR:
-		view.recordType = record.Type
+		view.recordType = record.GetType()
 	default:
 		return view, false
 	}

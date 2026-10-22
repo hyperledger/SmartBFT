@@ -60,19 +60,19 @@ func (ps *PersistedState) Save(msgToSave *protos.SavedMessage) error {
 }
 
 func (ps *PersistedState) storeProposal(proposed *protos.ProposedRecord) {
-	proposal := proposed.PrePrepare.Proposal
+	proposal := proposed.GetPrePrepare().GetProposal()
 	proposalToStore := types.Proposal{
-		VerificationSequence: int64(proposal.VerificationSequence),
-		Header:               proposal.Header,
-		Payload:              proposal.Payload,
-		Metadata:             proposal.Metadata,
+		VerificationSequence: int64(proposal.GetVerificationSequence()),
+		Header:               proposal.GetHeader(),
+		Payload:              proposal.GetPayload(),
+		Metadata:             proposal.GetMetadata(),
 	}
 	ps.InFlightProposal.StoreProposal(proposalToStore)
 }
 
 func (ps *PersistedState) storePrepared(commitMsg *protos.Message) {
 	cmt := commitMsg.GetCommit()
-	ps.InFlightProposal.StorePrepares(cmt.View, cmt.Seq)
+	ps.InFlightProposal.StorePrepares(cmt.GetView(), cmt.GetSeq())
 }
 
 func (ps *PersistedState) LoadNewViewIfApplicable() (*types.ViewAndSeq, error) {
@@ -89,7 +89,7 @@ func (ps *PersistedState) LoadNewViewIfApplicable() (*types.ViewAndSeq, error) {
 	}
 	if newViewMsg := lastPersistedMessage.GetNewView(); newViewMsg != nil {
 		ps.Logger.Infof("last entry in WAL is a newView record")
-		return &types.ViewAndSeq{View: newViewMsg.ViewId, Seq: newViewMsg.LatestSequence}, nil
+		return &types.ViewAndSeq{View: newViewMsg.GetViewId(), Seq: newViewMsg.GetLatestSequence()}, nil
 	}
 	return nil, nil
 }
@@ -154,12 +154,12 @@ func (ps *PersistedState) Restore(v *View) error {
 }
 
 func (ps *PersistedState) recoverProposed(lastPersistedMessage *protos.ProposedRecord, v *View) error {
-	prop := lastPersistedMessage.GetPrePrepare().Proposal
+	prop := lastPersistedMessage.GetPrePrepare().GetProposal()
 	v.inFlightProposal = &types.Proposal{
-		VerificationSequence: int64(prop.VerificationSequence),
-		Metadata:             prop.Metadata,
-		Payload:              prop.Payload,
-		Header:               prop.Header,
+		VerificationSequence: int64(prop.GetVerificationSequence()),
+		Metadata:             prop.GetMetadata(),
+		Payload:              prop.GetPayload(),
+		Header:               prop.GetHeader(),
 	}
 	restoreInFlightRequests(v)
 	ps.storeProposal(lastPersistedMessage)
@@ -172,14 +172,14 @@ func (ps *PersistedState) recoverProposed(lastPersistedMessage *protos.ProposedR
 		},
 	}
 	v.Phase = PROPOSED
-	v.Number = prp.View
-	v.ProposalSequence = prp.Seq
+	v.Number = prp.GetView()
+	v.ProposalSequence = prp.GetSeq()
 	md := &protos.ViewMetadata{}
-	if err := proto.Unmarshal(prop.Metadata, md); err != nil {
+	if err := proto.Unmarshal(prop.GetMetadata(), md); err != nil {
 		ps.Logger.Panicf("Failed to unmarshal proposal metadata, error: %v", err)
 	}
-	v.DecisionsInView = md.DecisionsInView
-	ps.Logger.Infof("Restored proposal with sequence %d", lastPersistedMessage.GetPrePrepare().Seq)
+	v.DecisionsInView = md.GetDecisionsInView()
+	ps.Logger.Infof("Restored proposal with sequence %d", lastPersistedMessage.GetPrePrepare().GetSeq())
 	return nil
 }
 
@@ -200,26 +200,26 @@ func (ps *PersistedState) recoverPrepared(lastPersistedMessage *protos.Message, 
 		return fmt.Errorf("expected second last message to be a pre-prepare, but got '%v' instead", prePrepareMsg)
 	}
 
-	if v.ProposalSequence < prePrepareFromWAL.Seq {
-		err := fmt.Errorf("last proposal sequence persisted into WAL is %d which is greater than last committed sequence is %d", prePrepareFromWAL.Seq, v.ProposalSequence)
+	if v.ProposalSequence < prePrepareFromWAL.GetSeq() {
+		err := fmt.Errorf("last proposal sequence persisted into WAL is %d which is greater than last committed sequence is %d", prePrepareFromWAL.GetSeq(), v.ProposalSequence)
 		ps.Logger.Errorf("Failed recovery: %s", err)
 		return err
 	}
 
 	// Check if the WAL's last sequence has been persisted into the application layer.
-	if v.ProposalSequence > prePrepareFromWAL.Seq {
+	if v.ProposalSequence > prePrepareFromWAL.GetSeq() {
 		ps.Logger.Infof("Last proposal with sequence %d has been safely committed", v.ProposalSequence)
 		return nil
 	}
 
 	// Else, v.ProposalSequence == prePrepareFromWAL.Seq
 
-	prop := prePrepareFromWAL.Proposal
+	prop := prePrepareFromWAL.GetProposal()
 	v.inFlightProposal = &types.Proposal{
-		VerificationSequence: int64(prop.VerificationSequence),
-		Metadata:             prop.Metadata,
-		Payload:              prop.Payload,
-		Header:               prop.Header,
+		VerificationSequence: int64(prop.GetVerificationSequence()),
+		Metadata:             prop.GetMetadata(),
+		Payload:              prop.GetPayload(),
+		Header:               prop.GetHeader(),
 	}
 	restoreInFlightRequests(v)
 	ps.storeProposal(prePrepareMsg.GetProposedRecord())
@@ -229,23 +229,23 @@ func (ps *PersistedState) recoverPrepared(lastPersistedMessage *protos.Message, 
 	// after the recovery.
 	v.lastBroadcastSent = lastPersistedMessage
 	v.Phase = PREPARED
-	v.Number = prePrepareFromWAL.View
-	v.ProposalSequence = prePrepareFromWAL.Seq
+	v.Number = prePrepareFromWAL.GetView()
+	v.ProposalSequence = prePrepareFromWAL.GetSeq()
 	md := &protos.ViewMetadata{}
-	if err := proto.Unmarshal(prop.Metadata, md); err != nil {
+	if err := proto.Unmarshal(prop.GetMetadata(), md); err != nil {
 		ps.Logger.Panicf("Failed to unmarshal proposal metadata, error: %v", err)
 	}
-	v.DecisionsInView = md.DecisionsInView
+	v.DecisionsInView = md.GetDecisionsInView()
 
 	// Restore signature
-	signatureInLastSentCommit := v.lastBroadcastSent.GetCommit().Signature
+	signatureInLastSentCommit := v.lastBroadcastSent.GetCommit().GetSignature()
 	v.myProposalSig = &types.Signature{
-		ID:    signatureInLastSentCommit.Signer,
-		Msg:   signatureInLastSentCommit.Msg,
-		Value: signatureInLastSentCommit.Value,
+		ID:    signatureInLastSentCommit.GetSigner(),
+		Msg:   signatureInLastSentCommit.GetMsg(),
+		Value: signatureInLastSentCommit.GetValue(),
 	}
 
-	ps.Logger.Infof("Restored proposal with sequence %d", prePrepareFromWAL.Seq)
+	ps.Logger.Infof("Restored proposal with sequence %d", prePrepareFromWAL.GetSeq())
 	return nil
 }
 

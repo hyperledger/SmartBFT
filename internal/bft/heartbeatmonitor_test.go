@@ -67,7 +67,7 @@ func TestHeartbeatMonitorLeader(t *testing.T) {
 	toWG2.Add(10)
 	comm.On("BroadcastConsensus", mock.AnythingOfType("*smartbftprotos.Message")).Run(func(args mock.Arguments) {
 		msg := args[0].(*smartbftprotos.Message)
-		view := msg.GetHeartBeat().View
+		view := msg.GetHeartBeat().GetView()
 		atomic.AddUint32(&heartBeatsSent, 1)
 		if uint64(10) == view {
 			toWG1.Done()
@@ -76,7 +76,7 @@ func TestHeartbeatMonitorLeader(t *testing.T) {
 			totalHBsSent := atomic.LoadUint32(&heartBeatsSent)
 			if totalHBsSent == 20 {
 				// View is stopped
-				vs.Store(bft.ViewSequence{ViewActive: false, ProposalSeq: msg.GetHeartBeat().Seq})
+				vs.Store(bft.ViewSequence{ViewActive: false, ProposalSeq: msg.GetHeartBeat().GetSeq()})
 				// Record HB number we sent so far
 				atomic.StoreUint32(&heartBeatsSentUntilViewBecomesInactive, totalHBsSent)
 			}
@@ -312,8 +312,8 @@ func TestHeartbeatResponseLeader(t *testing.T) {
 		msg := args[0].(*smartbftprotos.Message)
 		hb := msg.GetHeartBeat()
 		require.NotNil(t, hb)
-		require.Equal(t, uint64(5), hb.View)
-		require.Equal(t, uint64(12), hb.Seq)
+		require.Equal(t, uint64(5), hb.GetView())
+		require.Equal(t, uint64(12), hb.GetSeq())
 	})
 
 	hm1.ChangeRole(bft.Leader, 5, 0)
@@ -387,7 +387,7 @@ func TestHeartbeatResponseFollower(t *testing.T) {
 		msg := args[1].(*smartbftprotos.Message)
 		hbr := msg.GetHeartBeatResponse()
 		require.NotNil(t, hbr)
-		require.Equal(t, uint64(6), hbr.View)
+		require.Equal(t, uint64(6), hbr.GetView())
 		respWG.Done()
 	})
 

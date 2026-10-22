@@ -45,6 +45,7 @@ linters:
     - nolintlint
     - nosprintfhostport
     - promlinter
+    - protogetter
     - reassign
     - recvcheck
     - sloglint

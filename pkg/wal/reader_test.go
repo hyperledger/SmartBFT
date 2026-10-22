@@ -40,7 +40,7 @@ func TestLogRecordReader(t *testing.T) {
 		TruncateTo: true,
 		Data:       []byte{1, 2, 3, 4},
 	}
-	err = wal.Append(rec1.Data, rec1.TruncateTo)
+	err = wal.Append(rec1.GetData(), rec1.GetTruncateTo())
 	require.NoError(t, err)
 
 	crc1 := wal.CRC()
@@ -50,7 +50,7 @@ func TestLogRecordReader(t *testing.T) {
 		Data:       []byte{5, 6, 7, 8, 9, 10, 11, 12},
 	}
 
-	err = wal.Append(rec2.Data, rec2.TruncateTo)
+	err = wal.Append(rec2.GetData(), rec2.GetTruncateTo())
 	require.NoError(t, err)
 
 	crc2 := wal.CRC()
@@ -59,7 +59,7 @@ func TestLogRecordReader(t *testing.T) {
 		TruncateTo: false,
 		Data:       []byte{13, 14, 15, 16, 17, 18, 19, 20},
 	}
-	err = wal.Append(rec3.Data, rec3.TruncateTo)
+	err = wal.Append(rec3.GetData(), rec3.GetTruncateTo())
 	require.NoError(t, err)
 
 	crc3 := wal.CRC()

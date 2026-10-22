@@ -111,7 +111,7 @@ func (a *App) Sync() types.SyncResponse {
 			Payload:  record.Batch.toBytes(),
 			Metadata: record.Metadata,
 		}
-		a.logger.Debugf("Sync deliver view %d last seq %d", a.latestMD.ViewId, a.latestMD.LatestSequence)
+		a.logger.Debugf("Sync deliver view %d last seq %d", a.latestMD.GetViewId(), a.latestMD.GetLatestSequence())
 		a.Deliver(proposal, nil)
 		for _, req := range record.Batch.Requests {
 			request := requestFromBytes(req)
@@ -304,15 +304,15 @@ func (a *App) Deliver(proposal types.Proposal, signatures []types.Signature) typ
 		Signatures: signatures,
 	}
 
-	prevSeq := a.latestMD.LatestSequence
+	prevSeq := a.latestMD.GetLatestSequence()
 
 	a.latestMD = &smartbftprotos.ViewMetadata{}
 	if err := proto.Unmarshal(proposal.Metadata, a.latestMD); err != nil {
 		panic(err)
 	}
 
-	a.logger.Debugf("Deliver view %d last seq %d prevSeq %d", a.latestMD.ViewId, a.latestMD.LatestSequence, prevSeq)
-	if prevSeq == a.latestMD.LatestSequence {
+	a.logger.Debugf("Deliver view %d last seq %d prevSeq %d", a.latestMD.GetViewId(), a.latestMD.GetLatestSequence(), prevSeq)
+	if prevSeq == a.latestMD.GetLatestSequence() {
 		a.logger.Panicf("Committed sequence %d twice", prevSeq)
 	}
 
@@ -356,10 +356,10 @@ func (cb *committedBatches) add(record *AppRecord) {
 		panic(err)
 	}
 
-	if cb.latestMD != nil && cb.latestMD.ViewId > md.ViewId {
+	if cb.latestMD != nil && cb.latestMD.GetViewId() > md.GetViewId() {
 		return
 	}
-	if cb.latestMD != nil && cb.latestMD.LatestSequence >= md.LatestSequence {
+	if cb.latestMD != nil && cb.latestMD.GetLatestSequence() >= md.GetLatestSequence() {
 		return
 	}
 	cb.latestMD = md
@@ -376,7 +376,7 @@ func (cb *committedBatches) readAll(from *smartbftprotos.ViewMetadata) []*AppRec
 		if err := proto.Unmarshal(entry.Metadata, md); err != nil {
 			panic(err)
 		}
-		if md.ViewId < from.ViewId || md.LatestSequence <= from.LatestSequence {
+		if md.GetViewId() < from.GetViewId() || md.GetLatestSequence() <= from.GetLatestSequence() {
 			continue
 		}
 		res = append(res, &AppRecord{

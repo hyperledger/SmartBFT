@@ -1396,13 +1396,13 @@ func TestInFlightProposalInViewData(t *testing.T) {
 			m = <-sendChan
 			require.NotNil(t, m.GetViewData())
 			viewData := &protos.ViewData{}
-			require.NoError(t, proto.Unmarshal(m.GetViewData().RawViewData, viewData))
+			require.NoError(t, proto.Unmarshal(m.GetViewData().GetRawViewData(), viewData))
 			if test.expectInflight {
-				require.NotNil(t, viewData.InFlightProposal)
+				require.NotNil(t, viewData.GetInFlightProposal())
 			} else {
-				require.Nil(t, viewData.InFlightProposal)
+				require.Nil(t, viewData.GetInFlightProposal())
 			}
-			require.NotNil(t, viewData.LastDecision)
+			require.NotNil(t, viewData.GetLastDecision())
 			comm.AssertCalled(t, "SendConsensus", uint64(1), mock.Anything)
 
 			vc.Stop()
@@ -1608,7 +1608,7 @@ func TestInformViewChanger(t *testing.T) {
 	vc.StartViewChange(2, true)
 	msg := <-msgChan
 	require.NotNil(t, msg.GetViewChange())
-	require.Equal(t, info+1, msg.GetViewChange().NextView) // view number did change according to info
+	require.Equal(t, info+1, msg.GetViewChange().GetNextView()) // view number did change according to info
 
 	vc.Stop()
 
@@ -1724,7 +1724,7 @@ func TestRestoreViewChange(t *testing.T) {
 	vc.Start(5)
 	m := <-broadcastChan
 	require.NotNil(t, m.GetViewChange())
-	require.Equal(t, uint64(6), m.GetViewChange().NextView)
+	require.Equal(t, uint64(6), m.GetViewChange().GetNextView())
 	m = <-sendChan
 	require.NotNil(t, m.GetViewData())
 
@@ -1765,7 +1765,7 @@ func TestCheckInFlightNoProposal(t *testing.T) {
 			description: "all with old in flight proposal",
 			mutateMessages: func(messages []*protos.ViewData) {
 				for _, msg := range messages {
-					msg.InFlightProposal = msg.LastDecision
+					msg.InFlightProposal = msg.GetLastDecision()
 				}
 			},
 		},
@@ -1780,7 +1780,7 @@ func TestCheckInFlightNoProposal(t *testing.T) {
 			description: "quorum with an old in flight proposal",
 			mutateMessages: func(messages []*protos.ViewData) {
 				for _, msg := range messages {
-					msg.InFlightProposal = msg.LastDecision // set all with an old proposal (same as last decision)
+					msg.InFlightProposal = msg.GetLastDecision() // set all with an old proposal (same as last decision)
 				}
 				messages[0].InFlightProposal = expectedProposal
 			},
@@ -1788,8 +1788,8 @@ func TestCheckInFlightNoProposal(t *testing.T) {
 		{
 			description: "some with no in flight proposal and some with an old one",
 			mutateMessages: func(messages []*protos.ViewData) {
-				messages[0].InFlightProposal = messages[0].LastDecision
-				messages[1].InFlightProposal = messages[1].LastDecision
+				messages[0].InFlightProposal = messages[0].GetLastDecision()
+				messages[1].InFlightProposal = messages[1].GetLastDecision()
 				messages[2].InFlightProposal = expectedProposal
 				messages[3].InFlightProposal = nil
 			},
@@ -1797,7 +1797,7 @@ func TestCheckInFlightNoProposal(t *testing.T) {
 		{
 			description: "enough with a different in flight proposal",
 			mutateMessages: func(messages []*protos.ViewData) {
-				messages[0].InFlightProposal = messages[0].LastDecision
+				messages[0].InFlightProposal = messages[0].GetLastDecision()
 				messages[1].InFlightProposal = nil
 				messages[2].InFlightProposal = expectedProposal
 				messages[3].InFlightProposal = expectedProposal
@@ -1868,7 +1868,7 @@ func TestCheckInFlightWithProposal(t *testing.T) {
 					msg.InFlightProposal = expectedProposal
 					msg.InFlightPrepared = true
 				}
-				messages[0].InFlightProposal = messages[0].LastDecision
+				messages[0].InFlightProposal = messages[0].GetLastDecision()
 			},
 			ok:       true,
 			no:       false,
@@ -2428,7 +2428,7 @@ func TestCommitWhileHavingInFlight(t *testing.T) {
 
 	// Wait for committing the block
 	commit := <-appChan
-	require.Equal(t, viewData.LastDecision.Metadata, commit.Metadata)
+	require.Equal(t, viewData.GetLastDecision().GetMetadata(), commit.Metadata)
 
 	// Get the second view data message, this time our latest decision is higher by 1
 

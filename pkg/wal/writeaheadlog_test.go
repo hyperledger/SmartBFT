@@ -239,7 +239,7 @@ func TestWriteAheadLogFile_Append(t *testing.T) {
 			TruncateTo: true,
 			Data:       []byte{1, 2, 3, 4},
 		}
-		err = wal.Append(rec1.Data, rec1.TruncateTo)
+		err = wal.Append(rec1.GetData(), rec1.GetTruncateTo())
 		require.NoError(t, err)
 
 		rec2 := &smartbftprotos.LogRecord{
@@ -247,7 +247,7 @@ func TestWriteAheadLogFile_Append(t *testing.T) {
 			TruncateTo: false,
 			Data:       []byte{5, 6, 7, 8, 9, 10, 11, 12},
 		}
-		err = wal.Append(rec2.Data, rec2.TruncateTo)
+		err = wal.Append(rec2.GetData(), rec2.GetTruncateTo())
 		require.NoError(t, err)
 
 		err = wal.Append(nil, false)
@@ -295,7 +295,7 @@ func TestWriteAheadLogFile_Append(t *testing.T) {
 
 			records[m] = rec
 
-			err = wal.Append(rec.Data, rec.TruncateTo)
+			err = wal.Append(rec.GetData(), rec.GetTruncateTo())
 			require.NoError(t, err)
 
 			if m == 9 {
@@ -344,7 +344,7 @@ func TestWriteAheadLogFile_Append(t *testing.T) {
 
 			records[m] = rec
 
-			err = wal.Append(rec.Data, rec.TruncateTo)
+			err = wal.Append(rec.GetData(), rec.GetTruncateTo())
 			require.NoError(t, err)
 
 			names, err := dirReadWalNames(dirPath)
@@ -381,7 +381,7 @@ func TestWriteAheadLogFile_Append(t *testing.T) {
 			TruncateTo: false,
 			Data:       []byte{1, 2, 3, 4},
 		}
-		err = wal.Append(rec1.Data, rec1.TruncateTo)
+		err = wal.Append(rec1.GetData(), rec1.GetTruncateTo())
 		require.NoError(t, err)
 
 		rec2 := &smartbftprotos.LogRecord{
@@ -396,7 +396,7 @@ func TestWriteAheadLogFile_Append(t *testing.T) {
 			TruncateTo: false,
 			Data:       []byte{5, 6, 7, 8, 9, 10, 11, 12},
 		}
-		err = wal.Append(rec3.Data, rec3.TruncateTo)
+		err = wal.Append(rec3.GetData(), rec3.GetTruncateTo())
 		require.NoError(t, err)
 
 		err = wal.Append(nil, false)
@@ -1004,9 +1004,9 @@ func verifyAppend(
 		record, err := r.Read()
 		require.NoError(t, err)
 		require.NotNil(t, record)
-		require.Equal(t, expectedRecord.Data, record.Data)
-		require.Equal(t, expectedRecord.Type, record.Type)
-		require.Equal(t, expectedRecord.TruncateTo, record.TruncateTo)
+		require.Equal(t, expectedRecord.GetData(), record.GetData())
+		require.Equal(t, expectedRecord.GetType(), record.GetType())
+		require.Equal(t, expectedRecord.GetTruncateTo(), record.GetTruncateTo())
 	}
 
 	record, err := r.Read()

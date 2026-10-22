@@ -266,7 +266,7 @@ func TestLeaderPropose(t *testing.T) {
 	require.Equal(t, expected, proposal)
 	signaturesBySigners := make(map[uint64]*protos.Signature)
 	for _, sig := range signatures {
-		signaturesBySigners[sig.Signer] = sig
+		signaturesBySigners[sig.GetSigner()] = sig
 	}
 	require.Equal(t, map[uint64]*protos.Signature{
 		17: {Signer: 17, Value: []byte{4}},
@@ -505,9 +505,9 @@ func TestSyncPrevView(t *testing.T) {
 	controller.ProcessMessages(2, prePrepareNext)
 
 	nextProp := types.Proposal{
-		Header:               prePrepareNextGet.Proposal.Header,
-		Payload:              prePrepareNextGet.Proposal.Payload,
-		Metadata:             prePrepareNextGet.Proposal.Metadata,
+		Header:               prePrepareNextGet.GetProposal().GetHeader(),
+		Payload:              prePrepareNextGet.GetProposal().GetPayload(),
+		Metadata:             prePrepareNextGet.GetProposal().GetMetadata(),
 		VerificationSequence: 1,
 	}
 	prepareNext := proto.Clone(prepare).(*protos.Message)
@@ -837,7 +837,7 @@ func TestSyncInform(t *testing.T) {
 	vc.StartViewChange(2, true)
 	msg := <-msgChan
 	require.NotNil(t, msg.GetViewChange())
-	require.Equal(t, syncToView+1, msg.GetViewChange().NextView) // view number did change according to info
+	require.Equal(t, syncToView+1, msg.GetViewChange().GetNextView()) // view number did change according to info
 
 	batcher.AssertNumberOfCalls(t, "NextBatch", 1)
 	assembler.AssertNumberOfCalls(t, "AssembleProposal", 1)
@@ -974,9 +974,9 @@ func TestRotateFromLeaderToFollower(t *testing.T) {
 	commWG.Wait()
 
 	nextProp := types.Proposal{
-		Header:               prePrepareNextGet.Proposal.Header,
-		Payload:              prePrepareNextGet.Proposal.Payload,
-		Metadata:             prePrepareNextGet.Proposal.Metadata,
+		Header:               prePrepareNextGet.GetProposal().GetHeader(),
+		Payload:              prePrepareNextGet.GetProposal().GetPayload(),
+		Metadata:             prePrepareNextGet.GetProposal().GetMetadata(),
 		VerificationSequence: 1,
 	}
 	prepareNext := proto.Clone(prepare).(*protos.Message)
@@ -1063,9 +1063,9 @@ func TestRotateFromFollowerToLeader(t *testing.T) {
 		LatestSequence:  1,
 		ViewId:          1,
 		PrevCommitSignatureDigest: bft.CommitSignaturesDigest([]*protos.Signature{
-			commit1.GetCommit().Signature,
-			commit2.GetCommit().Signature,
-			commit3.GetCommit().Signature,
+			commit1.GetCommit().GetSignature(),
+			commit2.GetCommit().GetSignature(),
+			commit3.GetCommit().GetSignature(),
 		}),
 	})
 	nextProp := types.Proposal{
@@ -1298,7 +1298,7 @@ func TestDeliverTwiceOnceFromSyncAndOnceFromViewData(t *testing.T) {
 		if err := proto.Unmarshal(proposal.Metadata, md); err != nil {
 			panic("Error unmarshaling metadata")
 		}
-		if md.LatestSequence == 1 {
+		if md.GetLatestSequence() == 1 {
 			panic("Delivering sequence 1 twice")
 		}
 	}).Return(types.Reconfig{InLatestDecision: false})

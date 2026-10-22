@@ -178,8 +178,8 @@ func TestViewDataInFlightWhileStored(t *testing.T) {
 	inconsistent := 0
 	for range 100000 {
 		viewData := &protos.ViewData{}
-		require.NoError(t, proto.Unmarshal(vc.prepareViewDataMsg().GetViewData().RawViewData, viewData))
-		if viewData.InFlightPrepared && viewData.InFlightProposal.Payload[0]%2 == 1 {
+		require.NoError(t, proto.Unmarshal(vc.prepareViewDataMsg().GetViewData().GetRawViewData(), viewData))
+		if viewData.GetInFlightPrepared() && viewData.GetInFlightProposal().GetPayload()[0]%2 == 1 {
 			inconsistent++
 		}
 	}

@@ -88,7 +88,7 @@ func NewLogRecordReader(logger api.Logger, fileName string) (*LogRecordReader, e
 		return nil, err
 	}
 
-	if record.Type != protos.LogRecord_CRC_ANCHOR {
+	if record.GetType() != protos.LogRecord_CRC_ANCHOR {
 		_ = r.Close()
 
 		return nil, fmt.Errorf("failed reading CRC-Anchor from log file: %s", fileName)
@@ -139,7 +139,7 @@ func (r *LogRecordReader) Read() (*protos.LogRecord, error) {
 		return nil, ErrWALUnmarshalPayload // fmt.Errorf("wal: failed to unmarshal payload: %w", err)
 	}
 
-	switch record.Type {
+	switch record.GetType() {
 	case protos.LogRecord_ENTRY, protos.LogRecord_CONTROL:
 		if !verifyCRC(r.crc, crc, payload) {
 			return nil, ErrCRC
@@ -149,7 +149,7 @@ func (r *LogRecordReader) Read() (*protos.LogRecord, error) {
 	case protos.LogRecord_CRC_ANCHOR:
 		r.crc = crc
 	default:
-		return nil, fmt.Errorf("%w: %v", ErrUnexpectedRecordType, record.Type)
+		return nil, fmt.Errorf("%w: %v", ErrUnexpectedRecordType, record.GetType())
 	}
 
 	return record, nil

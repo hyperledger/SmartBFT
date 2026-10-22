@@ -634,9 +634,9 @@ func TestNormalPath(t *testing.T) {
 	})
 
 	nextProp := types.Proposal{
-		Header:               prePrepareNextGet.Proposal.Header,
-		Payload:              prePrepareNextGet.Proposal.Payload,
-		Metadata:             prePrepareNextGet.Proposal.Metadata,
+		Header:               prePrepareNextGet.GetProposal().GetHeader(),
+		Payload:              prePrepareNextGet.GetProposal().GetPayload(),
+		Metadata:             prePrepareNextGet.GetProposal().GetMetadata(),
 		VerificationSequence: 1,
 	}
 

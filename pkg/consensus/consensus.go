@@ -150,8 +150,8 @@ func (c *Consensus) Start() error {
 	c.Pool = algorithm.NewPool(c.Logger, c.RequestInspector, c.controller, opts, c.submittedChan)
 	c.continueCreateComponents()
 
-	c.Logger.Debugf("Application started with view %d, seq %d, and decisions %d", c.Metadata.ViewId, c.Metadata.LatestSequence, c.Metadata.DecisionsInView)
-	view, seq, dec := c.setViewAndSeq(c.Metadata.ViewId, c.Metadata.LatestSequence, c.Metadata.DecisionsInView)
+	c.Logger.Debugf("Application started with view %d, seq %d, and decisions %d", c.Metadata.GetViewId(), c.Metadata.GetLatestSequence(), c.Metadata.GetDecisionsInView())
+	view, seq, dec := c.setViewAndSeq(c.Metadata.GetViewId(), c.Metadata.GetLatestSequence(), c.Metadata.GetDecisionsInView())
 
 	c.waitForEachOther()
 
@@ -238,12 +238,12 @@ func (c *Consensus) reconfig(reconfig types.Reconfig) {
 
 	proposal, _ := c.checkpoint.Get()
 	md := &protos.ViewMetadata{}
-	if err := proto.Unmarshal(proposal.Metadata, md); err != nil {
+	if err := proto.Unmarshal(proposal.GetMetadata(), md); err != nil {
 		c.Logger.Panicf("Couldn't unmarshal the checkpoint metadata, error: %v", err)
 	}
-	c.Logger.Debugf("Checkpoint with view %d and seq %d", md.ViewId, md.LatestSequence)
+	c.Logger.Debugf("Checkpoint with view %d and seq %d", md.GetViewId(), md.GetLatestSequence())
 
-	view, seq, dec := c.setViewAndSeq(md.ViewId, md.LatestSequence, md.DecisionsInView)
+	view, seq, dec := c.setViewAndSeq(md.GetViewId(), md.GetLatestSequence(), md.GetDecisionsInView())
 
 	c.waitForEachOther()
 
@@ -481,10 +481,10 @@ func (c *Consensus) setViewAndSeq(view, seq, dec uint64) (newView, newSeq, newDe
 	}
 	if viewChange == nil {
 		c.Logger.Debugf("No view change to restore")
-	} else if viewChange.NextView >= view {
+	} else if viewChange.GetNextView() >= view {
 		// Check if the view change has a newer view
-		c.Logger.Debugf("Restoring from view change with view %d", viewChange.NextView)
-		newView = viewChange.NextView
+		c.Logger.Debugf("Restoring from view change with view %d", viewChange.GetNextView())
+		newView = viewChange.GetNextView()
 		restoreChan := make(chan struct{}, 1)
 		restoreChan <- struct{}{}
 		c.viewChanger.Restore = restoreChan
