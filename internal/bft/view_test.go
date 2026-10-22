@@ -1483,21 +1483,21 @@ func newNetwork(t *testing.T, size int) testedNetwork {
 }
 
 type testedView struct {
-	offline   uint32
+	offline   atomic.Uint32
 	deciderWG sync.WaitGroup
 	*bft.View
 }
 
 func (tv *testedView) setOffline() {
-	atomic.StoreUint32(&tv.offline, 1)
+	tv.offline.Store(1)
 }
 
 func (tv *testedView) setOnline() {
-	atomic.StoreUint32(&tv.offline, 0)
+	tv.offline.Store(0)
 }
 
 func (tv *testedView) HandleMessage(sender uint64, m *protos.Message) {
-	if atomic.LoadUint32(&tv.offline) == uint32(1) {
+	if tv.offline.Load() == uint32(1) {
 		return
 	}
 	tv.View.HandleMessage(sender, m)

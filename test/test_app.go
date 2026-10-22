@@ -62,7 +62,7 @@ type App struct {
 	logger          *zap.SugaredLogger
 	metricsProvider metrics.Provider
 	lastRecord      lastRecord
-	verificationSeq uint64
+	verificationSeq atomic.Uint64
 	clientsToRevoke []string // clients whose requests become invalid once a reconfig is delivered
 	revokedClients  sync.Map
 	// revokeDuringPrune delays revoking the clients after a reconfig is delivered until the first request
@@ -261,7 +261,7 @@ func (a *App) VerifySignature(_ types.Signature) error {
 
 // VerificationSequence returns the current verification sequence
 func (a *App) VerificationSequence() uint64 {
-	return atomic.LoadUint64(&a.verificationSeq)
+	return a.verificationSeq.Load()
 }
 
 // Sign signs on the given value
@@ -281,7 +281,7 @@ func (a *App) SignProposal(_ types.Proposal, aux []byte) *types.Signature {
 // AssembleProposal assembles a new proposal from the given requests
 func (a *App) AssembleProposal(metadata []byte, requests [][]byte) types.Proposal {
 	return types.Proposal{
-		VerificationSequence: int64(atomic.LoadUint64(&a.verificationSeq)),
+		VerificationSequence: int64(a.verificationSeq.Load()),
 		Payload:              batch{Requests: requests}.toBytes(),
 		Metadata:             metadata,
 	}
@@ -349,7 +349,7 @@ func (a *App) revokeClients() {
 	for _, client := range a.clientsToRevoke {
 		a.revokedClients.Store(client, struct{}{})
 	}
-	atomic.AddUint64(&a.verificationSeq, 1)
+	a.verificationSeq.Add(1)
 }
 
 type committedBatches struct {
