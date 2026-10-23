@@ -85,6 +85,13 @@ type ProposerBuilder interface {
 	NewProposer(leader, proposalSequence, viewNum, decisionsInView uint64, quorumSize int) (Proposer, Phase)
 }
 
+// abortViewRequest asks the controller loop to abort a view and tells the
+// caller when the view has stopped.
+type abortViewRequest struct {
+	view   uint64
+	result chan bool
+}
+
 // Controller controls the entire flow of the consensus
 type Controller struct {
 	api.Comm
@@ -125,7 +132,7 @@ type Controller struct {
 	currDecisionsInView     uint64
 
 	viewChange    chan viewInfo
-	abortViewChan chan uint64
+	abortViewChan chan abortViewRequest
 
 	stopOnce sync.Once
 	stopChan chan struct{}
@@ -445,6 +452,22 @@ func (c *Controller) abortView(view uint64) bool {
 	return true
 }
 
+// abortCurrentView stops the current view and waits for it to finish. It is
+// called from the controller loop, which also owns abortViewChan, so it must
+// not post an abort request to that channel.
+func (c *Controller) abortCurrentView() {
+	c.currViewLock.RLock()
+	view := c.currView
+	c.currViewLock.RUnlock()
+
+	if view == nil {
+		return
+	}
+
+	c.relinquishLeaderToken()
+	view.Abort()
+}
+
 // Sync initiates a synchronization
 func (c *Controller) Sync() {
 	if iAmLeader, _ := c.iAmTheLeader(); iAmLeader {
@@ -453,13 +476,29 @@ func (c *Controller) Sync() {
 	c.grabSyncToken()
 }
 
-// AbortView makes the controller abort the current view
-func (c *Controller) AbortView(view uint64) {
+// AbortView makes the controller abort the current view and waits until the
+// view has stopped. Waiting is what makes it safe to persist state that must
+// not be overtaken by a record written by the view, such as a truncating new
+// view record. It returns false when the view is older than the current one or
+// when the controller is stopping.
+func (c *Controller) AbortView(view uint64) bool {
 	c.Logger.Debugf("AbortView, the current view num is %d", c.getCurrentViewNumber())
 
 	c.Batcher.Close()
 
-	c.abortViewChan <- view
+	request := abortViewRequest{view: view, result: make(chan bool, 1)}
+	select {
+	case c.abortViewChan <- request:
+	case <-c.stopChan:
+		return false
+	}
+
+	select {
+	case result := <-request.result:
+		return result
+	case <-c.stopChan:
+		return false
+	}
 }
 
 // ViewChanged makes the controller abort the current view and start a new one with the given numbers
@@ -501,8 +540,8 @@ func (c *Controller) run() {
 		case newView := <-c.viewChange:
 			c.Logger.Debugf("get newView from viewChange")
 			c.changeView(newView.viewNumber, newView.proposalSeq, 0)
-		case view := <-c.abortViewChan:
-			c.abortView(view)
+		case request := <-c.abortViewChan:
+			request.result <- c.abortView(request.view)
 		case <-c.stopChan:
 			return
 		case <-c.leaderToken:
@@ -669,31 +708,45 @@ func (c *Controller) sync() (viewNum uint64, seq uint64, decisions uint64) {
 			// And the synchronizer did not return a new view
 			return 0, 0, 0
 		}
-	} else {
-		if response.View <= controllerViewNum && latestDecisionViewNum < controllerViewNum {
-			return 0, 0, 0 // no new view to report
-		}
-		if response.View > newViewNum && response.Seq == latestDecisionSeq+1 {
-			c.Logger.Infof("Node %d collected state with view %d and sequence %d", c.ID, response.View, response.Seq)
-			newViewToSave := &protos.SavedMessage{
-				Content: &protos.SavedMessage_NewView{
-					NewView: &protos.ViewMetadata{
-						ViewId:          response.View,
-						LatestSequence:  latestDecisionSeq,
-						DecisionsInView: 0,
-					},
-				},
-			}
-			if err := c.State.Save(newViewToSave); err != nil {
-				c.Logger.Panicf("Failed to save message to state, error: %v", err)
-			}
-			newViewNum = response.View
-			newDecisionsInView = 0
-		}
+	} else if response.View <= controllerViewNum && latestDecisionViewNum < controllerViewNum {
+		return 0, 0, 0 // no new view to report
 	}
 
+	saveNewView := response != nil && response.View > newViewNum && response.Seq == latestDecisionSeq+1
+	if saveNewView {
+		c.Logger.Infof("Node %d collected state with view %d and sequence %d", c.ID, response.View, response.Seq)
+
+		// The record of the new view may truncate the WAL, so the current view has to be
+		// stopped first. Otherwise it can still append a commit after that record and
+		// leave a commit without its pre-prepare in the WAL.
+		c.abortCurrentView()
+	}
+
+	// The fate of the in-flight proposal has to be decided before the record of the new
+	// view is written, since that record's truncation flag is derived from it: the
+	// checkpoint alone does not say the in-flight proposal is no longer needed,
+	// maybePruneInFlight does. It has to be decided on every sync, not only when a new
+	// view record is saved, otherwise a stale proposal stays in flight and makes the
+	// node's view data invalid for the rest of the cluster.
 	if latestDecisionMetadata != nil {
 		c.maybePruneInFlight(latestDecisionMetadata)
+	}
+
+	if saveNewView {
+		newViewToSave := &protos.SavedMessage{
+			Content: &protos.SavedMessage_NewView{
+				NewView: &protos.ViewMetadata{
+					ViewId:          response.View,
+					LatestSequence:  latestDecisionSeq,
+					DecisionsInView: 0,
+				},
+			},
+		}
+		if err := c.State.Save(newViewToSave); err != nil {
+			c.Logger.Panicf("Failed to save message to state, error: %v", err)
+		}
+		newViewNum = response.View
+		newDecisionsInView = 0
 	}
 
 	if newViewNum > controllerViewNum {
@@ -814,7 +867,7 @@ func (c *Controller) Start(startViewNumber uint64, startProposalSequence uint64,
 	c.leaderToken = make(chan struct{}, 1)
 	c.decisionChan = make(chan decision, 1)
 	c.viewChange = make(chan viewInfo, 1)
-	c.abortViewChan = make(chan uint64, 1)
+	c.abortViewChan = make(chan abortViewRequest, 1)
 
 	Q, F := computeQuorum(c.N)
 	c.Logger.Debugf("The number of nodes (N) is %d, F is %d, and the quorum size is %d", c.N, F, Q)
@@ -913,6 +966,11 @@ func (c *Controller) Decide(proposal types.Proposal, signatures []types.Signatur
 	case <-c.stopChan:
 		// In case we are in the middle of shutting down,
 		// abort deciding.
+		return
+	case <-view.AbortChan():
+		// The view is stopping. Do not block the view's run loop on the decision
+		// channel while the controller is aborting the view, or the abort waits
+		// forever. The proposal will be recovered by the view change.
 		return
 	}
 

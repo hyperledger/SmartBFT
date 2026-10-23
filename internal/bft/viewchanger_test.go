@@ -7,6 +7,7 @@ package bft_test
 
 import (
 	"errors"
+	"reflect"
 	"slices"
 	"strings"
 	"sync"
@@ -20,6 +21,7 @@ import (
 	"github.com/hyperledger/SmartBFT/pkg/metrics"
 	"github.com/hyperledger/SmartBFT/pkg/metrics/disabled"
 	"github.com/hyperledger/SmartBFT/pkg/types"
+	"github.com/hyperledger/SmartBFT/pkg/wal"
 	protos "github.com/hyperledger/SmartBFT/smartbftprotos"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -101,7 +103,7 @@ func TestStartViewChange(t *testing.T) {
 	require.NoError(t, err)
 	log := basicLog.Sugar()
 	controller := &mocks.ViewController{}
-	controller.On("AbortView", mock.Anything)
+	controller.On("AbortView", mock.Anything).Return(true)
 
 	vc := &bft.ViewChanger{
 		N:             4,
@@ -162,7 +164,7 @@ func TestViewChangeProcess(t *testing.T) {
 			reqTimer := &mocks.RequestsTimer{}
 			reqTimer.On("StopTimers")
 			controller := &mocks.ViewController{}
-			controller.On("AbortView", mock.Anything)
+			controller.On("AbortView", mock.Anything).Return(true)
 			state := &mocks.State{}
 			state.On("Save", mock.Anything).Return(nil)
 
@@ -262,6 +264,7 @@ func TestViewDataProcess(t *testing.T) {
 		num = args.Get(1).(uint64)
 		seqNumChan <- num
 	}).Return(nil).Once()
+	controller.On("AbortView", mock.Anything).Return(true)
 	signer := &mocks.SignerMock{}
 	signer.On("Sign", mock.Anything).Return([]byte{1, 2, 3})
 	checkpoint := types.Checkpoint{}
@@ -339,6 +342,7 @@ func TestNewViewProcess(t *testing.T) {
 		num = args.Get(1).(uint64)
 		seqNumChan <- num
 	}).Return(nil).Once()
+	controller.On("AbortView", mock.Anything).Return(true)
 	checkpoint := types.Checkpoint{}
 	checkpoint.Set(lastDecision, lastDecisionSignatures)
 	reqTimer := &mocks.RequestsTimer{}
@@ -427,7 +431,7 @@ func TestNormalProcess(t *testing.T) {
 		num = args.Get(1).(uint64)
 		seqNumChan <- num
 	}).Return(nil).Once()
-	controller.On("AbortView", mock.Anything)
+	controller.On("AbortView", mock.Anything).Return(true)
 	reqTimer := &mocks.RequestsTimer{}
 	reqTimer.On("StopTimers")
 	reqTimer.On("RestartTimers")
@@ -472,7 +476,7 @@ func TestNormalProcess(t *testing.T) {
 	num = <-seqNumChan
 	require.Equal(t, uint64(2), num)
 
-	controller.AssertNumberOfCalls(t, "AbortView", 2)
+	controller.AssertNumberOfCalls(t, "AbortView", 3)
 	state.AssertNumberOfCalls(t, "Save", 2)
 
 	vc.Stop()
@@ -966,7 +970,7 @@ func TestResendViewChangeMessage(t *testing.T) {
 	require.NoError(t, err)
 	log := basicLog.Sugar()
 	controller := &mocks.ViewController{}
-	controller.On("AbortView", mock.Anything)
+	controller.On("AbortView", mock.Anything).Return(true)
 
 	vc := &bft.ViewChanger{
 		N:                 4,
@@ -1029,7 +1033,7 @@ func TestViewChangerTimeout(t *testing.T) {
 	controllerWG := sync.WaitGroup{}
 	controller.On("AbortView", mock.Anything).Run(func(args mock.Arguments) {
 		controllerWG.Done()
-	})
+	}).Return(true)
 
 	vc := &bft.ViewChanger{
 		N:                 4,
@@ -1087,7 +1091,7 @@ func TestBackOff(t *testing.T) {
 	controllerWG := sync.WaitGroup{}
 	controller.On("AbortView", mock.Anything).Run(func(args mock.Arguments) {
 		controllerWG.Done()
-	})
+	}).Return(true)
 
 	timeout := 10 * time.Second
 
@@ -1158,7 +1162,7 @@ func TestCommitLastDecision(t *testing.T) {
 		num = args.Get(1).(uint64)
 		seqNumChan <- num
 	}).Return(nil).Once()
-	controller.On("AbortView", mock.Anything)
+	controller.On("AbortView", mock.Anything).Return(true)
 	reqTimer := &mocks.RequestsTimer{}
 	reqTimer.On("StopTimers")
 	reqTimer.On("RestartTimers")
@@ -1223,7 +1227,7 @@ func TestCommitLastDecision(t *testing.T) {
 	num = <-seqNumChan
 	require.Equal(t, uint64(3), num)
 
-	controller.AssertNumberOfCalls(t, "AbortView", 2)
+	controller.AssertNumberOfCalls(t, "AbortView", 3)
 	app.AssertNumberOfCalls(t, "Deliver", 1)
 	pruner.AssertNumberOfCalls(t, "MaybePruneRevokedRequests", 1)
 	state.AssertNumberOfCalls(t, "Save", 2)
@@ -1366,7 +1370,7 @@ func TestInFlightProposalInViewData(t *testing.T) {
 			reqTimer := &mocks.RequestsTimer{}
 			reqTimer.On("StopTimers")
 			controller := &mocks.ViewController{}
-			controller.On("AbortView", mock.Anything)
+			controller.On("AbortView", mock.Anything).Return(true)
 			checkpoint := types.Checkpoint{}
 			checkpoint.Set(lastDecision, lastDecisionSignatures)
 			state := &mocks.State{}
@@ -1586,7 +1590,7 @@ func TestInformViewChanger(t *testing.T) {
 	require.NoError(t, err)
 	log := basicLog.Sugar()
 	controller := &mocks.ViewController{}
-	controller.On("AbortView", mock.Anything)
+	controller.On("AbortView", mock.Anything).Return(true)
 
 	vc := &bft.ViewChanger{
 		N:             4,
@@ -1634,7 +1638,7 @@ func TestInformNewViewDoesNotBlock(t *testing.T) {
 	basicLog, err := zap.NewDevelopment()
 	require.NoError(t, err)
 	controller := &mocks.ViewController{}
-	controller.On("AbortView", mock.Anything)
+	controller.On("AbortView", mock.Anything).Return(true)
 
 	vc := &bft.ViewChanger{
 		N:             4,
@@ -1700,7 +1704,7 @@ func TestRestoreViewChange(t *testing.T) {
 	reqTimer := &mocks.RequestsTimer{}
 	reqTimer.On("StopTimers")
 	controller := &mocks.ViewController{}
-	controller.On("AbortView", mock.Anything)
+	controller.On("AbortView", mock.Anything).Return(true)
 
 	vc := &bft.ViewChanger{
 		SelfID:        0,
@@ -2014,7 +2018,7 @@ func TestCommitInFlight(t *testing.T) {
 		num = args.Get(1).(uint64)
 		seqNumChan <- num
 	}).Return(nil).Once()
-	controller.On("AbortView", mock.Anything)
+	controller.On("AbortView", mock.Anything).Return(true)
 	reqTimer := &mocks.RequestsTimer{}
 	reqTimer.On("StopTimers")
 	reqTimer.On("RestartTimers")
@@ -2130,7 +2134,7 @@ func TestCommitInFlight(t *testing.T) {
 	num = <-seqNumChan
 	require.Equal(t, uint64(3), num)
 
-	controller.AssertNumberOfCalls(t, "AbortView", 2)
+	controller.AssertNumberOfCalls(t, "AbortView", 3)
 	pruner.AssertNumberOfCalls(t, "MaybePruneRevokedRequests", 1)
 	// the requests of the in flight proposal are removed from the pool once it is decided
 	for _, req := range inFlightRequests {
@@ -2216,7 +2220,7 @@ func TestInFlightViewMessageFromItselfWithWrongView(t *testing.T) {
 	verifier.On("RequestsFromProposal", mock.Anything).Return(nil)
 	controller := &mocks.ViewController{}
 	controller.On("ViewChanged", mock.Anything, mock.Anything).Return(nil).Maybe()
-	controller.On("AbortView", mock.Anything)
+	controller.On("AbortView", mock.Anything).Return(true)
 	reqTimer := &mocks.RequestsTimer{}
 	reqTimer.On("StopTimers")
 	reqTimer.On("RestartTimers")
@@ -2362,7 +2366,7 @@ func TestCommitWhileHavingInFlight(t *testing.T) {
 	verifier.On("RequestsFromProposal", mock.Anything).Return(nil)
 	controller := &mocks.ViewController{}
 	controller.On("ViewChanged", mock.Anything, mock.Anything)
-	controller.On("AbortView", mock.Anything)
+	controller.On("AbortView", mock.Anything).Return(true)
 	reqTimer := &mocks.RequestsTimer{}
 	reqTimer.On("StopTimers")
 	reqTimer.On("RestartTimers")
@@ -2455,6 +2459,7 @@ func TestDontCommitInFlight(t *testing.T) {
 		num = args.Get(1).(uint64)
 		seqNumChan <- num
 	}).Return(nil).Once()
+	controller.On("AbortView", mock.Anything).Return(true)
 	reqTimer := &mocks.RequestsTimer{}
 	reqTimer.On("RestartTimers")
 	app := &mocks.ApplicationMock{}
@@ -2472,6 +2477,7 @@ func TestDontCommitInFlight(t *testing.T) {
 		Ticker:        make(chan time.Time),
 		RequestsTimer: reqTimer,
 		Application:   app,
+		InFlight:      &bft.InFlightData{},
 		State:         state,
 	}
 
@@ -2547,6 +2553,7 @@ func newViewChangerWithInFlight(t *testing.T, verifier api.Verifier) (*bft.ViewC
 	controller.On("ViewChanged", mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
 		viewChangedChan <- args.Get(0).(uint64)
 	}).Return(nil).Maybe()
+	controller.On("AbortView", mock.Anything).Return(true)
 	reqTimer := &mocks.RequestsTimer{}
 	reqTimer.On("RestartTimers")
 	app := &mocks.ApplicationMock{}
@@ -2963,6 +2970,7 @@ func TestNewViewWithoutLeaderViewData(t *testing.T) {
 				viewNumChan <- args.Get(0).(uint64)
 				seqNumChan <- args.Get(1).(uint64)
 			})
+			controller.On("AbortView", mock.Anything).Return(true)
 			reqTimer := &mocks.RequestsTimer{}
 			reqTimer.On("StopTimers")
 			reqTimer.On("RestartTimers")
@@ -3108,7 +3116,7 @@ func TestViewChangerKeepsRunningAfterInFlightWaiterLeft(t *testing.T) {
 			verifier.On("RequestsFromProposal", mock.Anything).Return(nil)
 			controller := &mocks.ViewController{}
 			controller.On("ViewChanged", mock.Anything, mock.Anything).Maybe()
-			controller.On("AbortView", mock.Anything)
+			controller.On("AbortView", mock.Anything).Return(true)
 			reqTimer := &mocks.RequestsTimer{}
 			reqTimer.On("StopTimers")
 			reqTimer.On("RestartTimers")
@@ -3232,4 +3240,365 @@ func waitForMessage(t *testing.T, msgChan <-chan *protos.Message, match func(*pr
 			require.FailNow(t, "the expected message was not broadcast")
 		}
 	}
+}
+
+// walState is a real PersistedState writing into a real write-ahead log, wrapped so that a test
+// can wait until a message actually reached the log instead of guessing when that happened.
+type walState struct {
+	*bft.PersistedState
+	file    *wal.WriteAheadLogFile
+	written chan struct{}
+}
+
+func (s *walState) Save(msg *protos.SavedMessage) error {
+	if err := s.PersistedState.Save(msg); err != nil {
+		return err
+	}
+	s.written <- struct{}{}
+	return nil
+}
+
+// entriesAfterRestart closes the log and reads it again the way a restarted node does: a node
+// recovers only what was written at or after the last truncating record.
+func (s *walState) entriesAfterRestart(t *testing.T, dir string) [][]byte {
+	t.Helper()
+	require.NoError(t, s.file.Close())
+	reopened, err := wal.Open(s.Logger, dir, nil)
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, reopened.Close())
+	}()
+	entries, err := reopened.ReadAll()
+	require.NoError(t, err)
+	return entries
+}
+
+func newWALState(t *testing.T, log api.Logger, dir string, inFlight *bft.InFlightData) *walState {
+	t.Helper()
+	file, err := wal.Create(log, dir, nil)
+	require.NoError(t, err)
+	return &walState{
+		PersistedState: &bft.PersistedState{InFlightProposal: inFlight, Logger: log, WAL: file},
+		file:           file,
+		written:        make(chan struct{}, 8),
+	}
+}
+
+// inFlightProposal returns the proposal a node holds in flight for the given sequence.
+func inFlightProposal(seq uint64) types.Proposal {
+	return types.Proposal{
+		Header:               []byte{1},
+		Payload:              []byte{2},
+		Metadata:             bft.MarshalOrPanic(&protos.ViewMetadata{ViewId: 1, LatestSequence: seq}),
+		VerificationSequence: 1,
+	}
+}
+
+// prePrepareRecord is what a node writes once it accepts a proposal, before it has enough
+// prepares to commit it. Storing it is what puts the proposal in flight.
+func prePrepareRecord(seq uint64) *protos.SavedMessage {
+	proposal := inFlightProposal(seq)
+	return &protos.SavedMessage{
+		Content: &protos.SavedMessage_ProposedRecord{
+			ProposedRecord: &protos.ProposedRecord{
+				PrePrepare: &protos.PrePrepare{
+					View: 1,
+					Seq:  seq,
+					Proposal: &protos.Proposal{
+						Header:               proposal.Header,
+						Payload:              proposal.Payload,
+						Metadata:             proposal.Metadata,
+						VerificationSequence: uint64(proposal.VerificationSequence),
+					},
+				},
+				Prepare: &protos.Prepare{View: 1, Seq: seq},
+			},
+		},
+	}
+}
+
+// commitRecord is what a node writes once it has enough prepares to commit the proposal in flight.
+func commitRecord(seq uint64) *protos.SavedMessage {
+	return &protos.SavedMessage{
+		Content: &protos.SavedMessage_Commit{
+			Commit: &protos.Message{
+				Content: &protos.Message_Commit{
+					Commit: &protos.Commit{View: 1, Seq: seq},
+				},
+			},
+		},
+	}
+}
+
+// newViewData returns view data that reports the last decision the package level fixtures use.
+func newViewData(view uint64) *protos.ViewData {
+	viewData := proto.Clone(vd).(*protos.ViewData)
+	viewData.NextView = view
+	return viewData
+}
+
+// viewDataWithInFlight returns view data claiming a prepared proposal with sequence 2 in flight.
+// Nodes that report different payloads are reporting different proposals.
+func viewDataWithInFlight(view uint64, payload byte) *protos.ViewData {
+	viewData := newViewData(view)
+	viewData.InFlightProposal = &protos.Proposal{
+		Header:               []byte{2},
+		Payload:              []byte{payload},
+		Metadata:             bft.MarshalOrPanic(&protos.ViewMetadata{ViewId: 1, LatestSequence: 2}),
+		VerificationSequence: 1,
+	}
+	viewData.InFlightPrepared = true
+	return viewData
+}
+
+// newViewMessage builds a new view message out of the given view data, signed by the nodes 0 to
+// len(viewData)-1. The leader of the new view must be among them.
+func newViewMessage(viewData ...*protos.ViewData) *protos.Message {
+	signed := make([]*protos.SignedViewData, 0, len(viewData))
+	for i, data := range viewData {
+		signed = append(signed, &protos.SignedViewData{RawViewData: bft.MarshalOrPanic(data), Signer: uint64(i)})
+	}
+	return &protos.Message{
+		Content: &protos.Message_NewView{
+			NewView: &protos.NewView{SignedViewData: signed},
+		},
+	}
+}
+
+func unmarshalSavedMessage(t *testing.T, entry []byte) *protos.SavedMessage {
+	t.Helper()
+	msg := &protos.SavedMessage{}
+	require.NoError(t, proto.Unmarshal(entry, msg))
+	return msg
+}
+
+// A node that moved to a new view has no proposal in flight anymore: the quorum either committed
+// it or declared it irrelevant. Therefore the new view record it writes is a truncation point,
+// and the records of the view it left are not needed for recovery anymore.
+func TestNewViewTruncatesWal(t *testing.T) {
+	basicLog, err := zap.NewDevelopment()
+	require.NoError(t, err)
+	log := basicLog.Sugar()
+
+	verifier := &mocks.VerifierMock{}
+	verifier.On("VerifySignature", mock.Anything).Return(nil)
+	controller := &mocks.ViewController{}
+	controller.On("AbortView", mock.Anything).Return(true)
+	viewChanged := make(chan struct{}, 1)
+	controller.On("ViewChanged", mock.Anything, mock.Anything).Run(func(mock.Arguments) {
+		viewChanged <- struct{}{}
+	}).Return(nil)
+	reqTimer := &mocks.RequestsTimer{}
+	reqTimer.On("RestartTimers").Return(nil)
+
+	dir := t.TempDir()
+	inFlight := &bft.InFlightData{}
+	state := newWALState(t, log, dir, inFlight)
+
+	checkpoint := types.Checkpoint{}
+	checkpoint.Set(lastDecision, lastDecisionSignatures)
+
+	vc := &bft.ViewChanger{
+		SelfID:        0,
+		N:             4,
+		NodesList:     []uint64{0, 1, 2, 3},
+		Logger:        log,
+		Verifier:      verifier,
+		Controller:    controller,
+		Ticker:        make(chan time.Time),
+		RequestsTimer: reqTimer,
+		Checkpoint:    &checkpoint,
+		InFlight:      inFlight,
+		State:         state,
+		InMsqQSize:    100,
+	}
+	vc.Start(2)
+
+	// the node holds a proposal in flight: a pre-prepare and the commit that followed it
+	require.NoError(t, state.Save(prePrepareRecord(2)))
+	require.NoError(t, state.Save(commitRecord(2)))
+	expected := inFlightProposal(2)
+	require.Equal(t, &expected, inFlight.InFlightProposal())
+
+	// the leader of view 2 reports a quorum of nodes that have no proposal in flight, so the
+	// proposal of this node is either committed by them or is stale
+	vc.HandleMessage(2, newViewMessage(newViewData(2), newViewData(2), newViewData(2)))
+
+	<-viewChanged
+	vc.Stop()
+
+	require.Nil(t, inFlight.InFlightProposal(), "the proposal in flight was not cleared")
+
+	entries := state.entriesAfterRestart(t, dir)
+	require.Len(t, entries, 1, "the new view record was not written as a truncation point")
+	newView := unmarshalSavedMessage(t, entries[0]).GetNewView()
+	require.NotNil(t, newView)
+	require.Equal(t, uint64(2), newView.GetViewId())
+}
+
+// A quorum that neither committed nor invalidated the proposal in flight does not move this node
+// to the new view, hence nothing about the proposal in flight may be cleared.
+func TestNewViewWithoutQuorumOnInFlightKeepsInFlight(t *testing.T) {
+	basicLog, err := zap.NewDevelopment()
+	require.NoError(t, err)
+	log := basicLog.Sugar()
+
+	verifier := &mocks.VerifierMock{}
+	verified := make(chan struct{}, 8)
+	verifier.On("VerifySignature", mock.Anything).Run(func(mock.Arguments) {
+		verified <- struct{}{}
+	}).Return(nil)
+	controller := &mocks.ViewController{}
+	controller.On("AbortView", mock.Anything).Return(true)
+	controller.On("ViewChanged", mock.Anything, mock.Anything).Return(nil)
+	reqTimer := &mocks.RequestsTimer{}
+	reqTimer.On("RestartTimers").Return(nil)
+
+	dir := t.TempDir()
+	inFlight := &bft.InFlightData{}
+	state := newWALState(t, log, dir, inFlight)
+
+	checkpoint := types.Checkpoint{}
+	checkpoint.Set(lastDecision, lastDecisionSignatures)
+
+	vc := &bft.ViewChanger{
+		SelfID:        0,
+		N:             4,
+		NodesList:     []uint64{0, 1, 2, 3},
+		Logger:        log,
+		Verifier:      verifier,
+		Controller:    controller,
+		Ticker:        make(chan time.Time),
+		RequestsTimer: reqTimer,
+		Checkpoint:    &checkpoint,
+		InFlight:      inFlight,
+		State:         state,
+		InMsqQSize:    100,
+	}
+	vc.Start(2)
+
+	proposal := inFlightProposal(2)
+	require.NoError(t, state.Save(prePrepareRecord(2)))
+	require.NoError(t, state.Save(commitRecord(2)))
+
+	// only the records written while handling the message are of interest here
+	for range 2 {
+		<-state.written
+	}
+
+	// three nodes report three different prepared proposals, so no proposal is agreed upon
+	vc.HandleMessage(2, newViewMessage(
+		viewDataWithInFlight(2, 1),
+		viewDataWithInFlight(2, 2),
+		viewDataWithInFlight(2, 3),
+	))
+
+	for range 3 {
+		<-verified
+	}
+	vc.Stop()
+
+	require.Equal(t, &proposal, inFlight.InFlightProposal(), "the proposal in flight was cleared without a quorum")
+	controller.AssertNotCalled(t, "ViewChanged")
+	require.Empty(t, state.written, "a record was written although the view did not change")
+
+	entries := state.entriesAfterRestart(t, dir)
+	require.Len(t, entries, 2, "the records of the view this node stayed in were truncated")
+	require.NotNil(t, unmarshalSavedMessage(t, entries[0]).GetProposedRecord())
+	require.NotNil(t, unmarshalSavedMessage(t, entries[1]).GetCommit())
+}
+
+// A node that leaves for a new view is not synchronized yet, and its proposal in flight travels
+// to the new leader within the view data message, so it must be kept. A node without a proposal
+// in flight has nothing to recover, hence its view change record is a truncation point.
+func TestViewChangeKeepsInFlightAndTruncatesWithoutIt(t *testing.T) {
+	for _, testCase := range []struct {
+		description string
+		sequence    uint64
+	}{
+		{description: "with a proposal in flight", sequence: 2},
+		{description: "without a proposal in flight", sequence: 0},
+	} {
+		t.Run(testCase.description, func(t *testing.T) {
+			basicLog, err := zap.NewDevelopment()
+			require.NoError(t, err)
+			log := basicLog.Sugar()
+
+			comm := &mocks.CommMock{}
+			comm.On("BroadcastConsensus", mock.Anything).Return(nil)
+			viewDataSent := make(chan struct{}, 1)
+			comm.On("SendConsensus", mock.Anything, mock.Anything).Run(func(mock.Arguments) {
+				viewDataSent <- struct{}{}
+			}).Return(nil)
+			signer := &mocks.SignerMock{}
+			signer.On("Sign", mock.Anything).Return([]byte{1, 2, 3})
+			controller := &mocks.ViewController{}
+			controller.On("AbortView", mock.Anything).Return(true)
+			reqTimer := &mocks.RequestsTimer{}
+			reqTimer.On("StopTimers").Return(nil)
+
+			dir := t.TempDir()
+			inFlight := &bft.InFlightData{}
+			state := newWALState(t, log, dir, inFlight)
+			var proposal types.Proposal
+
+			checkpoint := types.Checkpoint{}
+			checkpoint.Set(lastDecision, lastDecisionSignatures)
+
+			vc := &bft.ViewChanger{
+				SelfID:        0,
+				N:             4,
+				NodesList:     []uint64{0, 1, 2, 3},
+				Logger:        log,
+				Comm:          comm,
+				Signer:        signer,
+				Controller:    controller,
+				Ticker:        make(chan time.Time),
+				RequestsTimer: reqTimer,
+				Checkpoint:    &checkpoint,
+				InFlight:      inFlight,
+				State:         state,
+				InMsqQSize:    100,
+			}
+			vc.Start(0)
+
+			if testCase.sequence != 0 {
+				proposal = inFlightProposal(testCase.sequence)
+				require.NoError(t, state.Save(prePrepareRecord(testCase.sequence)))
+				require.NotNil(t, inFlight.InFlightProposal())
+			}
+
+			// a quorum of view change messages makes this node join the view change
+			vc.HandleMessage(1, viewChangeMsg)
+			vc.HandleMessage(2, viewChangeMsg)
+
+			<-viewDataSent
+			vc.Stop()
+
+			entries := state.entriesAfterRestart(t, dir)
+			require.NotEmpty(t, entries)
+			require.NotNil(t, unmarshalSavedMessage(t, entries[len(entries)-1]).GetViewChange())
+
+			if testCase.sequence == 0 {
+				require.Len(t, entries, 1, "the view change record was not written as a truncation point")
+				require.Nil(t, inFlight.InFlightProposal())
+				return
+			}
+
+			require.Len(t, entries, 2, "the proposal in flight was truncated away by the view change")
+			require.NotNil(t, unmarshalSavedMessage(t, entries[0]).GetProposedRecord())
+			require.Equal(t, &proposal, inFlight.InFlightProposal(), "the proposal in flight was cleared by the view change")
+		})
+	}
+}
+
+// The view changer reports what it did through this interface, and the decision to clear the
+// proposal in flight is a detail of the view change protocol, hence no method was added to it.
+func TestViewControllerIsNotExtended(t *testing.T) {
+	controllerType := reflect.TypeFor[bft.ViewController]()
+	methods := make([]string, 0, controllerType.NumMethod())
+	for method := range controllerType.Methods() {
+		methods = append(methods, method.Name)
+	}
+	require.Equal(t, []string{"AbortView", "ViewChanged"}, methods)
 }

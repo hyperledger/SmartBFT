@@ -48,15 +48,19 @@ func (ps *PersistedState) Save(msgToSave *protos.SavedMessage) error {
 	if err != nil {
 		ps.Logger.Panicf("Failed marshaling message: %v", err)
 	}
-	// It is only safe to truncate if we either:
+	// Recovery reads the last record always, and the record before it only when the last one is a
+	// commit, to restore the pair a proposal leaves behind; a commit without its pre-prepare is
+	// useless (recoverPrepared). Earlier records can therefore be needed only while a proposal is
+	// in flight, so the absence of an in-flight proposal is the sign of a stable checkpoint, and
+	// that is what the flag is computed from. A proposal record starts a new pair, so it is a
+	// truncation point by itself.
 	//
-	// 1) Process a pre-prepare, because it means we safely persisted the
-	// previous proposal and have a stable checkpoint.
-	// 2) Acquired a new view message which contains 2f+1 attestations
-	//    of the cluster agreeing to a new view configuration.
-	newProposal := msgToSave.GetProposedRecord() != nil
-	// TODO: handle view message here as well, and add "|| finalizedView" to truncate flag
-	return ps.WAL.Append(b, newProposal)
+	// A commit never is: its pre-prepare has to survive even when another goroutine prunes the
+	// in-flight proposal (Controller.sync, through maybePruneInFlight) while this save is running,
+	// so the flag for a commit is not read off that shared state.
+	truncateTo := msgToSave.GetProposedRecord() != nil ||
+		(msgToSave.GetCommit() == nil && ps.InFlightProposal.InFlightProposal() == nil)
+	return ps.WAL.Append(b, truncateTo)
 }
 
 func (ps *PersistedState) storeProposal(proposed *protos.ProposedRecord) {
