@@ -98,16 +98,16 @@ func (_c *State_Restore_Call) RunAndReturn(run func(view *bft.View) error) *Stat
 }
 
 // Save provides a mock function for the type State
-func (_mock *State) Save(message *smartbftprotos.SavedMessage) error {
-	ret := _mock.Called(message)
+func (_mock *State) Save(message *smartbftprotos.SavedMessage, truncateTo bool) error {
+	ret := _mock.Called(message, truncateTo)
 
 	if len(ret) == 0 {
 		panic("no return value specified for Save")
 	}
 
 	var r0 error
-	if returnFunc, ok := ret.Get(0).(func(*smartbftprotos.SavedMessage) error); ok {
-		r0 = returnFunc(message)
+	if returnFunc, ok := ret.Get(0).(func(*smartbftprotos.SavedMessage, bool) error); ok {
+		r0 = returnFunc(message, truncateTo)
 	} else {
 		r0 = ret.Error(0)
 	}
@@ -121,18 +121,24 @@ type State_Save_Call struct {
 
 // Save is a helper method to define mock.On call
 //   - message *smartbftprotos.SavedMessage
-func (_e *State_Expecter) Save(message any) *State_Save_Call {
-	return &State_Save_Call{Call: _e.mock.On("Save", message)}
+//   - truncateTo bool
+func (_e *State_Expecter) Save(message any, truncateTo any) *State_Save_Call {
+	return &State_Save_Call{Call: _e.mock.On("Save", message, truncateTo)}
 }
 
-func (_c *State_Save_Call) Run(run func(message *smartbftprotos.SavedMessage)) *State_Save_Call {
+func (_c *State_Save_Call) Run(run func(message *smartbftprotos.SavedMessage, truncateTo bool)) *State_Save_Call {
 	_c.Call.Run(func(args mock.Arguments) {
 		var arg0 *smartbftprotos.SavedMessage
 		if args[0] != nil {
 			arg0 = args[0].(*smartbftprotos.SavedMessage)
 		}
+		var arg1 bool
+		if args[1] != nil {
+			arg1 = args[1].(bool)
+		}
 		run(
 			arg0,
+			arg1,
 		)
 	})
 	return _c
@@ -143,7 +149,7 @@ func (_c *State_Save_Call) Return(err error) *State_Save_Call {
 	return _c
 }
 
-func (_c *State_Save_Call) RunAndReturn(run func(message *smartbftprotos.SavedMessage) error) *State_Save_Call {
+func (_c *State_Save_Call) RunAndReturn(run func(message *smartbftprotos.SavedMessage, truncateTo bool) error) *State_Save_Call {
 	_c.Call.Return(run)
 	return _c
 }

@@ -164,7 +164,7 @@ func TestViewChangeProcess(t *testing.T) {
 			controller := &mocks.ViewController{}
 			controller.On("AbortView", mock.Anything)
 			state := &mocks.State{}
-			state.On("Save", mock.Anything).Return(nil)
+			state.On("Save", mock.Anything, false).Return(nil)
 
 			vc := &bft.ViewChanger{
 				SelfID:            0,
@@ -269,7 +269,7 @@ func TestViewDataProcess(t *testing.T) {
 	reqTimer := &mocks.RequestsTimer{}
 	reqTimer.On("RestartTimers").Once()
 	state := &mocks.State{}
-	state.On("Save", mock.Anything).Return(nil)
+	state.On("Save", mock.Anything, false).Return(nil)
 
 	vc := &bft.ViewChanger{
 		SelfID:        1,
@@ -316,7 +316,7 @@ func TestViewDataProcess(t *testing.T) {
 
 	vc.Stop()
 	reqTimer.AssertCalled(t, "RestartTimers")
-	state.AssertCalled(t, "Save", mock.Anything)
+	state.AssertCalled(t, "Save", mock.Anything, false)
 }
 
 func TestNewViewProcess(t *testing.T) {
@@ -344,7 +344,7 @@ func TestNewViewProcess(t *testing.T) {
 	reqTimer := &mocks.RequestsTimer{}
 	reqTimer.On("RestartTimers").Once()
 	state := &mocks.State{}
-	state.On("Save", mock.Anything).Return(nil)
+	state.On("Save", mock.Anything, false).Return(nil)
 
 	vc := &bft.ViewChanger{
 		SelfID:        0,
@@ -398,7 +398,7 @@ func TestNewViewProcess(t *testing.T) {
 
 	vc.Stop()
 	reqTimer.AssertCalled(t, "RestartTimers")
-	state.AssertCalled(t, "Save", mock.Anything)
+	state.AssertCalled(t, "Save", mock.Anything, false)
 }
 
 func TestNormalProcess(t *testing.T) {
@@ -434,7 +434,7 @@ func TestNormalProcess(t *testing.T) {
 	checkpoint := types.Checkpoint{}
 	checkpoint.Set(lastDecision, lastDecisionSignatures)
 	state := &mocks.State{}
-	state.On("Save", mock.Anything).Return(nil)
+	state.On("Save", mock.Anything, false).Return(nil)
 
 	vc := &bft.ViewChanger{
 		SelfID:        1,
@@ -1172,7 +1172,7 @@ func TestCommitLastDecision(t *testing.T) {
 	}).Return(types.Reconfig{InLatestDecision: false})
 
 	state := &mocks.State{}
-	state.On("Save", mock.Anything).Return(nil)
+	state.On("Save", mock.Anything, false).Return(nil)
 	pruner := &mocks.Pruner{}
 	pruner.On("MaybePruneRevokedRequests")
 
@@ -1370,7 +1370,7 @@ func TestInFlightProposalInViewData(t *testing.T) {
 			checkpoint := types.Checkpoint{}
 			checkpoint.Set(lastDecision, lastDecisionSignatures)
 			state := &mocks.State{}
-			state.On("Save", mock.Anything).Return(nil)
+			state.On("Save", mock.Anything, false).Return(nil)
 
 			vc := &bft.ViewChanger{
 				SelfID:        0,
@@ -2034,6 +2034,7 @@ func TestCommitInFlight(t *testing.T) {
 
 	histograms := &histogramsRecorder{}
 	sched := make(chan time.Time)
+	state := &bft.StateRecorder{}
 	vc := &bft.ViewChanger{
 		SelfID:           1,
 		N:                4,
@@ -2048,7 +2049,7 @@ func TestCommitInFlight(t *testing.T) {
 		InFlight:         &bft.InFlightData{},
 		Checkpoint:       &checkpoint,
 		ViewSequences:    &atomic.Value{},
-		State:            &bft.StateRecorder{},
+		State:            state,
 		InMsqQSize:       int(types.DefaultConfig.IncomingMessageBufferSize),
 		Application:      app,
 		Pruner:           pruner,
@@ -2144,6 +2145,9 @@ func TestCommitInFlight(t *testing.T) {
 	}
 
 	vc.Stop()
+
+	require.Equal(t, []bool{false, false}, state.TruncateTo,
+		"a view change and a new view must not truncate the WAL in this change")
 }
 
 // histogramsRecorder is a metrics provider that records the values observed by its histograms.
@@ -2460,7 +2464,7 @@ func TestDontCommitInFlight(t *testing.T) {
 	app := &mocks.ApplicationMock{}
 	app.On("Deliver", mock.Anything, mock.Anything)
 	state := &mocks.State{}
-	state.On("Save", mock.Anything).Return(nil)
+	state.On("Save", mock.Anything, false).Return(nil)
 
 	vc := &bft.ViewChanger{
 		SelfID:        3,
@@ -2552,7 +2556,7 @@ func newViewChangerWithInFlight(t *testing.T, verifier api.Verifier) (*bft.ViewC
 	app := &mocks.ApplicationMock{}
 	app.On("Deliver", mock.Anything, mock.Anything)
 	state := &mocks.State{}
-	state.On("Save", mock.Anything).Return(nil)
+	state.On("Save", mock.Anything, false).Return(nil)
 
 	vc := &bft.ViewChanger{
 		SelfID:        3,
@@ -2971,7 +2975,7 @@ func TestNewViewWithoutLeaderViewData(t *testing.T) {
 			pruner := &mocks.Pruner{}
 			pruner.On("MaybePruneRevokedRequests")
 			state := &mocks.State{}
-			state.On("Save", mock.Anything).Return(nil)
+			state.On("Save", mock.Anything, false).Return(nil)
 
 			checkpoint := types.Checkpoint{}
 			checkpoint.Set(lastDecision, lastDecisionSignatures)

@@ -672,7 +672,7 @@ func (c *Controller) sync() (viewNum uint64, seq uint64, decisions uint64) {
 					},
 				},
 			}
-			if err := c.State.Save(newViewToSave); err != nil {
+			if err := c.State.Save(newViewToSave, false); err != nil {
 				c.Logger.Panicf("Failed to save message to state, error: %v", err)
 			}
 			newViewNum = response.View

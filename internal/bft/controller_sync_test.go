@@ -148,3 +148,97 @@ func TestSyncDecisionsInView(t *testing.T) {
 			"DecisionsInView should be latestDecisionDecisions+1 when sync returns higher height")
 	})
 }
+
+// stateTransferResponder answers a state transfer request with the same view
+// and sequence from two nodes, which is enough for the collector quorum.
+type stateTransferResponder struct {
+	stubComm
+	collector *StateCollector
+	view      uint64
+	seq       uint64
+}
+
+func (c *stateTransferResponder) SendConsensus(targetID uint64, m *protos.Message) {
+	if m.GetStateTransferRequest() == nil {
+		return
+	}
+
+	c.collector.HandleMessage(targetID, &protos.Message{
+		Content: &protos.Message_StateTransferResponse{
+			StateTransferResponse: &protos.StateTransferResponse{
+				ViewNum:  c.view,
+				Sequence: c.seq,
+			},
+		},
+	})
+}
+
+// TestSyncSavesNewViewWithoutTruncating checks the sync call site: the record
+// of the new view is saved with truncate=false in this change.
+func TestSyncSavesNewViewWithoutTruncating(t *testing.T) {
+	const (
+		controllerSeq  = uint64(10)
+		controllerView = uint64(3)
+	)
+
+	log := zap.NewNop().Sugar()
+
+	checkpoint := &types.Checkpoint{}
+	checkpoint.Set(types.Proposal{
+		Metadata: MarshalOrPanic(&protos.ViewMetadata{
+			LatestSequence:  controllerSeq,
+			ViewId:          controllerView,
+			DecisionsInView: 0,
+		}),
+	}, []types.Signature{{ID: 1}, {ID: 2}, {ID: 3}})
+
+	collector := &StateCollector{
+		SelfID:         1,
+		N:              4,
+		Logger:         log,
+		CollectTimeout: time.Second,
+	}
+	collector.Start()
+	defer collector.Stop()
+
+	state := &StateRecorder{}
+	c := &Controller{
+		ID:        1,
+		N:         4,
+		Logger:    log,
+		NodesList: []uint64{1, 2, 3, 4},
+		Comm: &stateTransferResponder{
+			collector: collector,
+			view:      controllerView + 1,
+			seq:       controllerSeq + 1,
+		},
+		Synchronizer: &stubSynchronizer{response: types.SyncResponse{
+			Latest: types.Decision{
+				Proposal: types.Proposal{
+					Metadata: MarshalOrPanic(&protos.ViewMetadata{
+						LatestSequence: controllerSeq,
+						ViewId:         controllerView,
+					}),
+				},
+			},
+		}},
+		Checkpoint:          checkpoint,
+		Collector:           collector,
+		InFlight:            &InFlightData{},
+		ViewChanger:         &ViewChanger{informChan: make(chan uint64, 1)},
+		State:               state,
+		currViewNumber:      controllerView,
+		currDecisionsInView: 1,
+	}
+	c.syncChan = make(chan struct{}, 1)
+
+	viewNum, seq, decisions := c.sync()
+
+	require.Equal(t, controllerView+1, viewNum)
+	require.Equal(t, controllerSeq+1, seq)
+	require.Equal(t, uint64(0), decisions)
+	require.Len(t, state.SavedMessages, 1)
+	require.NotNil(t, state.SavedMessages[0].GetNewView())
+	require.Equal(t, []bool{false}, state.TruncateTo,
+		"a new view saved after sync must not truncate the WAL in this change")
+}
