@@ -265,6 +265,7 @@ func Open(logger api.Logger, dirPath string, options *Options) (*WriteAheadLogFi
 
 		return nil, err
 	}
+
 	wal.metrics.CountOfFiles.Set(float64(len(wal.activeIndexes)))
 
 	wal.index, err = parseWalFileName(walNames[0]) // first valid file
@@ -601,7 +602,8 @@ FileLoop:
 
 	w.logger.Debugf("Read %d items", len(items))
 
-	// move to write mode on a new file.
+	// move to write mode, reusing the last file when it holds nothing but its
+	// CRC-anchor, or creating the next one otherwise.
 	if err := w.deleteAndCreateFile(); err != nil {
 		w.logger.Errorf("Failed to move to a new file: %s", err)
 
@@ -675,11 +677,6 @@ func (w *WriteAheadLogFile) switchFiles() error {
 func (w *WriteAheadLogFile) deleteAndCreateFile() error {
 	var err error
 
-	w.index++
-	nextFileName := fmt.Sprintf(walFileTemplate, w.index)
-	nextFilePath := filepath.Join(w.dirFile.Name(), nextFileName)
-	w.logger.Debugf("Preparing next log file: %s", nextFilePath)
-
 	if w.activeIndexes[0] < w.truncateIndex {
 		var j int
 
@@ -699,6 +696,35 @@ func (w *WriteAheadLogFile) deleteAndCreateFile() error {
 		w.activeIndexes = w.activeIndexes[j+1:]
 		w.metrics.CountOfFiles.Set(float64(len(w.activeIndexes)))
 	}
+
+	// A file that holds nothing but its CRC-anchor has no data to preserve. Reusing it instead of
+	// creating the next file is what keeps a restart that writes no record from adding a file:
+	// ReadAll() always needs a file to switch to write mode in, and that file used to be new.
+	lastFilePath := filepath.Join(w.dirFile.Name(), fmt.Sprintf(walFileTemplate, w.index))
+	lastFileInfo, err := os.Stat(lastFilePath)
+	if err != nil {
+		return err
+	}
+
+	if lastFileInfo.Size() == crcAnchorRecordSize() {
+		w.logger.Debugf("Reusing the anchor-only log file: %s", lastFilePath)
+
+		w.logFile, err = os.OpenFile(lastFilePath, os.O_WRONLY, walFilePermPrivateRW)
+		if err != nil {
+			return err
+		}
+
+		if _, err = w.logFile.Seek(0, io.SeekEnd); err != nil {
+			return err
+		}
+
+		return nil
+	}
+
+	w.index++
+	nextFileName := fmt.Sprintf(walFileTemplate, w.index)
+	nextFilePath := filepath.Join(w.dirFile.Name(), nextFileName)
+	w.logger.Debugf("Preparing next log file: %s", nextFilePath)
 
 	w.logger.Debugf("Creating log file: %s", nextFileName)
 
