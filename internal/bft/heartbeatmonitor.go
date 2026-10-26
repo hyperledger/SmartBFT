@@ -20,8 +20,6 @@ const (
 	Follower Role = true
 )
 
-//go:generate mockery -dir . -name HeartbeatEventHandler -case underscore -output ./mocks/
-
 // HeartbeatEventHandler defines who to call when a heartbeat timeout expires or a Sync needs to be triggered.
 // This is implemented by the Controller.
 type HeartbeatEventHandler interface {

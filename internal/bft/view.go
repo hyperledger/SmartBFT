@@ -47,8 +47,6 @@ func (p Phase) String() string {
 }
 
 // State can save and restore the state
-//
-//go:generate mockery -dir . -name State -case underscore -output ./mocks/
 type State interface {
 	// Save saves a message.
 	Save(message *protos.SavedMessage) error

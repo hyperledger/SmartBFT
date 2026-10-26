@@ -33,8 +33,6 @@ var (
 	ErrSubmitTimeout       = errors.New("timeout submitting to request pool")
 )
 
-//go:generate mockery -dir . -name RequestTimeoutHandler -case underscore -output ./mocks/
-
 // RequestTimeoutHandler defines the methods called by request timeout timers created by time.AfterFunc.
 // This interface is implemented by the bft.Controller.
 type RequestTimeoutHandler interface {

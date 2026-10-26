@@ -19,21 +19,29 @@ jobs:
         with:
           go-version-file: go.mod
 
+      # Use git status, not git diff: status also catches untracked files.
       - name: check go.mod
         run: |
           go mod tidy
-          git diff --exit-code go.mod
+          test -z "$(git status --porcelain)"
 
       - name: check vendor
         run: |
           go mod vendor
-          git diff --exit-code
+          test -z "$(git status --porcelain)"
 
       - name: check protobuf
         run: |
           go -C tools install github.com/bufbuild/buf/cmd/buf google.golang.org/protobuf/cmd/protoc-gen-go
           PATH="$(go env GOPATH)/bin:$PATH" buf generate
-          git diff --exit-code
+          test -z "$(git status --porcelain)"
+
+      - name: check mocks
+        run: |
+          go -C tools install github.com/vektra/mockery/v3
+          rm -f internal/bft/mocks/*.go
+          PATH="$(go env GOPATH)/bin:$PATH" mockery --config .mockery.yml
+          test -z "$(git status --porcelain)"
 
       - name: golangci-lint
         run: |
