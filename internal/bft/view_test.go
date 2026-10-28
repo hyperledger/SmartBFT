@@ -1005,10 +1005,16 @@ func TestViewPersisted(t *testing.T) {
 			}
 			var persistedToLog sync.WaitGroup
 			persistedToLog.Add(1)
-			state.On("Save", mock.Anything).Return(nil).Run(func(args mock.Arguments) {
+			saveToLog := func(args mock.Arguments) {
 				persistedToLog.Done()
-				persistedState.Save(args.Get(0).(*protos.SavedMessage))
-			})
+				persistedState.Save(args.Get(0).(*protos.SavedMessage), args.Get(1).(bool))
+			}
+			state.On("Save", mock.MatchedBy(func(m *protos.SavedMessage) bool {
+				return m.GetProposedRecord() != nil
+			}), true).Return(nil).Run(saveToLog)
+			state.On("Save", mock.MatchedBy(func(m *protos.SavedMessage) bool {
+				return m.GetCommit() != nil
+			}), false).Return(nil).Run(saveToLog)
 
 			view.Start()
 
@@ -1539,7 +1545,12 @@ func newView(t *testing.T, selfID uint64, network map[uint64]*testedView) *teste
 	})
 
 	state := &mocks.State{}
-	state.On("Save", mock.Anything).Return(nil)
+	state.On("Save", mock.MatchedBy(func(m *protos.SavedMessage) bool {
+		return m.GetProposedRecord() != nil
+	}), true).Return(nil)
+	state.On("Save", mock.MatchedBy(func(m *protos.SavedMessage) bool {
+		return m.GetCommit() != nil
+	}), false).Return(nil)
 
 	tv.View = &bft.View{
 		RetrieveCheckpoint: (&types.Checkpoint{}).Get,

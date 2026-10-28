@@ -48,8 +48,12 @@ func (p Phase) String() string {
 
 // State can save and restore the state
 type State interface {
-	// Save saves a message.
-	Save(message *protos.SavedMessage) error
+	// Save saves a message. truncateTo tells the WAL whether everything written
+	// before the message can be dropped. The caller decides it; Save does not
+	// infer the flag from the message type. A pre-prepare is normally a truncation
+	// point, while a commit never is: its pre-prepare must survive next to it.
+	// View records are not truncation points in this change.
+	Save(message *protos.SavedMessage, truncateTo bool) error
 
 	// Restore restores the given view to its latest state
 	// before a crash, if applicable.
@@ -399,7 +403,8 @@ func (v *View) processProposal() Phase {
 	prepareMessage := v.createPrepare(seq, proposal)
 
 	// We are about to send a prepare for a pre-prepare,
-	// so we record the pre-prepare.
+	// so we record the pre-prepare. The record starts a new proposal pair,
+	// hence everything written before it may be truncated.
 	savedMsg := &protos.SavedMessage{
 		Content: &protos.SavedMessage_ProposedRecord{
 			ProposedRecord: &protos.ProposedRecord{
@@ -408,7 +413,7 @@ func (v *View) processProposal() Phase {
 			},
 		},
 	}
-	if err = v.State.Save(savedMsg); err != nil {
+	if err = v.State.Save(savedMsg, true); err != nil {
 		v.Logger.Panicf("Failed to save message to state, error: %v", err)
 	}
 	v.lastBroadcastSent = prepareMessage
@@ -503,8 +508,9 @@ func (v *View) processPrepares() Phase {
 	}
 
 	// We received enough prepares to send a commit.
-	// Save the commit message we are about to send.
-	if err = v.State.Save(preparedProof); err != nil {
+	// Save the commit message we are about to send. A commit must not be a
+	// truncation point: its pre-prepare has to survive next to it.
+	if err = v.State.Save(preparedProof, false); err != nil {
 		v.Logger.Panicf("Failed to save message to state, error: %v", err)
 	}
 	v.currCommitSent = proto.Clone(commitMsg).(*protos.Message)

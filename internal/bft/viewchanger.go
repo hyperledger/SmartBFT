@@ -443,7 +443,7 @@ func (v *ViewChanger) processViewChangeMsg(restore bool) {
 				},
 			},
 		}
-		if err := v.State.Save(msgToSave); err != nil {
+		if err := v.State.Save(msgToSave, false); err != nil {
 			v.Logger.Panicf("Failed to save message to state, error: %v", err)
 		}
 	}
@@ -1211,7 +1211,7 @@ func (v *ViewChanger) processNewViewMsg(msg *protos.NewView) {
 			},
 		},
 	}
-	if err = v.State.Save(newViewToSave); err != nil {
+	if err = v.State.Save(newViewToSave, false); err != nil {
 		v.Logger.Panicf("Failed to save message to state, error: %v", err)
 	}
 

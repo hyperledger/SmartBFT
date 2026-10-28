@@ -21,20 +21,12 @@ import (
 )
 
 func TestStateRestore(t *testing.T) {
-	prePrepare := &protos.PrePrepare{
-		Proposal: &protos.Proposal{
-			Header:  []byte{1},
-			Payload: []byte{1},
-			Metadata: bft.MarshalOrPanic(&protos.ViewMetadata{
-				DecisionsInView: 0,
-				LatestSequence:  0,
-				ViewId:          1,
-			}),
-			VerificationSequence: 100,
-		},
-		Seq:  200,
-		View: 300,
-	}
+	proposedRecord := newProposalRecord(200, 300, &protos.ViewMetadata{
+		DecisionsInView: 0,
+		LatestSequence:  0,
+		ViewId:          1,
+	})
+	prePrepare := proposedRecord.GetProposedRecord().GetPrePrepare()
 
 	expectedInFlightProposal := &types.Proposal{
 		VerificationSequence: int64(prePrepare.GetProposal().GetVerificationSequence()),
@@ -43,33 +35,7 @@ func TestStateRestore(t *testing.T) {
 		Header:               prePrepare.GetProposal().GetHeader(),
 	}
 
-	proposedRecord := &protos.SavedMessage{
-		Content: &protos.SavedMessage_ProposedRecord{
-			ProposedRecord: &protos.ProposedRecord{
-				PrePrepare: prePrepare,
-				Prepare: &protos.Prepare{
-					Seq:  200,
-					View: 300,
-				},
-			},
-		},
-	}
-
-	preparedProof := &protos.SavedMessage{
-		Content: &protos.SavedMessage_Commit{
-			Commit: &protos.Message{
-				Content: &protos.Message_Commit{
-					Commit: &protos.Commit{
-						Seq:  200,
-						View: 300,
-						Signature: &protos.Signature{
-							Signer: 11,
-						},
-					},
-				},
-			},
-		},
-	}
+	preparedProof := newCommitRecord(200, 300)
 
 	for _, testCase := range []struct {
 		proposalSeqViewInitializedWith uint64
@@ -295,4 +261,147 @@ func TestStateLoadIfApplicable(t *testing.T) {
 			}
 		})
 	}
+}
+
+// recordingWAL stands in for the write ahead log at the api.WriteAheadLog seam
+// and keeps, in order, every appended record together with its truncation flag.
+type recordingWAL struct {
+	appended   [][]byte
+	truncateTo []bool
+}
+
+func (w *recordingWAL) Append(entry []byte, truncateTo bool) error {
+	w.appended = append(w.appended, entry)
+	w.truncateTo = append(w.truncateTo, truncateTo)
+
+	return nil
+}
+
+func newViewRecord(viewID, latestSequence uint64) *protos.SavedMessage {
+	return &protos.SavedMessage{
+		Content: &protos.SavedMessage_NewView{
+			NewView: &protos.ViewMetadata{
+				ViewId:         viewID,
+				LatestSequence: latestSequence,
+			},
+		},
+	}
+}
+
+func newProposalRecord(seq, view uint64, metadata *protos.ViewMetadata) *protos.SavedMessage {
+	return &protos.SavedMessage{
+		Content: &protos.SavedMessage_ProposedRecord{
+			ProposedRecord: &protos.ProposedRecord{
+				PrePrepare: &protos.PrePrepare{
+					Proposal: &protos.Proposal{
+						Header:               []byte{1},
+						Payload:              []byte{1},
+						Metadata:             bft.MarshalOrPanic(metadata),
+						VerificationSequence: 100,
+					},
+					Seq:  seq,
+					View: view,
+				},
+				Prepare: &protos.Prepare{
+					Seq:  seq,
+					View: view,
+				},
+			},
+		},
+	}
+}
+
+func newCommitRecord(seq, view uint64) *protos.SavedMessage {
+	return &protos.SavedMessage{
+		Content: &protos.SavedMessage_Commit{
+			Commit: &protos.Message{
+				Content: &protos.Message_Commit{
+					Commit: &protos.Commit{
+						Seq:  seq,
+						View: view,
+						Signature: &protos.Signature{
+							Signer: 11,
+						},
+					},
+				},
+			},
+		},
+	}
+}
+
+// The caller decides where the WAL may be truncated. Save must persist that
+// decision as given, together with the record.
+func TestSaveUsesTheGivenTruncationFlag(t *testing.T) {
+	for _, testCase := range []struct {
+		description   string
+		recordsToSave []*protos.SavedMessage
+		truncateTo    []bool
+	}{
+		{
+			description:   "a proposal begins the pair, so it is a truncation point",
+			recordsToSave: []*protos.SavedMessage{newProposalRecord(200, 300, &protos.ViewMetadata{ViewId: 1})},
+			truncateTo:    []bool{true},
+		},
+		{
+			description: "a commit right after the proposal keeps the pair",
+			recordsToSave: []*protos.SavedMessage{
+				newProposalRecord(200, 300, &protos.ViewMetadata{ViewId: 1}),
+				newCommitRecord(200, 300),
+			},
+			truncateTo: []bool{true, false},
+		},
+		{
+			description:   "a new view is saved with the flag given by the caller",
+			recordsToSave: []*protos.SavedMessage{newViewRecord(7, 4)},
+			truncateTo:    []bool{false},
+		},
+	} {
+		t.Run(testCase.description, func(t *testing.T) {
+			basicLog, err := zap.NewDevelopment()
+			require.NoError(t, err)
+
+			writeAheadLog := &recordingWAL{}
+			state := &bft.PersistedState{
+				InFlightProposal: &bft.InFlightData{},
+				Logger:           basicLog.Sugar(),
+				WAL:              writeAheadLog,
+			}
+
+			for i, record := range testCase.recordsToSave {
+				require.NoError(t, state.Save(record, testCase.truncateTo[i]))
+			}
+
+			require.Equal(t, testCase.truncateTo, writeAheadLog.truncateTo)
+
+			require.Len(t, writeAheadLog.appended, len(testCase.recordsToSave))
+			for i, record := range testCase.recordsToSave {
+				appended := &protos.SavedMessage{}
+				require.NoError(t, proto.Unmarshal(writeAheadLog.appended[i], appended))
+				require.True(t, proto.Equal(record, appended), "record %d was not appended as saved", i)
+			}
+		})
+	}
+}
+
+// A commit is never saved by the view with truncate=true: its pre-prepare has to
+// survive next to it. The flag is not read from the shared in-flight state, so it
+// cannot change while Save is running.
+func TestSaveCommitUsesTheGivenTruncationFlag(t *testing.T) {
+	basicLog, err := zap.NewDevelopment()
+	require.NoError(t, err)
+
+	inFlight := &bft.InFlightData{}
+	inFlight.StoreProposal(types.Proposal{VerificationSequence: 42})
+
+	writeAheadLog := &recordingWAL{}
+	state := &bft.PersistedState{
+		InFlightProposal: inFlight,
+		Logger:           basicLog.Sugar(),
+		WAL:              writeAheadLog,
+	}
+
+	require.NoError(t, state.Save(newCommitRecord(200, 300), false))
+
+	require.Equal(t, []bool{false}, writeAheadLog.truncateTo, "a commit must never be a truncation point")
+	require.True(t, inFlight.IsInFlightPrepared(), "saving a commit must not clear the proposal in flight")
 }

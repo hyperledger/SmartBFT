@@ -18,10 +18,12 @@ import (
 
 type StateRecorder struct {
 	SavedMessages []*protos.SavedMessage
+	TruncateTo    []bool
 }
 
-func (sr *StateRecorder) Save(message *protos.SavedMessage) error {
+func (sr *StateRecorder) Save(message *protos.SavedMessage, truncateTo bool) error {
 	sr.SavedMessages = append(sr.SavedMessages, message)
+	sr.TruncateTo = append(sr.TruncateTo, truncateTo)
 	return nil
 }
 
@@ -36,7 +38,7 @@ type PersistedState struct {
 	WAL              api.WriteAheadLog
 }
 
-func (ps *PersistedState) Save(msgToSave *protos.SavedMessage) error {
+func (ps *PersistedState) Save(msgToSave *protos.SavedMessage, truncateTo bool) error {
 	if proposed := msgToSave.GetProposedRecord(); proposed != nil {
 		ps.storeProposal(proposed)
 	}
@@ -48,15 +50,10 @@ func (ps *PersistedState) Save(msgToSave *protos.SavedMessage) error {
 	if err != nil {
 		ps.Logger.Panicf("Failed marshaling message: %v", err)
 	}
-	// It is only safe to truncate if we either:
-	//
-	// 1) Process a pre-prepare, because it means we safely persisted the
-	// previous proposal and have a stable checkpoint.
-	// 2) Acquired a new view message which contains 2f+1 attestations
-	//    of the cluster agreeing to a new view configuration.
-	newProposal := msgToSave.GetProposedRecord() != nil
-	// TODO: handle view message here as well, and add "|| finalizedView" to truncate flag
-	return ps.WAL.Append(b, newProposal)
+	// The caller decides whether this record is a truncation point and passes the
+	// flag explicitly. Save stores the flag as given and never infers it from the
+	// message type or from shared state.
+	return ps.WAL.Append(b, truncateTo)
 }
 
 func (ps *PersistedState) storeProposal(proposed *protos.ProposedRecord) {
