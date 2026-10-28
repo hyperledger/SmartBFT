@@ -775,7 +775,9 @@ func TestSyncInform(t *testing.T) {
 	reqTimer.On("StopTimers")
 	reqTimer.On("RestartTimers")
 	controllerMock := &mocks.ViewController{}
-	controllerMock.On("AbortView", mock.Anything)
+	controllerMock.On("AbortView", mock.Anything).Return(true)
+	controllerMock.On("AbortViewAndHold", mock.Anything).Return(true)
+	controllerMock.On("ReleaseViewWrite")
 
 	collector := bft.StateCollector{
 		SelfID:         0,
