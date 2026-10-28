@@ -45,9 +45,20 @@ func (_m *ViewController) EXPECT() *ViewController_Expecter {
 }
 
 // AbortView provides a mock function for the type ViewController
-func (_mock *ViewController) AbortView(view uint64) {
-	_mock.Called(view)
-	return
+func (_mock *ViewController) AbortView(view uint64) bool {
+	ret := _mock.Called(view)
+
+	if len(ret) == 0 {
+		panic("no return value specified for AbortView")
+	}
+
+	var r0 bool
+	if returnFunc, ok := ret.Get(0).(func(uint64) bool); ok {
+		r0 = returnFunc(view)
+	} else {
+		r0 = ret.Get(0).(bool)
+	}
+	return r0
 }
 
 // ViewController_AbortView_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'AbortView'
@@ -74,13 +85,13 @@ func (_c *ViewController_AbortView_Call) Run(run func(view uint64)) *ViewControl
 	return _c
 }
 
-func (_c *ViewController_AbortView_Call) Return() *ViewController_AbortView_Call {
-	_c.Call.Return()
+func (_c *ViewController_AbortView_Call) Return(b bool) *ViewController_AbortView_Call {
+	_c.Call.Return(b)
 	return _c
 }
 
-func (_c *ViewController_AbortView_Call) RunAndReturn(run func(view uint64)) *ViewController_AbortView_Call {
-	_c.Run(run)
+func (_c *ViewController_AbortView_Call) RunAndReturn(run func(view uint64) bool) *ViewController_AbortView_Call {
+	_c.Call.Return(run)
 	return _c
 }
 

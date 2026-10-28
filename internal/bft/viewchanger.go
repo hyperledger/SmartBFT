@@ -23,7 +23,37 @@ import (
 // ViewController controls the view
 type ViewController interface {
 	ViewChanged(newViewNumber uint64, newProposalSequence uint64)
-	AbortView(view uint64)
+	// AbortView aborts the given view and does not return until the view has
+	// stopped. It returns false when the view is already older than the current
+	// one or when the controller is stopping. A controller may also implement
+	// viewHolder, which additionally keeps the view stopped for the caller.
+	AbortView(view uint64) bool
+}
+
+// viewHolder is implemented by a ViewController that can abort a view, keep
+// it from being restarted, and keep other views from writing until the view
+// changer has written the record that must follow the abort.
+type viewHolder interface {
+	AbortViewAndHold(view uint64) bool
+	ReleaseViewWrite()
+}
+
+// abortViewAndHold stops the view and holds it when the controller supports
+// holding, or just stops it otherwise.
+func (v *ViewChanger) abortViewAndHold(view uint64) bool {
+	if holder, ok := v.Controller.(viewHolder); ok {
+		return holder.AbortViewAndHold(view)
+	}
+
+	return v.Controller.AbortView(view)
+}
+
+// releaseViewWrite lets the controller start views again when it supports
+// holding.
+func (v *ViewChanger) releaseViewWrite() {
+	if holder, ok := v.Controller.(viewHolder); ok {
+		holder.ReleaseViewWrite()
+	}
 }
 
 // Pruner prunes revoked requests
@@ -435,6 +465,26 @@ func (v *ViewChanger) processViewChangeMsg(restore bool) {
 		v.Logger.Debugf("Node %d is joining view change, last view is %d", v.SelfID, v.currView)
 		v.startViewChange(&change{v.currView, true})
 	}
+	// Stop the current view before writing the view change record. The view may still
+	// append a commit after that record, which would leave the commit without its
+	// pre-prepare in the WAL. AbortViewAndHold waits for the view to stop, keeps the
+	// sync path from restarting it, and keeps other views from writing until
+	// releaseViewWrite below. If the controller has already moved to a newer view,
+	// this view change is stale.
+	aborted := v.abortViewAndHold(v.currView)
+	if !aborted {
+		if !restore {
+			return
+		}
+
+		// A restore can race with syncOnStart, which advances the controller to a
+		// newer view and informs the view changer through informChan. The restore
+		// was already started by the code above, so it must still send its view
+		// data instead of silently leaving the view change half done. The pending
+		// informChan entry will move the view changer to the newer view next.
+		v.Logger.Debugf("Node %d is restoring view change %d while the controller is already in a newer view", v.SelfID, v.currView)
+	}
+
 	if !restore {
 		msgToSave := &protos.SavedMessage{
 			Content: &protos.SavedMessage_ViewChange{
@@ -443,11 +493,16 @@ func (v *ViewChanger) processViewChangeMsg(restore bool) {
 				},
 			},
 		}
-		if err := v.State.Save(msgToSave, false); err != nil {
+		// The flag is passed explicitly, after the view has stopped and no other
+		// view may write: the proposal in flight, if there is one, travels in the
+		// view data message and must stay recoverable.
+		if err := v.State.Save(msgToSave, !v.hasInFlightProposal()); err != nil {
 			v.Logger.Panicf("Failed to save message to state, error: %v", err)
 		}
 	}
-	v.Controller.AbortView(v.currView) // before preparing the view data message abort the current view
+	if aborted {
+		v.releaseViewWrite()
+	}
 	v.currView = v.nextView
 	v.MetricsViewChange.CurrentView.Set(float64(v.currView))
 	v.viewChangeMsgs.clear(v.N)
@@ -462,6 +517,13 @@ func (v *ViewChanger) processViewChangeMsg(restore bool) {
 		v.Comm.SendConsensus(leader, msg)
 	}
 	v.Logger.Debugf("Node %d sent view data msg, with next view %d, to the new leader %d", v.SelfID, v.currView, leader)
+}
+
+// hasInFlightProposal tells whether the node still has a proposal that recovery needs.
+// A nil InFlight is possible in tests and in a hand-built view changer, so it is not
+// dereferenced blindly.
+func (v *ViewChanger) hasInFlightProposal() bool {
+	return v.InFlight != nil && v.InFlight.InFlightProposal() != nil
 }
 
 func (v *ViewChanger) prepareViewDataMsg() *protos.Message {
@@ -1201,6 +1263,25 @@ func (v *ViewChanger) processNewViewMsg(msg *protos.NewView) {
 		return
 	}
 
+	// The record of the new view may truncate the WAL, so the current view has to be stopped
+	// first. Otherwise it can still append a commit after that record and leave a commit
+	// without its pre-prepare in the WAL. AbortViewAndHold waits for the view to stop, keeps
+	// the sync path from restarting it, and keeps other views from writing until
+	// releaseViewWrite below. If the controller has already moved to a newer view, this new
+	// view message is stale.
+	if !v.abortViewAndHold(v.currView) {
+		return
+	}
+
+	// Under condition A the quorum either committed the agreed proposal or declared it
+	// irrelevant, so this node's own in-flight proposal cannot be prepared any more and is
+	// dropped. Under condition B the quorum excluded this node and reported no prepared
+	// proposal: this node's own prepared proposal is not covered by that quorum and must be
+	// kept for the next view change.
+	if !noInFlight && v.InFlight != nil {
+		v.InFlight.clear()
+	}
+
 	mySequence, _ := v.extractCurrentSequence()
 
 	newViewToSave := &protos.SavedMessage{
@@ -1211,9 +1292,12 @@ func (v *ViewChanger) processNewViewMsg(msg *protos.NewView) {
 			},
 		},
 	}
-	if err = v.State.Save(newViewToSave, false); err != nil {
+	// The truncation flag is decided now, while no view may write: the record is a
+	// truncation point exactly when no proposal is left in flight for recovery.
+	if err = v.State.Save(newViewToSave, !v.hasInFlightProposal()); err != nil {
 		v.Logger.Panicf("Failed to save message to state, error: %v", err)
 	}
+	v.releaseViewWrite()
 
 	select { // if there was a delivery or sync with a reconfig when committing the in-flight proposal we should stop
 	case <-v.stopChan:

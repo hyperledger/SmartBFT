@@ -108,12 +108,22 @@ type Controller struct {
 
 	currViewLock   sync.RWMutex
 	currViewNumber uint64
+	// minRestartView is the lowest view the controller may start. The view
+	// changer raises it when it leaves a view, so the sync path cannot restart
+	// that view behind the view changer's back. Zero means no view is held.
+	minRestartView uint64
+
+	// viewChangeLock serializes stopping or starting a view with writing a
+	// record that may truncate the WAL. A view changer holds it from
+	// AbortViewAndHold until ReleaseViewWrite, so no view can append a record
+	// while the view changer writes the record that must follow the abort.
+	viewChangeLock sync.Mutex
+	viewWriteHeld  bool
 
 	currDecisionsInViewLock sync.RWMutex
 	currDecisionsInView     uint64
 
-	viewChange    chan viewInfo
-	abortViewChan chan uint64
+	viewChange chan viewInfo
 
 	stopOnce sync.Once
 	stopChan chan struct{}
@@ -179,6 +189,32 @@ func (c *Controller) setCurrentViewNumber(viewNumber uint64) {
 	defer c.currViewLock.Unlock()
 
 	c.currViewNumber = viewNumber
+}
+
+// holdView keeps the controller from starting the given view again until the
+// view changer asks for a new one.
+func (c *Controller) holdView(view uint64) {
+	c.currViewLock.Lock()
+	defer c.currViewLock.Unlock()
+
+	c.minRestartView = max(c.minRestartView, view+1)
+}
+
+// releaseHeldView lets the controller start any view again.
+func (c *Controller) releaseHeldView() {
+	c.currViewLock.Lock()
+	defer c.currViewLock.Unlock()
+
+	c.minRestartView = 0
+}
+
+// isViewHeld tells whether the view changer has left the given view and the
+// controller must not start it again.
+func (c *Controller) isViewHeld(view uint64) bool {
+	c.currViewLock.RLock()
+	defer c.currViewLock.RUnlock()
+
+	return view < c.minRestartView
 }
 
 func (c *Controller) getCurrentDecisionsInView() uint64 {
@@ -384,9 +420,17 @@ func (c *Controller) startView(proposalSequence uint64) {
 }
 
 func (c *Controller) changeView(newViewNumber uint64, newProposalSequence uint64, newDecisionsInView uint64) {
+	c.viewChangeLock.Lock()
+	defer c.viewChangeLock.Unlock()
+
 	latestView := c.getCurrentViewNumber()
 	if latestView > newViewNumber {
 		c.Logger.Debugf("Got view change to %d but already at %d", newViewNumber, latestView)
+		return
+	}
+
+	if c.isViewHeld(newViewNumber) {
+		c.Logger.Debugf("Not starting view %d: the view changer has left it", newViewNumber)
 		return
 	}
 
@@ -414,11 +458,20 @@ func (c *Controller) changeView(newViewNumber uint64, newProposalSequence uint64
 }
 
 func (c *Controller) abortView(view uint64) bool {
-	currView := c.getCurrentViewNumber()
-	c.Logger.Debugf("view for abort %d, current view %d", view, currView)
+	currViewNum := c.getCurrentViewNumber()
+	c.Logger.Debugf("view for abort %d, current view %d", view, currViewNum)
 
-	if view < currView {
-		c.Logger.Debugf("Was asked to abort view %d but the current view with number %d", view, currView)
+	if view < currViewNum {
+		c.Logger.Debugf("Was asked to abort view %d but the current view with number %d", view, currViewNum)
+		return false
+	}
+
+	c.currViewLock.RLock()
+	currView := c.currView
+	c.currViewLock.RUnlock()
+
+	if currView == nil {
+		c.Logger.Debugf("Was asked to abort view %d but no view was started", view)
 		return false
 	}
 
@@ -427,10 +480,17 @@ func (c *Controller) abortView(view uint64) bool {
 	c.relinquishLeaderToken()
 
 	// Kill current view
-	c.Logger.Debugf("Aborting current view with number %d", c.currViewNumber)
-	c.currView.Abort()
+	c.Logger.Debugf("Aborting current view with number %d", currViewNum)
+	currView.Abort()
 
 	return true
+}
+
+// abortCurrentView stops the current view and waits for it to finish. The
+// caller must hold viewChangeLock, which keeps the stop and the following
+// record write from being overtaken by a new view.
+func (c *Controller) abortCurrentView() {
+	c.abortView(c.getCurrentViewNumber())
 }
 
 // Sync initiates a synchronization
@@ -441,13 +501,79 @@ func (c *Controller) Sync() {
 	c.grabSyncToken()
 }
 
-// AbortView makes the controller abort the current view
-func (c *Controller) AbortView(view uint64) {
+// AbortView makes the controller abort the current view and waits until the
+// view has stopped. Waiting is what makes it safe to persist state that must
+// not be overtaken by a record written by the view, such as a truncating new
+// view record. It returns false when the view is older than the current one or
+// when the controller is stopping. It does not wait for the controller loop,
+// which may be busy with a long sync or an application delivery.
+func (c *Controller) AbortView(view uint64) bool {
 	c.Logger.Debugf("AbortView, the current view num is %d", c.getCurrentViewNumber())
 
 	c.Batcher.Close()
 
-	c.abortViewChan <- view
+	c.viewChangeLock.Lock()
+	defer c.viewChangeLock.Unlock()
+
+	if c.stopped() {
+		return false
+	}
+
+	return c.abortView(view)
+}
+
+// AbortViewAndHold aborts the current view, waits until it has stopped, and
+// keeps the controller from starting that view again until the view changer
+// asks for a new one. The sync path restarts views, so without the hold it
+// could restart the view between the abort and the record the view changer
+// writes next.
+//
+// On success the controller keeps viewChangeLock held, so no other view can be
+// started or stopped until ReleaseViewWrite. The caller must call it after
+// writing the record that had to follow the abort.
+func (c *Controller) AbortViewAndHold(view uint64) bool {
+	c.Logger.Debugf("AbortViewAndHold, the current view num is %d", c.getCurrentViewNumber())
+
+	c.Batcher.Close()
+
+	c.viewChangeLock.Lock()
+
+	if c.stopped() {
+		c.viewChangeLock.Unlock()
+
+		return false
+	}
+
+	if !c.abortView(view) {
+		c.viewChangeLock.Unlock()
+
+		return false
+	}
+
+	c.holdView(view)
+
+	c.currViewLock.Lock()
+	c.viewWriteHeld = true
+	c.currViewLock.Unlock()
+
+	return true
+}
+
+// ReleaseViewWrite lets the controller start or stop views again, once the view
+// changer has written the record that had to follow AbortViewAndHold, and
+// clears the hold that kept the left view stopped.
+func (c *Controller) ReleaseViewWrite() {
+	c.currViewLock.Lock()
+	held := c.viewWriteHeld
+	c.viewWriteHeld = false
+	if held {
+		c.minRestartView = 0
+	}
+	c.currViewLock.Unlock()
+
+	if held {
+		c.viewChangeLock.Unlock()
+	}
 }
 
 // ViewChanged makes the controller abort the current view and start a new one with the given numbers
@@ -488,9 +614,10 @@ func (c *Controller) run() {
 			c.decide(d)
 		case newView := <-c.viewChange:
 			c.Logger.Debugf("get newView from viewChange")
+			// The view changer has finished leaving the old view and asks for
+			// this one, so it is safe to start it again.
+			c.releaseHeldView()
 			c.changeView(newView.viewNumber, newView.proposalSeq, 0)
-		case view := <-c.abortViewChan:
-			c.abortView(view)
 		case <-c.stopChan:
 			return
 		case <-c.leaderToken:
@@ -657,30 +784,54 @@ func (c *Controller) sync() (viewNum uint64, seq uint64, decisions uint64) {
 			// And the synchronizer did not return a new view
 			return 0, 0, 0
 		}
-	} else {
-		if response.View <= controllerViewNum && latestDecisionViewNum < controllerViewNum {
-			return 0, 0, 0 // no new view to report
-		}
-		if response.View > newViewNum && response.Seq == latestDecisionSeq+1 {
-			c.Logger.Infof("Node %d collected state with view %d and sequence %d", c.ID, response.View, response.Seq)
-			newViewToSave := &protos.SavedMessage{
-				Content: &protos.SavedMessage_NewView{
-					NewView: &protos.ViewMetadata{
-						ViewId:          response.View,
-						LatestSequence:  latestDecisionSeq,
-						DecisionsInView: 0,
-					},
-				},
-			}
-			if err := c.State.Save(newViewToSave, false); err != nil {
-				c.Logger.Panicf("Failed to save message to state, error: %v", err)
-			}
-			newViewNum = response.View
-			newDecisionsInView = 0
-		}
+	} else if response.View <= controllerViewNum && latestDecisionViewNum < controllerViewNum {
+		return 0, 0, 0 // no new view to report
 	}
 
-	if latestDecisionMetadata != nil {
+	saveNewView := response != nil && response.View > newViewNum && response.Seq == latestDecisionSeq+1
+	if saveNewView {
+		c.Logger.Infof("Node %d collected state with view %d and sequence %d", c.ID, response.View, response.Seq)
+
+		// The record of the new view may truncate the WAL, so the current view has to be
+		// stopped first, and no other view may start until it is written. Otherwise a view
+		// could append a commit after that record and leave a commit without its
+		// pre-prepare in the WAL.
+		c.viewChangeLock.Lock()
+		c.abortCurrentView()
+
+		// The fate of the in-flight proposal has to be decided before the record of the
+		// new view is written: the checkpoint alone does not say the in-flight proposal is
+		// no longer needed, maybePruneInFlight does.
+		if latestDecisionMetadata != nil {
+			c.maybePruneInFlight(latestDecisionMetadata)
+		}
+
+		newViewToSave := &protos.SavedMessage{
+			Content: &protos.SavedMessage_NewView{
+				NewView: &protos.ViewMetadata{
+					ViewId:          response.View,
+					LatestSequence:  latestDecisionSeq,
+					DecisionsInView: 0,
+				},
+			},
+		}
+		// The truncation flag is passed explicitly, after the view was stopped and the
+		// in-flight proposal was pruned, so it cannot change between this decision and
+		// the append.
+		truncateTo := c.InFlight.InFlightProposal() == nil
+		err := c.State.Save(newViewToSave, truncateTo)
+		c.viewChangeLock.Unlock()
+
+		if err != nil {
+			c.Logger.Panicf("Failed to save message to state, error: %v", err)
+		}
+
+		newViewNum = response.View
+		newDecisionsInView = 0
+	} else if latestDecisionMetadata != nil {
+		// It has to be decided on every sync, not only when a new view record is saved,
+		// otherwise a stale proposal stays in flight and makes the node's view data
+		// invalid for the rest of the cluster.
 		c.maybePruneInFlight(latestDecisionMetadata)
 	}
 
@@ -802,7 +953,6 @@ func (c *Controller) Start(startViewNumber uint64, startProposalSequence uint64,
 	c.leaderToken = make(chan struct{}, 1)
 	c.decisionChan = make(chan decision, 1)
 	c.viewChange = make(chan viewInfo, 1)
-	c.abortViewChan = make(chan uint64, 1)
 
 	Q, F := computeQuorum(c.N)
 	c.Logger.Debugf("The number of nodes (N) is %d, F is %d, and the quorum size is %d", c.N, F, Q)
@@ -890,17 +1040,24 @@ func (c *Controller) Decide(proposal types.Proposal, signatures []types.Signatur
 	c.currViewLock.RUnlock()
 
 	delivered := make(chan struct{})
-	select {
-	case c.decisionChan <- decision{
+	d := decision{
 		proposal:   proposal,
 		requests:   requests,
 		signatures: signatures,
 		view:       view,
 		delivered:  delivered,
-	}:
+	}
+	select {
+	case c.decisionChan <- d:
 	case <-c.stopChan:
 		// In case we are in the middle of shutting down,
 		// abort deciding.
+		return
+	case <-view.AbortChan():
+		// The view is stopping while the controller is busy with a long sync or
+		// delivery. Do not block the view, or the abort would wait for it, but do
+		// not drop the decision either: hand it to the controller in the background.
+		go c.enqueueDecision(d)
 		return
 	}
 
@@ -908,6 +1065,16 @@ func (c *Controller) Decide(proposal types.Proposal, signatures []types.Signatur
 	case <-delivered: // wait for the delivery of the decision to the application
 	case <-c.stopChan: // If we stopped the controller, abort delivery
 	case <-view.AbortChan(): // If we stopped the view, abort delivery
+	}
+}
+
+// enqueueDecision hands a decision to the controller when the view that decided it is
+// already stopping. The decision was accepted by a quorum, so it must not be lost:
+// the controller delivers it once it is no longer busy.
+func (c *Controller) enqueueDecision(d decision) {
+	select {
+	case c.decisionChan <- d:
+	case <-c.stopChan:
 	}
 }
 

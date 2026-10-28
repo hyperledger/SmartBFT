@@ -8,6 +8,7 @@ package bft_test
 import (
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -1573,4 +1574,117 @@ func newView(t *testing.T, selfID uint64, network map[uint64]*testedView) *teste
 	}
 
 	return tv
+}
+
+// logFileCount returns the number of WAL files in the given directory.
+func logFileCount(t *testing.T, dirPath string) int {
+	t.Helper()
+
+	names, err := os.ReadDir(dirPath)
+	require.NoError(t, err)
+
+	var count int
+	for _, name := range names {
+		if strings.HasSuffix(name.Name(), ".wal") {
+			count++
+		}
+	}
+
+	return count
+}
+
+// TestSaveNewViewAfterConfirmedSyncTruncatesLog reproduces R07 at the
+// PersistedState seam, with a real WAL: once a sync has confirmed the proposal
+// with a quorum, the in-flight data is pruned and the record of the new view is
+// the truncation point. A restart then reads back the bare record of the new
+// view, and the number of log files does not grow with the restart.
+func TestSaveNewViewAfterConfirmedSyncTruncatesLog(t *testing.T) {
+	basicLog, err := zap.NewDevelopment()
+	require.NoError(t, err)
+	log := basicLog.Sugar()
+
+	testDir := t.TempDir()
+
+	options := &wal.Options{FileSizeBytes: 4096}
+	writeAheadLog, err := wal.Create(log, testDir, options)
+	require.NoError(t, err)
+
+	proposedRecord := &protos.SavedMessage{
+		Content: &protos.SavedMessage_ProposedRecord{
+			ProposedRecord: &protos.ProposedRecord{
+				PrePrepare: &protos.PrePrepare{
+					Proposal: &protos.Proposal{
+						Header:               []byte{1},
+						Payload:              []byte{2},
+						Metadata:             bft.MarshalOrPanic(&protos.ViewMetadata{ViewId: 3, LatestSequence: 4}),
+						VerificationSequence: 5,
+					},
+					Seq:  5,
+					View: 3,
+				},
+				Prepare: &protos.Prepare{
+					Seq:  5,
+					View: 3,
+				},
+			},
+		},
+	}
+
+	commitRecord := &protos.SavedMessage{
+		Content: &protos.SavedMessage_Commit{
+			Commit: &protos.Message{
+				Content: &protos.Message_Commit{
+					Commit: &protos.Commit{
+						Seq:  5,
+						View: 3,
+					},
+				},
+			},
+		},
+	}
+
+	newViewRecord := &protos.SavedMessage{
+		Content: &protos.SavedMessage_NewView{
+			NewView: &protos.ViewMetadata{
+				ViewId:         4,
+				LatestSequence: 5,
+			},
+		},
+	}
+
+	state := &bft.PersistedState{
+		InFlightProposal: &bft.InFlightData{},
+		Logger:           log,
+		WAL:              writeAheadLog,
+	}
+
+	// The pair of a proposal in flight has to survive on its own.
+	require.NoError(t, state.Save(proposedRecord, true))
+	require.NoError(t, state.Save(commitRecord, false))
+
+	// The sync confirmed the proposal with a quorum, so the in-flight data is
+	// stale, and the record of the new view becomes the truncation point.
+	state.InFlightProposal = &bft.InFlightData{}
+	require.NoError(t, state.Save(newViewRecord, true))
+
+	require.NoError(t, writeAheadLog.Close())
+
+	// Nothing before the new view is needed: recovery reads the last record alone.
+	writeAheadLog, err = wal.Open(log, testDir, options)
+	require.NoError(t, err)
+	entries, err := writeAheadLog.ReadAll()
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+	entry := &protos.SavedMessage{}
+	require.NoError(t, proto.Unmarshal(entries[0], entry))
+	require.NotNil(t, entry.GetNewView())
+	filesAfterFirstRestart := logFileCount(t, testDir)
+	require.NoError(t, writeAheadLog.Close())
+
+	// A second restart must not add files to the WAL.
+	writeAheadLog, err = wal.Open(log, testDir, options)
+	require.NoError(t, err)
+	require.NoError(t, writeAheadLog.Close())
+
+	require.LessOrEqual(t, logFileCount(t, testDir), filesAfterFirstRestart)
 }
