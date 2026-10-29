@@ -111,11 +111,13 @@ type Controller struct {
 	currViewNumber uint64
 
 	// viewTransitionLock serializes aborting a view with starting or stopping
-	// one. AbortView must not return while changeView is between aborting the
-	// old view and starting the new one: the abort would hit the already
-	// stopped old view and the new view would keep running. The lock also keeps
-	// the view number and the view consistent, since changeView sets them in
-	// separate steps.
+	// one. A view changer can hold it from AbortViewAndHold until
+	// ReleaseViewWrite, so no view appends a record while the view changer
+	// writes its own. AbortView must not return while changeView is between
+	// aborting the old view and starting the new one: the abort would hit the
+	// already stopped old view and the new view would keep running. The lock
+	// also keeps the view number and the view consistent, since changeView
+	// sets them in separate steps.
 	viewTransitionLock sync.Mutex
 
 	currDecisionsInViewLock sync.RWMutex
@@ -474,14 +476,48 @@ func (c *Controller) Sync() {
 // The view changer passes its stop channel, so that stopping the view changer
 // does not hang on a view that waits for a lock held by a reconfiguration.
 func (c *Controller) AbortView(view uint64, cancel <-chan struct{}) {
-	c.Logger.Debugf("AbortView, the current view num is %d", c.getCurrentViewNumber())
+	if !c.AbortViewAndHold(view, cancel) {
+		return
+	}
+
+	c.ReleaseViewWrite()
+}
+
+// AbortViewAndHold aborts the current view like AbortView and, on success,
+// keeps viewTransitionLock held, so no other view can be started or stopped
+// until ReleaseViewWrite. The sync path restarts views, so without the lock it
+// could restart the view between the abort and the record the view changer
+// writes next.
+//
+// The caller must call ReleaseViewWrite after writing the record that had to
+// follow the abort.
+func (c *Controller) AbortViewAndHold(view uint64, cancel <-chan struct{}) bool {
+	c.Logger.Debugf("AbortViewAndHold, the current view num is %d", c.getCurrentViewNumber())
 
 	c.Batcher.Close()
 
 	c.viewTransitionLock.Lock()
-	defer c.viewTransitionLock.Unlock()
 
-	c.abortView(view, cancel)
+	if c.stopped() {
+		c.viewTransitionLock.Unlock()
+
+		return false
+	}
+
+	if !c.abortView(view, cancel) {
+		c.viewTransitionLock.Unlock()
+
+		return false
+	}
+
+	return true
+}
+
+// ReleaseViewWrite lets the controller start or stop views again, once the view
+// changer has written the record that had to follow AbortViewAndHold. The
+// caller must have called AbortViewAndHold successfully.
+func (c *Controller) ReleaseViewWrite() {
+	c.viewTransitionLock.Unlock()
 }
 
 // ViewChanged makes the controller abort the current view and start a new one with the given numbers
