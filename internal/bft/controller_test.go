@@ -70,8 +70,8 @@ func TestControllerBasic(t *testing.T) {
 	controller.ProcessMessages(2, heartbeat)
 	controller.ViewChanged(2, 1)
 	controller.ViewChanged(3, 2)
-	controller.AbortView(3)
-	controller.AbortView(3)
+	controller.AbortView(3, nil)
+	controller.AbortView(3, nil)
 	controller.Stop()
 	controller.Stop()
 }
@@ -775,7 +775,7 @@ func TestSyncInform(t *testing.T) {
 	reqTimer.On("StopTimers")
 	reqTimer.On("RestartTimers")
 	controllerMock := &mocks.ViewController{}
-	controllerMock.On("AbortView", mock.Anything)
+	controllerMock.On("AbortView", mock.Anything, mock.Anything)
 
 	collector := bft.StateCollector{
 		SelfID:         0,
@@ -1651,6 +1651,10 @@ func (*fakeProposer) Propose(types.Proposal) {}
 func (*fakeProposer) Start() {}
 
 func (p *fakeProposer) Abort() {
+	p.AbortWithCancel(nil)
+}
+
+func (p *fakeProposer) AbortWithCancel(<-chan struct{}) {
 	p.abortOnce.Do(func() {
 		close(p.abortChan)
 	})

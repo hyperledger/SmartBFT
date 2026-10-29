@@ -1014,8 +1014,30 @@ func (v *View) stop() {
 
 // Abort forces the view to end
 func (v *View) Abort() {
+	v.AbortWithCancel(nil)
+}
+
+// AbortWithCancel forces the view to end like Abort, but stops waiting for the
+// view to finish when cancel is closed. The view is still aborted; the caller
+// only stops waiting for it. A nil cancel waits like Abort.
+func (v *View) AbortWithCancel(cancel <-chan struct{}) {
 	v.stop()
-	v.viewEnded.Wait()
+
+	if cancel == nil {
+		v.viewEnded.Wait()
+		return
+	}
+
+	ended := make(chan struct{})
+	go func() {
+		v.viewEnded.Wait()
+		close(ended)
+	}()
+
+	select {
+	case <-ended:
+	case <-cancel:
+	}
 }
 
 func (v *View) Stopped() bool {
