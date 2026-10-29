@@ -45,9 +45,20 @@ func (_m *ViewController) EXPECT() *ViewController_Expecter {
 }
 
 // AbortView provides a mock function for the type ViewController
-func (_mock *ViewController) AbortView(view uint64) {
-	_mock.Called(view)
-	return
+func (_mock *ViewController) AbortView(view uint64) bool {
+	ret := _mock.Called(view)
+
+	if len(ret) == 0 {
+		panic("no return value specified for AbortView")
+	}
+
+	var r0 bool
+	if returnFunc, ok := ret.Get(0).(func(uint64) bool); ok {
+		r0 = returnFunc(view)
+	} else {
+		r0 = ret.Get(0).(bool)
+	}
+	return r0
 }
 
 // ViewController_AbortView_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'AbortView'
@@ -74,12 +85,96 @@ func (_c *ViewController_AbortView_Call) Run(run func(view uint64)) *ViewControl
 	return _c
 }
 
-func (_c *ViewController_AbortView_Call) Return() *ViewController_AbortView_Call {
+func (_c *ViewController_AbortView_Call) Return(b bool) *ViewController_AbortView_Call {
+	_c.Call.Return(b)
+	return _c
+}
+
+func (_c *ViewController_AbortView_Call) RunAndReturn(run func(view uint64) bool) *ViewController_AbortView_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// AbortViewAndHold provides a mock function for the type ViewController
+func (_mock *ViewController) AbortViewAndHold(view uint64) bool {
+	ret := _mock.Called(view)
+
+	if len(ret) == 0 {
+		panic("no return value specified for AbortViewAndHold")
+	}
+
+	var r0 bool
+	if returnFunc, ok := ret.Get(0).(func(uint64) bool); ok {
+		r0 = returnFunc(view)
+	} else {
+		r0 = ret.Get(0).(bool)
+	}
+	return r0
+}
+
+// ViewController_AbortViewAndHold_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'AbortViewAndHold'
+type ViewController_AbortViewAndHold_Call struct {
+	*mock.Call
+}
+
+// AbortViewAndHold is a helper method to define mock.On call
+//   - view uint64
+func (_e *ViewController_Expecter) AbortViewAndHold(view any) *ViewController_AbortViewAndHold_Call {
+	return &ViewController_AbortViewAndHold_Call{Call: _e.mock.On("AbortViewAndHold", view)}
+}
+
+func (_c *ViewController_AbortViewAndHold_Call) Run(run func(view uint64)) *ViewController_AbortViewAndHold_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 uint64
+		if args[0] != nil {
+			arg0 = args[0].(uint64)
+		}
+		run(
+			arg0,
+		)
+	})
+	return _c
+}
+
+func (_c *ViewController_AbortViewAndHold_Call) Return(b bool) *ViewController_AbortViewAndHold_Call {
+	_c.Call.Return(b)
+	return _c
+}
+
+func (_c *ViewController_AbortViewAndHold_Call) RunAndReturn(run func(view uint64) bool) *ViewController_AbortViewAndHold_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// ReleaseViewWrite provides a mock function for the type ViewController
+func (_mock *ViewController) ReleaseViewWrite() {
+	_mock.Called()
+	return
+}
+
+// ViewController_ReleaseViewWrite_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'ReleaseViewWrite'
+type ViewController_ReleaseViewWrite_Call struct {
+	*mock.Call
+}
+
+// ReleaseViewWrite is a helper method to define mock.On call
+func (_e *ViewController_Expecter) ReleaseViewWrite() *ViewController_ReleaseViewWrite_Call {
+	return &ViewController_ReleaseViewWrite_Call{Call: _e.mock.On("ReleaseViewWrite")}
+}
+
+func (_c *ViewController_ReleaseViewWrite_Call) Run(run func()) *ViewController_ReleaseViewWrite_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run()
+	})
+	return _c
+}
+
+func (_c *ViewController_ReleaseViewWrite_Call) Return() *ViewController_ReleaseViewWrite_Call {
 	_c.Call.Return()
 	return _c
 }
 
-func (_c *ViewController_AbortView_Call) RunAndReturn(run func(view uint64)) *ViewController_AbortView_Call {
+func (_c *ViewController_ReleaseViewWrite_Call) RunAndReturn(run func()) *ViewController_ReleaseViewWrite_Call {
 	_c.Run(run)
 	return _c
 }
