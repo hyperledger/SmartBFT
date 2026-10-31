@@ -844,6 +844,7 @@ type possibleProposal struct {
 type proposalAndMetadata struct {
 	proposal *protos.Proposal
 	metadata *protos.ViewMetadata
+	prepared bool
 }
 
 // CheckInFlight checks if there is an in-flight proposal that needs to be decided on (because a node might decided on it already)
@@ -856,7 +857,7 @@ func CheckInFlight(messages map[uint64]*protos.ViewData, f int, quorum int, n ui
 	for _, vd := range messages {
 		if vd.GetInFlightProposal() == nil { // there is no in flight proposal here
 			noInFlightCount++
-			proposalsAndMetadata = append(proposalsAndMetadata, &proposalAndMetadata{nil, nil})
+			proposalsAndMetadata = append(proposalsAndMetadata, &proposalAndMetadata{nil, nil, false})
 			continue
 		}
 
@@ -869,7 +870,7 @@ func CheckInFlight(messages map[uint64]*protos.ViewData, f int, quorum int, n ui
 			return false, false, nil, fmt.Errorf("node was unable to unmarshal the in flight proposal metadata, error: %w", err)
 		}
 
-		proposalsAndMetadata = append(proposalsAndMetadata, &proposalAndMetadata{vd.GetInFlightProposal(), inFlightMetadata})
+		proposalsAndMetadata = append(proposalsAndMetadata, &proposalAndMetadata{vd.GetInFlightProposal(), inFlightMetadata, vd.GetInFlightPrepared()})
 
 		if inFlightMetadata.GetLatestSequence() != expectedSequence { // the in flight proposal sequence is not as expected
 			noInFlightCount++
@@ -913,7 +914,14 @@ func CheckInFlight(messages map[uint64]*protos.ViewData, f int, quorum int, n ui
 
 			if proto.Equal(prop.proposal, possible.proposal) {
 				possible.noArgument++
-				possible.preprepared++
+				// Only a node that actually prepared this proposal may back
+				// condition A2. A node that merely holds it in-flight has not
+				// committed to it, and counting it as prepared would let a
+				// view change decide an in-flight proposal that no quorum ever
+				// prepared.
+				if prop.prepared {
+					possible.preprepared++
+				}
 			}
 		}
 	}
