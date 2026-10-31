@@ -1890,6 +1890,11 @@ func TestCheckInFlightWithProposal(t *testing.T) {
 			proposal: expectedProposal,
 		},
 		{
+			// Only messages[3] declares InFlightPrepared. Nodes that merely hold the
+			// proposal in-flight have not committed to it, so they must not back
+			// condition A2: 1 prepared is below f+1, and the view change falls back
+			// to condition B instead of deciding an in-flight proposal that no quorum
+			// ever prepared.
 			description: "all with expected in flight proposal, only one is prepared, other with different in flight",
 			mutateMessages: func(messages []*protos.ViewData) {
 				for _, msg := range messages {
@@ -1899,6 +1904,19 @@ func TestCheckInFlightWithProposal(t *testing.T) {
 				different.Header = []byte{5}
 				messages[0].InFlightProposal = different
 				messages[3].InFlightPrepared = true
+			},
+			ok:       true,
+			no:       true,
+			proposal: nil,
+		},
+		{
+			description: "f+1 nodes prepared the expected in flight, the rest only hold it",
+			mutateMessages: func(messages []*protos.ViewData) {
+				for _, msg := range messages {
+					msg.InFlightProposal = expectedProposal
+				}
+				messages[1].InFlightPrepared = true
+				messages[2].InFlightPrepared = true
 			},
 			ok:       true,
 			no:       false,
