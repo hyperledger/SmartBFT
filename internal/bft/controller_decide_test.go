@@ -7,6 +7,7 @@ package bft
 
 import (
 	"testing"
+	"time"
 
 	"github.com/hyperledger/SmartBFT/pkg/types"
 	protos "github.com/hyperledger/SmartBFT/smartbftprotos"
@@ -46,6 +47,49 @@ func TestControllerDecideViewBookkeeping(t *testing.T) {
 		require.Equal(t, uint64(0), controller.getCurrentDecisionsInView())
 		require.Empty(t, controller.leaderToken)
 	})
+}
+
+// TestDecideDoesNotDropDecisionOnAbortedView covers the hand-off between the view
+// and the controller: a view that is being aborted must not stay blocked on a full
+// decision channel, but the committed decision must still reach the controller.
+func TestDecideDoesNotDropDecisionOnAbortedView(t *testing.T) {
+	view := &View{abortChan: make(chan struct{})}
+	controller := &Controller{
+		currView:     view,
+		decisionChan: make(chan decision, 1),
+		stopChan:     make(chan struct{}),
+	}
+	controller.decisionChan <- decision{proposal: types.Proposal{Payload: []byte("queued")}}
+
+	decided := make(chan struct{})
+	go func() {
+		controller.Decide(types.Proposal{Payload: []byte("committed")}, nil, nil)
+		close(decided)
+	}()
+
+	select {
+	case <-decided:
+		t.Fatal("Decide returned before the view was aborted")
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	view.stop()
+
+	select {
+	case <-decided:
+	case <-time.After(time.Second):
+		t.Fatal("Decide did not return after the view was aborted")
+	}
+
+	queued := <-controller.decisionChan
+	require.Equal(t, []byte("queued"), queued.proposal.Payload)
+
+	select {
+	case committed := <-controller.decisionChan:
+		require.Equal(t, []byte("committed"), committed.proposal.Payload)
+	case <-time.After(time.Second):
+		t.Fatal("the committed decision was dropped")
+	}
 }
 
 // newDecidingController returns a controller whose current view is the given view,

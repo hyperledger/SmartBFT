@@ -890,17 +890,25 @@ func (c *Controller) Decide(proposal types.Proposal, signatures []types.Signatur
 	c.currViewLock.RUnlock()
 
 	delivered := make(chan struct{})
-	select {
-	case c.decisionChan <- decision{
+	d := decision{
 		proposal:   proposal,
 		requests:   requests,
 		signatures: signatures,
 		view:       view,
 		delivered:  delivered,
-	}:
+	}
+	select {
+	case c.decisionChan <- d:
 	case <-c.stopChan:
 		// In case we are in the middle of shutting down,
 		// abort deciding.
+		return
+	case <-view.AbortChan():
+		// The controller loop is aborting this view and waits for it to stop. Do
+		// not block the view, or the abort and the decision would wait for each
+		// other, but do not drop the decision either: hand it to the controller
+		// in the background.
+		go c.enqueueDecision(d)
 		return
 	}
 
@@ -908,6 +916,19 @@ func (c *Controller) Decide(proposal types.Proposal, signatures []types.Signatur
 	case <-delivered: // wait for the delivery of the decision to the application
 	case <-c.stopChan: // If we stopped the controller, abort delivery
 	case <-view.AbortChan(): // If we stopped the view, abort delivery
+	}
+}
+
+// enqueueDecision hands a decision to the controller when the view that decided it is
+// already stopping. The decision was accepted by a quorum, so it must not be lost:
+// the controller delivers it once it is no longer busy. If the view changer has
+// already delivered the same proposal, MutuallyExclusiveDeliver skips delivering it
+// again by comparing the checkpoint sequence, so the application does not receive it
+// twice.
+func (c *Controller) enqueueDecision(d decision) {
+	select {
+	case c.decisionChan <- d:
+	case <-c.stopChan:
 	}
 }
 
