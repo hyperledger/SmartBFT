@@ -149,16 +149,16 @@ func TestSyncDecisionsInView(t *testing.T) {
 	})
 }
 
-// stateTransferResponder answers a state transfer request with the same view
-// and sequence from two nodes, which is enough for the collector quorum.
-type stateTransferResponder struct {
+// stateRespondingComm answers the state transfer request of sync() on behalf of
+// every other node with the view and sequence the cluster claims to be at.
+type stateRespondingComm struct {
 	stubComm
 	collector *StateCollector
 	view      uint64
 	seq       uint64
 }
 
-func (c *stateTransferResponder) SendConsensus(targetID uint64, m *protos.Message) {
+func (c *stateRespondingComm) SendConsensus(targetID uint64, m *protos.Message) {
 	if m.GetStateTransferRequest() == nil {
 		return
 	}
@@ -173,22 +173,49 @@ func (c *stateTransferResponder) SendConsensus(targetID uint64, m *protos.Messag
 	})
 }
 
-// TestSyncSavesNewViewWithoutTruncating checks the sync call site: the record
-// of the new view is saved with truncate=false in this change.
-func TestSyncSavesNewViewWithoutTruncating(t *testing.T) {
-	const (
-		controllerSeq  = uint64(10)
-		controllerView = uint64(3)
-	)
+// syncState records what sync() saves and when.
+type syncState struct {
+	*StateRecorder
+	proposer        *View
+	savedAfterAbort bool
+	beforeSave      func()
+}
 
-	log := zap.NewNop().Sugar()
+func (s *syncState) Save(msg *protos.SavedMessage, truncateTo bool) error {
+	if s.proposer != nil && !s.proposer.Stopped() {
+		s.savedAfterAbort = false
+	}
+
+	if s.beforeSave != nil {
+		s.beforeSave()
+	}
+
+	return s.StateRecorder.Save(msg, truncateTo)
+}
+
+// syncFixture is a Controller whose sync() runs all the way to saving a record
+// of the new view, together with the state the test can inspect.
+type syncFixture struct {
+	controller *Controller
+	state      *syncState
+}
+
+// newSyncFixture builds a controller that sits at controllerView and
+// controllerSeq, and whose synchronizer returns a confirmed decision at syncSeq
+// and syncView. The state transfer request is answered with a view one higher
+// than syncView and syncSeq+1 as its sequence, which is what makes sync() save a
+// record of the new view.
+func newSyncFixture(t *testing.T, controllerSeq, controllerView, syncSeq, syncView uint64) *syncFixture {
+	t.Helper()
+
+	log := newQuietLogger()
 
 	checkpoint := &types.Checkpoint{}
 	checkpoint.Set(types.Proposal{
 		Metadata: MarshalOrPanic(&protos.ViewMetadata{
 			LatestSequence:  controllerSeq,
 			ViewId:          controllerView,
-			DecisionsInView: 0,
+			DecisionsInView: 1,
 		}),
 	}, []types.Signature{{ID: 1}, {ID: 2}, {ID: 3}})
 
@@ -196,31 +223,37 @@ func TestSyncSavesNewViewWithoutTruncating(t *testing.T) {
 		SelfID:         1,
 		N:              4,
 		Logger:         log,
-		CollectTimeout: time.Second,
+		CollectTimeout: 5 * time.Second,
 	}
 	collector.Start()
-	defer collector.Stop()
+	t.Cleanup(collector.Stop)
 
-	state := &StateRecorder{}
-	c := &Controller{
+	state := &syncState{
+		StateRecorder:   &StateRecorder{},
+		savedAfterAbort: true,
+	}
+
+	controller := &Controller{
 		ID:        1,
 		N:         4,
-		Logger:    log,
 		NodesList: []uint64{1, 2, 3, 4},
-		Comm: &stateTransferResponder{
+		Logger:    log,
+		Comm: &stateRespondingComm{
 			collector: collector,
-			view:      controllerView + 1,
-			seq:       controllerSeq + 1,
+			view:      syncView + 1,
+			seq:       syncSeq + 1,
 		},
 		Synchronizer: &stubSynchronizer{response: types.SyncResponse{
 			Latest: types.Decision{
 				Proposal: types.Proposal{
 					Metadata: MarshalOrPanic(&protos.ViewMetadata{
-						LatestSequence: controllerSeq,
-						ViewId:         controllerView,
+						LatestSequence: syncSeq,
+						ViewId:         syncView,
 					}),
 				},
+				Signatures: []types.Signature{{ID: 1}, {ID: 2}, {ID: 3}},
 			},
+			Reconfig: types.ReconfigSync{InReplicatedDecisions: false},
 		}},
 		Checkpoint:          checkpoint,
 		Collector:           collector,
@@ -230,15 +263,94 @@ func TestSyncSavesNewViewWithoutTruncating(t *testing.T) {
 		currViewNumber:      controllerView,
 		currDecisionsInView: 1,
 	}
-	c.syncChan = make(chan struct{}, 1)
+	controller.syncChan = make(chan struct{}, 1)
 
-	viewNum, seq, decisions := c.sync()
+	return &syncFixture{controller: controller, state: state}
+}
 
-	require.Equal(t, controllerView+1, viewNum)
-	require.Equal(t, controllerSeq+1, seq)
-	require.Equal(t, uint64(0), decisions)
-	require.Len(t, state.SavedMessages, 1)
-	require.NotNil(t, state.SavedMessages[0].GetNewView())
-	require.Equal(t, []bool{false}, state.TruncateTo,
-		"a new view saved after sync must not truncate the WAL in this change")
+// TestSyncAbortsViewBeforeSavingNewView covers the write side of the record
+// ordering: once the record of the new view is written, the view that was
+// running when the sync started must not append anything after it.
+func TestSyncAbortsViewBeforeSavingNewView(t *testing.T) {
+	const (
+		controllerSeq  = uint64(10)
+		controllerView = uint64(5)
+		syncSeq        = uint64(12)
+		syncView       = uint64(6)
+	)
+
+	fixture := newSyncFixture(t, controllerSeq, controllerView, syncSeq, syncView)
+	proposer := &View{Number: controllerView, abortChan: make(chan struct{})}
+	fixture.controller.currView = proposer
+	fixture.state.proposer = proposer
+
+	fixture.controller.sync()
+
+	require.True(t, proposer.Stopped(), "the view was not aborted before the new view was saved")
+	require.True(t, fixture.state.savedAfterAbort, "the new view was saved before the view stopped")
+	require.Len(t, fixture.state.SavedMessages, 1)
+	require.NotNil(t, fixture.state.SavedMessages[0].GetNewView())
+	require.Equal(t, []bool{false}, fixture.state.TruncateTo)
+}
+
+// TestSyncHoldsViewTransitionLockUntilTheNewViewIsSaved covers the read side
+// of the record ordering: while sync() is between the abort and the new view
+// record, changeView must not start another view.
+func TestSyncHoldsViewTransitionLockUntilTheNewViewIsSaved(t *testing.T) {
+	const (
+		controllerSeq  = uint64(10)
+		controllerView = uint64(5)
+		syncSeq        = uint64(12)
+		syncView       = uint64(6)
+	)
+
+	fixture := newSyncFixture(t, controllerSeq, controllerView, syncSeq, syncView)
+	proposer := &View{Number: controllerView, abortChan: make(chan struct{})}
+	fixture.controller.currView = proposer
+	fixture.state.proposer = proposer
+
+	saveStarted := make(chan struct{})
+	saveRelease := make(chan struct{})
+	fixture.state.beforeSave = func() {
+		close(saveStarted)
+		<-saveRelease
+	}
+
+	synced := make(chan struct{})
+	go func() {
+		fixture.controller.sync()
+		close(synced)
+	}()
+
+	select {
+	case <-saveStarted:
+	case <-time.After(time.Second):
+		t.Fatal("sync did not reach the new view record")
+	}
+
+	changed := make(chan struct{})
+	go func() {
+		fixture.controller.changeView(0, 0, 0)
+		close(changed)
+	}()
+
+	select {
+	case <-changed:
+		t.Fatal("changeView returned while sync held the view transition lock")
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	close(saveRelease)
+
+	select {
+	case <-changed:
+	case <-time.After(time.Second):
+		t.Fatal("changeView did not continue after sync saved the new view")
+	}
+
+	select {
+	case <-synced:
+	case <-time.After(time.Second):
+		t.Fatal("sync did not finish")
+	}
 }

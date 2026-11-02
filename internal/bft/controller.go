@@ -457,6 +457,13 @@ func (c *Controller) abortView(view uint64, cancel <-chan struct{}) bool {
 	return true
 }
 
+// abortCurrentView stops the current view and waits for it to finish. The
+// caller must hold viewTransitionLock, which keeps the stop and the following
+// record write from being overtaken by a new view.
+func (c *Controller) abortCurrentView() {
+	c.abortView(c.getCurrentViewNumber(), nil)
+}
+
 // Sync initiates a synchronization
 func (c *Controller) Sync() {
 	if iAmLeader, _ := c.iAmTheLeader(); iAmLeader {
@@ -725,30 +732,50 @@ func (c *Controller) sync() (viewNum uint64, seq uint64, decisions uint64) {
 			// And the synchronizer did not return a new view
 			return 0, 0, 0
 		}
-	} else {
-		if response.View <= controllerViewNum && latestDecisionViewNum < controllerViewNum {
-			return 0, 0, 0 // no new view to report
-		}
-		if response.View > newViewNum && response.Seq == latestDecisionSeq+1 {
-			c.Logger.Infof("Node %d collected state with view %d and sequence %d", c.ID, response.View, response.Seq)
-			newViewToSave := &protos.SavedMessage{
-				Content: &protos.SavedMessage_NewView{
-					NewView: &protos.ViewMetadata{
-						ViewId:          response.View,
-						LatestSequence:  latestDecisionSeq,
-						DecisionsInView: 0,
-					},
-				},
-			}
-			if err := c.State.Save(newViewToSave, false); err != nil {
-				c.Logger.Panicf("Failed to save message to state, error: %v", err)
-			}
-			newViewNum = response.View
-			newDecisionsInView = 0
-		}
+	} else if response.View <= controllerViewNum && latestDecisionViewNum < controllerViewNum {
+		return 0, 0, 0 // no new view to report
 	}
 
-	if latestDecisionMetadata != nil {
+	saveNewView := response != nil && response.View > newViewNum && response.Seq == latestDecisionSeq+1
+	if saveNewView {
+		c.Logger.Infof("Node %d collected state with view %d and sequence %d", c.ID, response.View, response.Seq)
+
+		// The record of the new view replaces the state of the current view, so the
+		// view has to be stopped first, and no other view may start until the record
+		// is written. Otherwise a view could append a commit after that record and
+		// leave a sequence that recovery rejects.
+		c.viewTransitionLock.Lock()
+		c.abortCurrentView()
+
+		// The fate of the in-flight proposal has to be decided before the record of the
+		// new view is written: the checkpoint alone does not say the in-flight proposal is
+		// no longer needed, maybePruneInFlight does.
+		if latestDecisionMetadata != nil {
+			c.maybePruneInFlight(latestDecisionMetadata)
+		}
+
+		newViewToSave := &protos.SavedMessage{
+			Content: &protos.SavedMessage_NewView{
+				NewView: &protos.ViewMetadata{
+					ViewId:          response.View,
+					LatestSequence:  latestDecisionSeq,
+					DecisionsInView: 0,
+				},
+			},
+		}
+		// A sync new view record is not a truncation point: the in-flight
+		// proposal, if there is one, must stay recoverable.
+		if err := c.State.Save(newViewToSave, false); err != nil {
+			c.Logger.Panicf("Failed to save message to state, error: %v", err)
+		}
+		c.viewTransitionLock.Unlock()
+
+		newViewNum = response.View
+		newDecisionsInView = 0
+	} else if latestDecisionMetadata != nil {
+		// It has to be decided on every sync, not only when a new view record is saved,
+		// otherwise a stale proposal stays in flight and makes the node's view data
+		// invalid for the rest of the cluster.
 		c.maybePruneInFlight(latestDecisionMetadata)
 	}
 
