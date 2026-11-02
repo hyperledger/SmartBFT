@@ -37,8 +37,15 @@ func TestStateRestore(t *testing.T) {
 
 	preparedProof := newCommitRecord(200, 300)
 
+	savedViewChange := &protos.SavedMessage{
+		Content: &protos.SavedMessage_ViewChange{
+			ViewChange: &protos.ViewChange{NextView: 300},
+		},
+	}
+
 	for _, testCase := range []struct {
 		proposalSeqViewInitializedWith uint64
+		viewNumberInitializedWith      uint64
 		description                    string
 		WALContent                     [][]byte
 		expectedError                  string
@@ -106,6 +113,98 @@ func TestStateRestore(t *testing.T) {
 			},
 		},
 		{
+			description:                    "new view after prepared proposal",
+			expectedPhase:                  bft.COMMITTED,
+			expectedViewNumber:             301,
+			expectedProposalSeq:            200,
+			viewNumberInitializedWith:      301,
+			proposalSeqViewInitializedWith: 200,
+			WALContent: [][]byte{
+				bft.MarshalOrPanic(proposedRecord),
+				bft.MarshalOrPanic(preparedProof),
+				bft.MarshalOrPanic(newViewRecord(301, 199)),
+			},
+			expectedInFlightProposal: expectedInFlightProposal,
+			expectedInFlightPrepared: true,
+		},
+		{
+			description:                    "view change after prepared proposal",
+			expectedPhase:                  bft.COMMITTED,
+			expectedViewNumber:             300,
+			expectedProposalSeq:            200,
+			proposalSeqViewInitializedWith: 200,
+			WALContent: [][]byte{
+				bft.MarshalOrPanic(proposedRecord),
+				bft.MarshalOrPanic(preparedProof),
+				bft.MarshalOrPanic(savedViewChange),
+			},
+			expectedInFlightProposal: expectedInFlightProposal,
+			expectedInFlightPrepared: true,
+		},
+		{
+			description:                    "new view after proposed only",
+			expectedPhase:                  bft.COMMITTED,
+			expectedViewNumber:             301,
+			expectedProposalSeq:            200,
+			viewNumberInitializedWith:      301,
+			proposalSeqViewInitializedWith: 200,
+			WALContent: [][]byte{
+				bft.MarshalOrPanic(proposedRecord),
+				bft.MarshalOrPanic(newViewRecord(301, 199)),
+			},
+			expectedInFlightProposal: expectedInFlightProposal,
+			expectedInFlightPrepared: false,
+		},
+		{
+			description:                    "new view without in-flight proposal",
+			expectedPhase:                  bft.COMMITTED,
+			expectedViewNumber:             301,
+			expectedProposalSeq:            200,
+			viewNumberInitializedWith:      301,
+			proposalSeqViewInitializedWith: 200,
+			WALContent: [][]byte{
+				bft.MarshalOrPanic(newViewRecord(301, 199)),
+			},
+		},
+		{
+			description:                    "new view after already committed proposal",
+			expectedPhase:                  bft.COMMITTED,
+			expectedViewNumber:             301,
+			expectedProposalSeq:            201,
+			viewNumberInitializedWith:      301,
+			proposalSeqViewInitializedWith: 201,
+			WALContent: [][]byte{
+				bft.MarshalOrPanic(proposedRecord),
+				bft.MarshalOrPanic(preparedProof),
+				bft.MarshalOrPanic(newViewRecord(301, 200)),
+			},
+		},
+		{
+			description:                    "new view after proposal ahead of committed",
+			expectedPhase:                  bft.COMMITTED,
+			expectedProposalSeq:            199,
+			viewNumberInitializedWith:      301,
+			proposalSeqViewInitializedWith: 199,
+			WALContent: [][]byte{
+				bft.MarshalOrPanic(proposedRecord),
+				bft.MarshalOrPanic(preparedProof),
+				bft.MarshalOrPanic(newViewRecord(301, 198)),
+			},
+			expectedError: "last proposal sequence persisted into WAL is 200" +
+				" which is greater than last committed sequence is 199",
+		},
+		{
+			description:               "commit without pre-prepare before new view",
+			expectedPhase:             bft.COMMITTED,
+			expectedViewNumber:        301,
+			viewNumberInitializedWith: 301,
+			WALContent: [][]byte{
+				bft.MarshalOrPanic(preparedProof),
+				bft.MarshalOrPanic(newViewRecord(301, 199)),
+			},
+			expectedError: "commit record has no preceding pre-prepare",
+		},
+		{
 			description:   "WAL out of sync",
 			expectedPhase: bft.COMMITTED,
 			// Metadata holds sequence 198 but WAL has sequence 200
@@ -150,8 +249,12 @@ func TestStateRestore(t *testing.T) {
 
 			verifier := &mocks.VerifierMock{}
 			verifier.On("RequestsFromProposal", mock.Anything).Return(nil)
+			viewNumber := testCase.viewNumberInitializedWith
+			if viewNumber == 0 {
+				viewNumber = 300
+			}
 			view := &bft.View{
-				Number:           300,
+				Number:           viewNumber,
 				ProposalSequence: testCase.proposalSeqViewInitializedWith,
 				MetricsView:      api.NewMetricsView(&disabled.Provider{}),
 				Verifier:         verifier,
