@@ -61,6 +61,7 @@ type App struct {
 	secondClock     *time.Ticker
 	logger          *zap.SugaredLogger
 	metricsProvider metrics.Provider
+	walOptions      *wal.Options
 	lastRecord      lastRecord
 	verificationSeq atomic.Uint64
 	clientsToRevoke []string // clients whose requests become invalid once a reconfig is delivered
@@ -444,7 +445,27 @@ type AppRecord struct {
 	Metadata []byte
 }
 
-func newNode(id uint64, network *Network, testName string, testDir string, rotateLeader bool, decisionsPerLeader uint64) *App {
+// appOption configures a test application created by newNode.
+type appOption func(*App)
+
+// WithWalOptions sets the WAL options of the test application.
+func WithWalOptions(options *wal.Options) appOption {
+	return func(app *App) {
+		if options == nil {
+			return
+		}
+
+		app.walOptions.FileSizeBytes = options.FileSizeBytes
+		app.walOptions.BufferSizeBytes = options.BufferSizeBytes
+		if options.Metrics != nil {
+			app.walOptions.Metrics = options.Metrics
+		}
+	}
+}
+
+// newNode creates a test application. Options are applied before the WAL is
+// initialized, so WithWalOptions can change how the WAL rotates its files.
+func newNode(id uint64, network *Network, testName string, testDir string, rotateLeader bool, decisionsPerLeader uint64, options ...appOption) *App {
 	logConfig := zap.NewDevelopmentConfig()
 	logger, _ := logConfig.Build()
 	logger = logger.With(zap.String("t", testName)).With(zap.Int64("id", int64(id)))
@@ -462,6 +483,11 @@ func newNode(id uint64, network *Network, testName string, testDir string, rotat
 		metricsProvider: &disabled.Provider{},
 	}
 
+	app.walOptions = &wal.Options{Metrics: wal.NewMetrics(app.metricsProvider)}
+	for _, option := range options {
+		option(app)
+	}
+
 	config := fastConfig
 	config.SelfID = id
 	config.SyncOnStart = true
@@ -472,7 +498,7 @@ func newNode(id uint64, network *Network, testName string, testDir string, rotat
 		writeAheadLog, walInitialEntries, err := wal.InitializeAndReadAll(
 			app.logger,
 			filepath.Join(testDir, fmt.Sprintf("node%d", id)),
-			&wal.Options{Metrics: wal.NewMetrics(app.metricsProvider)},
+			app.walOptions,
 		)
 		if err != nil {
 			sugaredLogger.Panicf("Failed to initialize WAL: %s", err)

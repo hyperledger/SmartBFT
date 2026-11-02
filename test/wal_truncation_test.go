@@ -14,6 +14,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -275,4 +276,185 @@ func TestRestartKeepsViewAndInFlightProposal(t *testing.T) {
 
 	require.Equal(t, baseline, walLogFileCount(t, walDir),
 		"ten consecutive restarts must not grow the WAL")
+}
+
+// TestNodeWithoutPrePrepareDoesNotGrowWAL covers the live-node variant of the
+// WAL growth: the node never restarts, keeps receiving every consensus message
+// except pre-prepares, and still goes through view changes. On main, its
+// ViewChange and NewView records are not truncation points, so the WAL grows at
+// every file rotation.
+func TestNodeWithoutPrePrepareDoesNotGrowWAL(t *testing.T) {
+	t.Parallel()
+	network := NewNetwork()
+	defer network.Shutdown()
+
+	testDir := t.TempDir()
+
+	const numberOfNodes = 4
+
+	nodes := make([]*App, 0, numberOfNodes)
+	for i := 1; i <= numberOfNodes; i++ {
+		var options []appOption
+		if i == numberOfNodes {
+			// A tiny file makes every view-change record rotate the WAL, so the
+			// test does not have to write megabytes to observe the growth.
+			options = append(options, WithWalOptions(&wal.Options{FileSizeBytes: 32}))
+		}
+		nodes = append(nodes, newNode(uint64(i), network, t.Name(), testDir, false, 0, options...))
+	}
+
+	isolated := nodes[numberOfNodes-1]
+	isolated.LoseMessages(func(m *protos.Message) bool {
+		return m.GetPrePrepare() != nil
+	})
+
+	startedViews := make(chan uint64, 16)
+	processedProposal := make(chan struct{}, 1)
+	baseLogger := isolated.Consensus.Logger.(*zap.SugaredLogger).Desugar()
+	isolated.Consensus.Logger = baseLogger.WithOptions(zap.Hooks(func(entry zapcore.Entry) error {
+		if strings.Contains(entry.Message, "Processed proposal with seq") {
+			select {
+			case processedProposal <- struct{}{}:
+			default:
+			}
+		}
+		var view, sequence, decisions uint64
+		if _, err := fmt.Sscanf(entry.Message, "Starting view with number %d, sequence %d, and decisions %d", &view, &sequence, &decisions); err == nil {
+			select {
+			case startedViews <- view:
+			default:
+			}
+		}
+		return nil
+	})).Sugar()
+
+	startNodes(nodes, network)
+
+	// The cluster keeps deciding while node 4 is alive but cannot process a
+	// pre-prepare itself. Node 4 is allowed to be behind; it catches up via sync.
+	nodes[0].Submit(Request{ID: "1", ClientID: "alice"})
+	for _, n := range nodes[:numberOfNodes-1] {
+		<-n.Delivered
+	}
+
+	walDir := filepath.Join(testDir, fmt.Sprintf("node%d", isolated.ID))
+
+	// The first view change moves the WAL to its steady state: the truncating
+	// record keeps the file it was written to and the switch creates the next
+	// one. The baseline is taken after it. Complaining on every node makes the
+	// view change deterministic instead of waiting for the heartbeat timeout.
+	for _, n := range nodes {
+		n.Consensus.Complain(0, true)
+	}
+	waitForStartedView(t, startedViews, 1)
+	baseline := walLogFileCount(t, walDir)
+
+	// View 2 is led by node 3, so node 4 stays a follower and keeps losing
+	// pre-prepares. Its WAL must not add a file for this view change.
+	for _, n := range nodes {
+		n.Consensus.Complain(1, true)
+	}
+	waitForStartedView(t, startedViews, 2)
+
+	require.LessOrEqual(t, walLogFileCount(t, walDir), baseline,
+		"a live node that misses pre-prepares must not grow its WAL on view changes")
+
+	select {
+	case <-processedProposal:
+		t.Fatal("the isolated node accepted a pre-prepare")
+	default:
+	}
+
+	lastRecord := lastWalLogRecord(t, isolated.logger, walDir)
+	lastMessage := &protos.SavedMessage{}
+	require.NoError(t, proto.Unmarshal(lastRecord.GetData(), lastMessage))
+	require.NotNil(t, lastMessage.GetNewView(), "the node must have persisted the new view")
+}
+
+func waitForStartedView(t *testing.T, views <-chan uint64, target uint64) {
+	t.Helper()
+
+	timeout := time.After(30 * time.Second)
+	for {
+		select {
+		case view := <-views:
+			if view >= target {
+				return
+			}
+		case <-timeout:
+			t.Fatalf("timed out waiting for view %d", target)
+		}
+	}
+}
+
+// trackStartedViews reports the view numbers the given node starts.
+func trackStartedViews(node *App) <-chan uint64 {
+	startedViews := make(chan uint64, 16)
+	baseLogger := node.Consensus.Logger.(*zap.SugaredLogger).Desugar()
+	node.Consensus.Logger = baseLogger.WithOptions(zap.Hooks(func(entry zapcore.Entry) error {
+		var view, sequence, decisions uint64
+		if _, err := fmt.Sscanf(entry.Message, "Starting view with number %d, sequence %d, and decisions %d", &view, &sequence, &decisions); err == nil {
+			select {
+			case startedViews <- view:
+			default:
+			}
+		}
+		return nil
+	})).Sugar()
+
+	return startedViews
+}
+
+// TestDecidedProposalDoesNotBlockWALTruncation covers a node that decided a block
+// and then stopped receiving pre-prepares. The shared in-flight data still holds
+// the decided proposal, but that proposal is no longer in flight: getInFlight
+// already filters it out of the view data message. The truncation decision used to
+// look at the raw pointer, so every ViewChange and NewView record kept the WAL.
+func TestDecidedProposalDoesNotBlockWALTruncation(t *testing.T) {
+	network := NewNetwork()
+	defer network.Shutdown()
+
+	testDir := t.TempDir()
+
+	const numberOfNodes = 4
+
+	nodes := make([]*App, 0, numberOfNodes)
+	for i := 1; i <= numberOfNodes; i++ {
+		var options []appOption
+		if i == numberOfNodes {
+			// A tiny file makes each view-change record rotate the WAL, so the
+			// test observes the growth without writing megabytes.
+			options = append(options, WithWalOptions(&wal.Options{FileSizeBytes: 32}))
+		}
+		nodes = append(nodes, newNode(uint64(i), network, t.Name(), testDir, false, 0, options...))
+	}
+
+	isolated := nodes[numberOfNodes-1]
+	var dropPrePrepares atomic.Bool
+	isolated.LoseMessages(func(m *protos.Message) bool {
+		return dropPrePrepares.Load() && m.GetPrePrepare() != nil
+	})
+	startedViews := trackStartedViews(isolated)
+	startNodes(nodes, network)
+
+	// Let every node, including the isolated one, decide the first block.
+	nodes[0].Submit(Request{ID: "1", ClientID: "alice"})
+	for _, n := range nodes {
+		<-n.Delivered
+	}
+
+	walDir := filepath.Join(testDir, fmt.Sprintf("node%d", isolated.ID))
+	filesBefore := walLogFileCount(t, walDir)
+
+	dropPrePrepares.Store(true)
+
+	for view := range 8 {
+		for _, n := range nodes {
+			n.Consensus.Complain(uint64(view), true)
+		}
+		waitForStartedView(t, startedViews, uint64(view)+1)
+	}
+
+	require.LessOrEqual(t, walLogFileCount(t, walDir), filesBefore,
+		"a proposal that was already decided must not keep the WAL files from being deleted")
 }

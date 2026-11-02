@@ -740,10 +740,10 @@ func (c *Controller) sync() (viewNum uint64, seq uint64, decisions uint64) {
 	if saveNewView {
 		c.Logger.Infof("Node %d collected state with view %d and sequence %d", c.ID, response.View, response.Seq)
 
-		// The record of the new view replaces the state of the current view, so the
-		// view has to be stopped first, and no other view may start until the record
-		// is written. Otherwise a view could append a commit after that record and
-		// leave a sequence that recovery rejects.
+		// The record of the new view may truncate the WAL, so the current view has to be
+		// stopped first, and no other view may start until it is written. Otherwise a view
+		// could append a commit after that record and leave a commit without its
+		// pre-prepare in the WAL.
 		c.viewTransitionLock.Lock()
 		c.abortCurrentView()
 
@@ -763,9 +763,11 @@ func (c *Controller) sync() (viewNum uint64, seq uint64, decisions uint64) {
 				},
 			},
 		}
-		// A sync new view record is not a truncation point: the in-flight
-		// proposal, if there is one, must stay recoverable.
-		if err := c.State.Save(newViewToSave, false); err != nil {
+		// The truncation flag is passed explicitly, after the view was stopped and the
+		// in-flight proposal was pruned, so it cannot change between this decision and
+		// the append.
+		truncateTo := c.InFlight.InFlightProposal() == nil
+		if err := c.State.Save(newViewToSave, truncateTo); err != nil {
 			c.Logger.Panicf("Failed to save message to state, error: %v", err)
 		}
 		c.viewTransitionLock.Unlock()

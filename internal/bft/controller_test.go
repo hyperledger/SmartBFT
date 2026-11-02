@@ -1228,8 +1228,9 @@ func TestDeliverTwiceOnceFromSyncAndOnceFromViewData(t *testing.T) {
 		return m.GetProposedRecord() != nil
 	}), true).Return(nil)
 	state.On("Save", mock.MatchedBy(func(m *protos.SavedMessage) bool {
-		return m.GetProposedRecord() == nil
+		return m.GetCommit() != nil
 	}), false).Return(nil)
+	state.On("Save", mock.Anything, mock.Anything).Return(nil)
 
 	verifier := &mocks.VerifierMock{}
 	verifier.On("VerificationSequence").Return(uint64(1))

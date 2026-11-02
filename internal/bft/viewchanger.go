@@ -472,10 +472,10 @@ func (v *ViewChanger) processViewChangeMsg(restore bool) {
 				},
 			},
 		}
-		// A view change record is not a truncation point: the proposal in
-		// flight, if there is one, travels in the view data message and must
-		// stay recoverable.
-		if err := v.State.Save(msgToSave, false); err != nil {
+		// The flag is passed explicitly, after the view has stopped and no other
+		// view may write: the proposal in flight, if there is one, travels in the
+		// view data message and must stay recoverable.
+		if err := v.State.Save(msgToSave, !v.hasInFlightProposal()); err != nil {
 			v.Logger.Panicf("Failed to save message to state, error: %v", err)
 		}
 	}
@@ -496,6 +496,24 @@ func (v *ViewChanger) processViewChangeMsg(restore bool) {
 		v.Comm.SendConsensus(leader, msg)
 	}
 	v.Logger.Debugf("Node %d sent view data msg, with next view %d, to the new leader %d", v.SelfID, v.currView, leader)
+}
+
+// hasInFlightProposal tells whether the node still has a proposal that recovery needs.
+// A nil InFlight is possible in tests and in a hand-built view changer, so it is not
+// dereferenced blindly. A proposal at or before the last decision is not in flight.
+func (v *ViewChanger) hasInFlightProposal() bool {
+	if v.InFlight == nil {
+		return false
+	}
+
+	inFlight := v.InFlight.InFlightProposal()
+	if inFlight == nil {
+		return false
+	}
+
+	lastDecision, _ := v.Checkpoint.Get()
+
+	return v.getInFlightWithLog(lastDecision, inFlight, false) != nil
 }
 
 func (v *ViewChanger) prepareViewDataMsg() *protos.Message {
@@ -524,8 +542,17 @@ func (v *ViewChanger) prepareViewDataMsg() *protos.Message {
 }
 
 func (v *ViewChanger) getInFlight(lastDecision *protos.Proposal, inFlight *types.Proposal) *protos.Proposal {
+	return v.getInFlightWithLog(lastDecision, inFlight, true)
+}
+
+// getInFlightWithLog returns the in-flight proposal only when recovery still needs it.
+// The truncation decision calls it with log=false: it runs on every view record, and
+// the view data path calls it with log=true on every view change.
+func (v *ViewChanger) getInFlightWithLog(lastDecision *protos.Proposal, inFlight *types.Proposal, log bool) *protos.Proposal {
 	if inFlight == nil {
-		v.Logger.Debugf("Node %d's in flight proposal is not set", v.SelfID)
+		if log {
+			v.Logger.Debugf("Node %d's in flight proposal is not set", v.SelfID)
+		}
 		return nil
 	}
 	if inFlight.Metadata == nil {
@@ -553,13 +580,17 @@ func (v *ViewChanger) getInFlight(lastDecision *protos.Proposal, inFlight *types
 		v.Logger.Panicf("Node %d is unable to unmarshal its own last decision metadata from checkpoint, err: %v", v.SelfID, err)
 	}
 	if inFlightMetadata.GetLatestSequence() == lastDecisionMetadata.GetLatestSequence() {
-		v.Logger.Debugf("Node %d's in flight proposal and the last decision has the same sequence: %d", v.SelfID, inFlightMetadata.GetLatestSequence())
+		if log {
+			v.Logger.Debugf("Node %d's in flight proposal and the last decision has the same sequence: %d", v.SelfID, inFlightMetadata.GetLatestSequence())
+		}
 		return nil // this is not an actual in flight proposal
 	}
 	if inFlightMetadata.GetLatestSequence()+1 == lastDecisionMetadata.GetLatestSequence() && v.committedDuringViewChange != nil &&
 		v.committedDuringViewChange.GetLatestSequence() == lastDecisionMetadata.GetLatestSequence() {
-		v.Logger.Infof("Node %d's in flight proposal sequence is %d while already committed decision %d, "+
-			"but that is because it committed it during the view change", v.SelfID, inFlightMetadata.GetLatestSequence(), lastDecisionMetadata.GetLatestSequence())
+		if log {
+			v.Logger.Infof("Node %d's in flight proposal sequence is %d while already committed decision %d, "+
+				"but that is because it committed it during the view change", v.SelfID, inFlightMetadata.GetLatestSequence(), lastDecisionMetadata.GetLatestSequence())
+		}
 		return nil
 	}
 	return proposal
@@ -1235,16 +1266,15 @@ func (v *ViewChanger) processNewViewMsg(msg *protos.NewView) {
 		return
 	}
 
-	// The record of the new view replaces the state of the current view, so the view
-	// has to be stopped first. Otherwise it can still append a commit after that
-	// record and leave a sequence that recovery rejects. AbortViewAndHold waits for
-	// the view to stop, keeps the sync path from restarting it, and keeps other views
-	// from writing until ReleaseViewWrite below. If the controller has already moved
-	// to a newer view, this new view message is stale.
+	// The record of the new view may truncate the WAL, so the current view has to be stopped
+	// first. Otherwise it can still append a commit after that record and leave a commit
+	// without its pre-prepare in the WAL. AbortViewAndHold waits for the view to stop, keeps
+	// the sync path from restarting it, and keeps other views from writing until
+	// ReleaseViewWrite below. If the controller has already moved to a newer view, this new
+	// view message is stale.
 	if !v.Controller.AbortViewAndHold(v.currView, v.stopChan) {
 		return
 	}
-
 	mySequence, _ := v.extractCurrentSequence()
 
 	newViewToSave := &protos.SavedMessage{
@@ -1255,9 +1285,9 @@ func (v *ViewChanger) processNewViewMsg(msg *protos.NewView) {
 			},
 		},
 	}
-	// A new view record is not a truncation point: the in-flight proposal, if
-	// there is one, must stay recoverable.
-	if err = v.State.Save(newViewToSave, false); err != nil {
+	// The truncation flag is decided now, while no view may write: the record is a
+	// truncation point exactly when no proposal is left in flight for recovery.
+	if err = v.State.Save(newViewToSave, !v.hasInFlightProposal()); err != nil {
 		v.Logger.Panicf("Failed to save message to state, error: %v", err)
 	}
 	v.Controller.ReleaseViewWrite()
