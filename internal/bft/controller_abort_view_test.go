@@ -252,3 +252,55 @@ func TestAbortViewWaitsForAViewThatIsBeingStarted(t *testing.T) {
 
 	require.True(t, newView.Stopped(), "AbortView did not abort the view that changeView started")
 }
+
+func TestAbortViewAndHoldBlocksViewChangesUntilReleased(t *testing.T) {
+	view, endView := newAbortTestView(1)
+	defer endView()
+
+	controller := &Controller{
+		currView:       view,
+		currViewNumber: 1,
+		Batcher:        abortTestBatcher{},
+		Logger:         newQuietLogger(),
+	}
+
+	held := make(chan bool, 1)
+	go func() {
+		held <- controller.AbortViewAndHold(1, nil)
+	}()
+
+	select {
+	case <-view.AbortChan():
+	case <-time.After(time.Second):
+		require.Fail(t, "the view was not aborted")
+	}
+
+	endView()
+
+	select {
+	case ok := <-held:
+		require.True(t, ok)
+	case <-time.After(time.Second):
+		require.Fail(t, "AbortViewAndHold did not return after the view stopped")
+	}
+
+	changed := make(chan struct{})
+	go func() {
+		controller.changeView(0, 0, 0)
+		close(changed)
+	}()
+
+	select {
+	case <-changed:
+		t.Fatal("changeView returned while the view changer was writing its record")
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	controller.ReleaseViewWrite()
+
+	select {
+	case <-changed:
+	case <-time.After(time.Second):
+		t.Fatal("changeView did not continue after the view changer released the write")
+	}
+}
