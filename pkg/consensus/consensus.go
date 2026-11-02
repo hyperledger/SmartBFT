@@ -68,7 +68,14 @@ type Consensus struct {
 }
 
 func (c *Consensus) Complain(viewNum uint64, stopView bool) {
-	c.consensusLock.RLock()
+	// A reconfiguration holds the write lock while it replaces the view changer
+	// and waits for the views it stopped. Waiting for the read lock here would
+	// block the view that complains, and the reconfiguration would wait for
+	// that view forever. The complaint is irrelevant during a reconfiguration,
+	// because the view changer is replaced anyway.
+	if !c.consensusLock.TryRLock() {
+		return
+	}
 	defer c.consensusLock.RUnlock()
 	c.viewChanger.StartViewChange(viewNum, stopView)
 }

@@ -23,7 +23,10 @@ import (
 // ViewController controls the view
 type ViewController interface {
 	ViewChanged(newViewNumber uint64, newProposalSequence uint64)
-	AbortView(view uint64)
+	// AbortView aborts the given view and waits until it has stopped. It stops
+	// waiting when cancel is closed, so that stopping the view changer does not
+	// hang on a view that waits for a lock held by a reconfiguration.
+	AbortView(view uint64, cancel <-chan struct{})
 }
 
 // Pruner prunes revoked requests
@@ -416,7 +419,7 @@ func (v *ViewChanger) startViewChange(change *change) {
 	v.Comm.BroadcastConsensus(msg)
 	v.Logger.Debugf("Node %d started view change, last view is %d", v.SelfID, v.currView)
 	if change.stopView {
-		v.Controller.AbortView(v.currView) // abort the current view when joining view change
+		v.Controller.AbortView(v.currView, v.stopChan) // abort the current view when joining view change
 	}
 	v.startViewChangeTime = v.lastTick
 	v.checkTimeout = true
@@ -447,7 +450,7 @@ func (v *ViewChanger) processViewChangeMsg(restore bool) {
 			v.Logger.Panicf("Failed to save message to state, error: %v", err)
 		}
 	}
-	v.Controller.AbortView(v.currView) // before preparing the view data message abort the current view
+	v.Controller.AbortView(v.currView, v.stopChan) // before preparing the view data message abort the current view
 	v.currView = v.nextView
 	v.MetricsViewChange.CurrentView.Set(float64(v.currView))
 	v.viewChangeMsgs.clear(v.N)
@@ -1356,7 +1359,7 @@ func (v *ViewChanger) commitInFlightProposal(proposal *protos.Proposal) (success
 	inFlightView.beginPrePrepare = time.Now() // the latency of processing the in flight proposal is measured from here
 	inFlightView.Start()
 	defer func() {
-		inFlightView.Abort()
+		inFlightView.AbortWithCancel(v.stopChan)
 		v.inFlightViewLock.Lock()
 		if v.inFlightView == inFlightView {
 			v.inFlightView = nil

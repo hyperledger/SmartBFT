@@ -101,7 +101,7 @@ func TestStartViewChange(t *testing.T) {
 	require.NoError(t, err)
 	log := basicLog.Sugar()
 	controller := &mocks.ViewController{}
-	controller.On("AbortView", mock.Anything)
+	controller.On("AbortView", mock.Anything, mock.Anything)
 
 	vc := &bft.ViewChanger{
 		N:             4,
@@ -162,7 +162,7 @@ func TestViewChangeProcess(t *testing.T) {
 			reqTimer := &mocks.RequestsTimer{}
 			reqTimer.On("StopTimers")
 			controller := &mocks.ViewController{}
-			controller.On("AbortView", mock.Anything)
+			controller.On("AbortView", mock.Anything, mock.Anything)
 			state := &mocks.State{}
 			state.On("Save", mock.Anything, false).Return(nil)
 
@@ -427,7 +427,7 @@ func TestNormalProcess(t *testing.T) {
 		num = args.Get(1).(uint64)
 		seqNumChan <- num
 	}).Return(nil).Once()
-	controller.On("AbortView", mock.Anything)
+	controller.On("AbortView", mock.Anything, mock.Anything)
 	reqTimer := &mocks.RequestsTimer{}
 	reqTimer.On("StopTimers")
 	reqTimer.On("RestartTimers")
@@ -966,7 +966,7 @@ func TestResendViewChangeMessage(t *testing.T) {
 	require.NoError(t, err)
 	log := basicLog.Sugar()
 	controller := &mocks.ViewController{}
-	controller.On("AbortView", mock.Anything)
+	controller.On("AbortView", mock.Anything, mock.Anything)
 
 	vc := &bft.ViewChanger{
 		N:                 4,
@@ -1027,7 +1027,7 @@ func TestViewChangerTimeout(t *testing.T) {
 	})
 	controller := &mocks.ViewController{}
 	controllerWG := sync.WaitGroup{}
-	controller.On("AbortView", mock.Anything).Run(func(args mock.Arguments) {
+	controller.On("AbortView", mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
 		controllerWG.Done()
 	})
 
@@ -1085,7 +1085,7 @@ func TestBackOff(t *testing.T) {
 	})
 	controller := &mocks.ViewController{}
 	controllerWG := sync.WaitGroup{}
-	controller.On("AbortView", mock.Anything).Run(func(args mock.Arguments) {
+	controller.On("AbortView", mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
 		controllerWG.Done()
 	})
 
@@ -1158,7 +1158,7 @@ func TestCommitLastDecision(t *testing.T) {
 		num = args.Get(1).(uint64)
 		seqNumChan <- num
 	}).Return(nil).Once()
-	controller.On("AbortView", mock.Anything)
+	controller.On("AbortView", mock.Anything, mock.Anything)
 	reqTimer := &mocks.RequestsTimer{}
 	reqTimer.On("StopTimers")
 	reqTimer.On("RestartTimers")
@@ -1366,7 +1366,7 @@ func TestInFlightProposalInViewData(t *testing.T) {
 			reqTimer := &mocks.RequestsTimer{}
 			reqTimer.On("StopTimers")
 			controller := &mocks.ViewController{}
-			controller.On("AbortView", mock.Anything)
+			controller.On("AbortView", mock.Anything, mock.Anything)
 			checkpoint := types.Checkpoint{}
 			checkpoint.Set(lastDecision, lastDecisionSignatures)
 			state := &mocks.State{}
@@ -1586,7 +1586,7 @@ func TestInformViewChanger(t *testing.T) {
 	require.NoError(t, err)
 	log := basicLog.Sugar()
 	controller := &mocks.ViewController{}
-	controller.On("AbortView", mock.Anything)
+	controller.On("AbortView", mock.Anything, mock.Anything)
 
 	vc := &bft.ViewChanger{
 		N:             4,
@@ -1634,7 +1634,7 @@ func TestInformNewViewDoesNotBlock(t *testing.T) {
 	basicLog, err := zap.NewDevelopment()
 	require.NoError(t, err)
 	controller := &mocks.ViewController{}
-	controller.On("AbortView", mock.Anything)
+	controller.On("AbortView", mock.Anything, mock.Anything)
 
 	vc := &bft.ViewChanger{
 		N:             4,
@@ -1700,7 +1700,7 @@ func TestRestoreViewChange(t *testing.T) {
 	reqTimer := &mocks.RequestsTimer{}
 	reqTimer.On("StopTimers")
 	controller := &mocks.ViewController{}
-	controller.On("AbortView", mock.Anything)
+	controller.On("AbortView", mock.Anything, mock.Anything)
 
 	vc := &bft.ViewChanger{
 		SelfID:        0,
@@ -2014,7 +2014,7 @@ func TestCommitInFlight(t *testing.T) {
 		num = args.Get(1).(uint64)
 		seqNumChan <- num
 	}).Return(nil).Once()
-	controller.On("AbortView", mock.Anything)
+	controller.On("AbortView", mock.Anything, mock.Anything)
 	reqTimer := &mocks.RequestsTimer{}
 	reqTimer.On("StopTimers")
 	reqTimer.On("RestartTimers")
@@ -2220,7 +2220,7 @@ func TestInFlightViewMessageFromItselfWithWrongView(t *testing.T) {
 	verifier.On("RequestsFromProposal", mock.Anything).Return(nil)
 	controller := &mocks.ViewController{}
 	controller.On("ViewChanged", mock.Anything, mock.Anything).Return(nil).Maybe()
-	controller.On("AbortView", mock.Anything)
+	controller.On("AbortView", mock.Anything, mock.Anything)
 	reqTimer := &mocks.RequestsTimer{}
 	reqTimer.On("StopTimers")
 	reqTimer.On("RestartTimers")
@@ -2366,7 +2366,7 @@ func TestCommitWhileHavingInFlight(t *testing.T) {
 	verifier.On("RequestsFromProposal", mock.Anything).Return(nil)
 	controller := &mocks.ViewController{}
 	controller.On("ViewChanged", mock.Anything, mock.Anything)
-	controller.On("AbortView", mock.Anything)
+	controller.On("AbortView", mock.Anything, mock.Anything)
 	reqTimer := &mocks.RequestsTimer{}
 	reqTimer.On("StopTimers")
 	reqTimer.On("RestartTimers")
@@ -3112,7 +3112,7 @@ func TestViewChangerKeepsRunningAfterInFlightWaiterLeft(t *testing.T) {
 			verifier.On("RequestsFromProposal", mock.Anything).Return(nil)
 			controller := &mocks.ViewController{}
 			controller.On("ViewChanged", mock.Anything, mock.Anything).Maybe()
-			controller.On("AbortView", mock.Anything)
+			controller.On("AbortView", mock.Anything, mock.Anything)
 			reqTimer := &mocks.RequestsTimer{}
 			reqTimer.On("StopTimers")
 			reqTimer.On("RestartTimers")

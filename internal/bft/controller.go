@@ -61,6 +61,7 @@ type Proposer interface {
 	Propose(proposal types.Proposal)
 	Start()
 	Abort()
+	AbortWithCancel(cancel <-chan struct{})
 	Stopped() bool
 	AbortChan() <-chan struct{}
 	GetLeaderID() uint64
@@ -109,11 +110,18 @@ type Controller struct {
 	currViewLock   sync.RWMutex
 	currViewNumber uint64
 
+	// viewTransitionLock serializes aborting a view with starting or stopping
+	// one. AbortView must not return while changeView is between aborting the
+	// old view and starting the new one: the abort would hit the already
+	// stopped old view and the new view would keep running. The lock also keeps
+	// the view number and the view consistent, since changeView sets them in
+	// separate steps.
+	viewTransitionLock sync.Mutex
+
 	currDecisionsInViewLock sync.RWMutex
 	currDecisionsInView     uint64
 
-	viewChange    chan viewInfo
-	abortViewChan chan uint64
+	viewChange chan viewInfo
 
 	stopOnce sync.Once
 	stopChan chan struct{}
@@ -384,6 +392,9 @@ func (c *Controller) startView(proposalSequence uint64) {
 }
 
 func (c *Controller) changeView(newViewNumber uint64, newProposalSequence uint64, newDecisionsInView uint64) {
+	c.viewTransitionLock.Lock()
+	defer c.viewTransitionLock.Unlock()
+
 	latestView := c.getCurrentViewNumber()
 	if latestView > newViewNumber {
 		c.Logger.Debugf("Got view change to %d but already at %d", newViewNumber, latestView)
@@ -399,7 +410,7 @@ func (c *Controller) changeView(newViewNumber uint64, newProposalSequence uint64
 		return
 	}
 
-	if !c.abortView(latestView) {
+	if !c.abortView(latestView, nil) {
 		return
 	}
 
@@ -413,12 +424,23 @@ func (c *Controller) changeView(newViewNumber uint64, newProposalSequence uint64
 	}
 }
 
-func (c *Controller) abortView(view uint64) bool {
-	currView := c.getCurrentViewNumber()
-	c.Logger.Debugf("view for abort %d, current view %d", view, currView)
+// abortView stops the current view. The caller must hold viewTransitionLock.
+// If cancel is closed before the view stops, abortView stops waiting for it.
+func (c *Controller) abortView(view uint64, cancel <-chan struct{}) bool {
+	currViewNum := c.getCurrentViewNumber()
+	c.Logger.Debugf("view for abort %d, current view %d", view, currViewNum)
 
-	if view < currView {
-		c.Logger.Debugf("Was asked to abort view %d but the current view with number %d", view, currView)
+	if view < currViewNum {
+		c.Logger.Debugf("Was asked to abort view %d but the current view with number %d", view, currViewNum)
+		return false
+	}
+
+	c.currViewLock.RLock()
+	currView := c.currView
+	c.currViewLock.RUnlock()
+
+	if currView == nil {
+		c.Logger.Debugf("Was asked to abort view %d but no view was started", view)
 		return false
 	}
 
@@ -427,8 +449,8 @@ func (c *Controller) abortView(view uint64) bool {
 	c.relinquishLeaderToken()
 
 	// Kill current view
-	c.Logger.Debugf("Aborting current view with number %d", c.currViewNumber)
-	c.currView.Abort()
+	c.Logger.Debugf("Aborting current view with number %d", currViewNum)
+	currView.AbortWithCancel(cancel)
 
 	return true
 }
@@ -441,13 +463,25 @@ func (c *Controller) Sync() {
 	c.grabSyncToken()
 }
 
-// AbortView makes the controller abort the current view
-func (c *Controller) AbortView(view uint64) {
+// AbortView aborts the current view, unless the given view is older than it,
+// and waits until the view has stopped. Waiting is what makes it safe to
+// persist state that must not be overtaken by a record written by the view,
+// such as a new view record. It does not wait for the controller loop, which
+// may be busy with a long sync or an application delivery, but it does wait
+// for a changeView that already started.
+//
+// If cancel is closed before the view stops, AbortView stops waiting for it.
+// The view changer passes its stop channel, so that stopping the view changer
+// does not hang on a view that waits for a lock held by a reconfiguration.
+func (c *Controller) AbortView(view uint64, cancel <-chan struct{}) {
 	c.Logger.Debugf("AbortView, the current view num is %d", c.getCurrentViewNumber())
 
 	c.Batcher.Close()
 
-	c.abortViewChan <- view
+	c.viewTransitionLock.Lock()
+	defer c.viewTransitionLock.Unlock()
+
+	c.abortView(view, cancel)
 }
 
 // ViewChanged makes the controller abort the current view and start a new one with the given numbers
@@ -489,8 +523,6 @@ func (c *Controller) run() {
 		case newView := <-c.viewChange:
 			c.Logger.Debugf("get newView from viewChange")
 			c.changeView(newView.viewNumber, newView.proposalSeq, 0)
-		case view := <-c.abortViewChan:
-			c.abortView(view)
 		case <-c.stopChan:
 			return
 		case <-c.leaderToken:
@@ -802,7 +834,6 @@ func (c *Controller) Start(startViewNumber uint64, startProposalSequence uint64,
 	c.leaderToken = make(chan struct{}, 1)
 	c.decisionChan = make(chan decision, 1)
 	c.viewChange = make(chan viewInfo, 1)
-	c.abortViewChan = make(chan uint64, 1)
 
 	Q, F := computeQuorum(c.N)
 	c.Logger.Debugf("The number of nodes (N) is %d, F is %d, and the quorum size is %d", c.N, F, Q)

@@ -45,8 +45,8 @@ func (_m *ViewController) EXPECT() *ViewController_Expecter {
 }
 
 // AbortView provides a mock function for the type ViewController
-func (_mock *ViewController) AbortView(view uint64) {
-	_mock.Called(view)
+func (_mock *ViewController) AbortView(view uint64, cancel <-chan struct{}) {
+	_mock.Called(view, cancel)
 	return
 }
 
@@ -57,18 +57,24 @@ type ViewController_AbortView_Call struct {
 
 // AbortView is a helper method to define mock.On call
 //   - view uint64
-func (_e *ViewController_Expecter) AbortView(view any) *ViewController_AbortView_Call {
-	return &ViewController_AbortView_Call{Call: _e.mock.On("AbortView", view)}
+//   - cancel <-chan struct{}
+func (_e *ViewController_Expecter) AbortView(view any, cancel any) *ViewController_AbortView_Call {
+	return &ViewController_AbortView_Call{Call: _e.mock.On("AbortView", view, cancel)}
 }
 
-func (_c *ViewController_AbortView_Call) Run(run func(view uint64)) *ViewController_AbortView_Call {
+func (_c *ViewController_AbortView_Call) Run(run func(view uint64, cancel <-chan struct{})) *ViewController_AbortView_Call {
 	_c.Call.Run(func(args mock.Arguments) {
 		var arg0 uint64
 		if args[0] != nil {
 			arg0 = args[0].(uint64)
 		}
+		var arg1 <-chan struct{}
+		if args[1] != nil {
+			arg1 = args[1].(<-chan struct{})
+		}
 		run(
 			arg0,
+			arg1,
 		)
 	})
 	return _c
@@ -79,7 +85,7 @@ func (_c *ViewController_AbortView_Call) Return() *ViewController_AbortView_Call
 	return _c
 }
 
-func (_c *ViewController_AbortView_Call) RunAndReturn(run func(view uint64)) *ViewController_AbortView_Call {
+func (_c *ViewController_AbortView_Call) RunAndReturn(run func(view uint64, cancel <-chan struct{})) *ViewController_AbortView_Call {
 	_c.Run(run)
 	return _c
 }
