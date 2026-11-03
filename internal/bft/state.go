@@ -8,6 +8,7 @@ package bft
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/hyperledger/SmartBFT/pkg/api"
@@ -78,15 +79,62 @@ func (ps *PersistedState) LoadNewViewIfApplicable() (*types.ViewAndSeq, error) {
 		ps.Logger.Infof("Nothing to restore")
 		return nil, nil
 	}
-	lastEntry := entries[len(entries)-1]
-	lastPersistedMessage := &protos.SavedMessage{}
-	if err := proto.Unmarshal(lastEntry, lastPersistedMessage); err != nil {
-		ps.Logger.Errorf("Failed unmarshaling last entry from WAL: %v", err)
-		return nil, fmt.Errorf("failed unmarshaling last entry from WAL: %w", err)
+
+	// A proposal or a commit can be appended after the new view record, so the
+	// new view is not necessarily the last entry. Walk backwards to the latest
+	// view transition.
+	for i := range slices.Backward(entries) {
+		persistedMessage := &protos.SavedMessage{}
+		if err := proto.Unmarshal(entries[i], persistedMessage); err != nil {
+			ps.Logger.Errorf("Failed unmarshaling entry %d from WAL: %v", i, err)
+			return nil, fmt.Errorf("failed unmarshaling entry %d from WAL: %w", i, err)
+		}
+		if newViewMsg := persistedMessage.GetNewView(); newViewMsg != nil {
+			ps.Logger.Infof("found a newView record in WAL")
+			return &types.ViewAndSeq{View: newViewMsg.GetViewId(), Seq: newViewMsg.GetLatestSequence()}, nil
+		}
+		if persistedMessage.GetViewChange() != nil {
+			// A later view change supersedes any new view before it.
+			// LoadViewChangeIfApplicable sets the starting view in that case.
+			ps.Logger.Infof("found a viewChange record after the last newView record")
+			return nil, nil
+		}
 	}
-	if newViewMsg := lastPersistedMessage.GetNewView(); newViewMsg != nil {
-		ps.Logger.Infof("last entry in WAL is a newView record")
-		return &types.ViewAndSeq{View: newViewMsg.GetViewId(), Seq: newViewMsg.GetLatestSequence()}, nil
+	return nil, nil
+}
+
+// LoadLastProposalView returns the metadata of the latest proposal record.
+// The built-in WAL drops a NewView record when the next pre-prepare is saved
+// with truncateTo=true, so after a restart the proposal can be the only record
+// that defines the view. A later NewView or ViewChange record takes precedence
+// and makes this method return nil: LoadNewViewIfApplicable and
+// LoadViewChangeIfApplicable handle those records.
+func (ps *PersistedState) LoadLastProposalView() (*protos.ViewMetadata, error) {
+	for i := range slices.Backward(ps.Entries) {
+		persistedMessage := &protos.SavedMessage{}
+		if err := proto.Unmarshal(ps.Entries[i], persistedMessage); err != nil {
+			ps.Logger.Errorf("Failed unmarshaling entry %d from WAL: %v", i, err)
+			return nil, fmt.Errorf("failed unmarshaling entry %d from WAL: %w", i, err)
+		}
+		if persistedMessage.GetNewView() != nil || persistedMessage.GetViewChange() != nil {
+			return nil, nil
+		}
+		proposed := persistedMessage.GetProposedRecord()
+		if proposed == nil {
+			// A commit record always follows its proposal record, so keep
+			// walking backwards to find the proposal that carries the metadata.
+			continue
+		}
+		prePrepare := proposed.GetPrePrepare()
+		if prePrepare == nil {
+			return nil, errors.New("proposed record has no pre-prepare")
+		}
+
+		metadata := &protos.ViewMetadata{}
+		if err := proto.Unmarshal(prePrepare.GetProposal().GetMetadata(), metadata); err != nil {
+			return nil, fmt.Errorf("failed unmarshaling proposal metadata: %w", err)
+		}
+		return metadata, nil
 	}
 	return nil, nil
 }
