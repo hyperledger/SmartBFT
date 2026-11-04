@@ -139,15 +139,78 @@ func (ps *PersistedState) Restore(v *View) error {
 
 	if newViewMsg := lastPersistedMessage.GetNewView(); newViewMsg != nil {
 		ps.Logger.Infof("last entry in WAL is a newView record")
-		return nil
+		return ps.restoreInFlightBeforeViewRecord(v)
 	}
 
 	if viewChangeMsg := lastPersistedMessage.GetViewChange(); viewChangeMsg != nil {
 		ps.Logger.Infof("last entry in WAL is a viewChange message")
-		return nil
+		return ps.restoreInFlightBeforeViewRecord(v)
 	}
 
 	return fmt.Errorf("unrecognized record: %v", lastPersistedMessage)
+}
+
+// restoreInFlightBeforeViewRecord restores the proposal that a trailing NewView or
+// ViewChange record kept in the WAL because it was still needed for a view change.
+// Only the in-flight data is restored: the view record defines the current view, so
+// the view phase, number and sequence stay as they are.
+func (ps *PersistedState) restoreInFlightBeforeViewRecord(v *View) error {
+	for i := len(ps.Entries) - 2; i >= 0; i-- {
+		record := &protos.SavedMessage{}
+		if err := proto.Unmarshal(ps.Entries[i], record); err != nil {
+			return fmt.Errorf("failed unmarshaling record %d from WAL: %w", i, err)
+		}
+
+		if commitMsg := record.GetCommit(); commitMsg != nil {
+			if i == 0 {
+				return errors.New("commit record has no preceding pre-prepare")
+			}
+
+			prePrepareRecord := &protos.SavedMessage{}
+			if err := proto.Unmarshal(ps.Entries[i-1], prePrepareRecord); err != nil {
+				return fmt.Errorf("failed unmarshaling record %d from WAL: %w", i-1, err)
+			}
+
+			proposed := prePrepareRecord.GetProposedRecord()
+			if proposed == nil {
+				return fmt.Errorf("expected the record before the commit to be a pre-prepare, but got '%v' instead", prePrepareRecord)
+			}
+
+			return ps.restoreInFlightProposal(proposed, commitMsg, v)
+		}
+
+		if proposed := record.GetProposedRecord(); proposed != nil {
+			return ps.restoreInFlightProposal(proposed, nil, v)
+		}
+
+		// NewView and ViewChange records can sit between the proposal pair and the
+		// end of the WAL; keep looking for the pair they kept alive.
+	}
+
+	return nil
+}
+
+func (ps *PersistedState) restoreInFlightProposal(proposed *protos.ProposedRecord, commitMsg *protos.Message, v *View) error {
+	prePrepare := proposed.GetPrePrepare()
+	if prePrepare == nil {
+		return errors.New("proposed record has no pre-prepare")
+	}
+
+	seq := prePrepare.GetSeq()
+	if v.ProposalSequence < seq {
+		return fmt.Errorf("last proposal sequence persisted into WAL is %d which is greater than last committed sequence is %d", seq, v.ProposalSequence)
+	}
+	if v.ProposalSequence > seq {
+		ps.Logger.Infof("Last proposal with sequence %d has been safely committed", seq)
+		return nil
+	}
+
+	ps.storeProposal(proposed)
+	if commitMsg != nil {
+		ps.storePrepared(commitMsg)
+	}
+
+	return nil
 }
 
 func (ps *PersistedState) recoverProposed(lastPersistedMessage *protos.ProposedRecord, v *View) error {
