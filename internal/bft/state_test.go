@@ -79,6 +79,16 @@ func TestStateRestore(t *testing.T) {
 			expectedInFlightProposal: expectedInFlightProposal,
 		},
 		{
+			// A sync delivered the proposal after it was saved, and wrote nothing
+			// to the WAL, so the view starts after it.
+			description:                    "proposed and already committed",
+			expectedPhase:                  bft.COMMITTED,
+			expectedViewNumber:             300,
+			expectedProposalSeq:            201,
+			proposalSeqViewInitializedWith: 201,
+			WALContent:                     [][]byte{bft.MarshalOrPanic(proposedRecord)},
+		},
+		{
 			description:   "commit persisted but pre-prepare nowhere to be found",
 			expectedPhase: bft.PREPARED,
 			WALContent: [][]byte{

@@ -246,7 +246,9 @@ func TestRestartKeepsViewAndInFlightProposal(t *testing.T) {
 		}
 	})
 
-	isolated.Restart()
+	// Sync is off: a sync on start would deliver the proposal, and then it is
+	// no longer in flight.
+	isolated.RestartSync(false)
 
 	waitForSignal(t, restoredProposal, "the node to restore the proposal in flight")
 
