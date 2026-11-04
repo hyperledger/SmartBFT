@@ -214,6 +214,13 @@ func (ps *PersistedState) restoreInFlightProposal(proposed *protos.ProposedRecor
 }
 
 func (ps *PersistedState) recoverProposed(lastPersistedMessage *protos.ProposedRecord, v *View) error {
+	// A sync can deliver the proposal without writing to the WAL, so the record
+	// may be older than the sequence the view starts at.
+	if seq := lastPersistedMessage.GetPrePrepare().GetSeq(); v.ProposalSequence > seq {
+		ps.Logger.Infof("Last proposal with sequence %d has been safely committed", seq)
+		return nil
+	}
+
 	prop := lastPersistedMessage.GetPrePrepare().GetProposal()
 	v.inFlightProposal = &types.Proposal{
 		VerificationSequence: int64(prop.GetVerificationSequence()),
