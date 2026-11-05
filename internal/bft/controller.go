@@ -74,6 +74,10 @@ type ProposerBuilder interface {
 	NewProposer(leader, proposalSequence, viewNum, decisionsInView uint64, quorumSize int) (Proposer, Phase)
 }
 
+// ProtocolVersion is the version of the consensus protocol this node speaks.
+// Messages without a version come from nodes that predate versioning, and have version 0.
+const ProtocolVersion uint64 = 1
+
 // Controller controls the entire flow of the consensus
 type Controller struct {
 	api.Comm
@@ -318,6 +322,12 @@ func (c *Controller) OnHeartbeatTimeout(view uint64, leaderID uint64) {
 // ProcessMessages dispatches the incoming message to the required component
 func (c *Controller) ProcessMessages(sender uint64, m *protos.Message) {
 	c.Logger.Debugf("%d got message from %d: %s", c.ID, sender, MsgToString(m))
+	if m.GetVersion() > ProtocolVersion {
+		// a later version of the protocol is not compatible with this one, so its messages are not processed
+		c.Logger.Warnf("%d got message from %d of protocol version %d, but supports up to version %d, ignoring it; "+
+			"nodes of different protocol versions must not run in the same cluster", c.ID, sender, m.GetVersion(), ProtocolVersion)
+		return
+	}
 	switch m.GetContent().(type) {
 	case *protos.Message_PrePrepare, *protos.Message_Prepare, *protos.Message_Commit:
 		c.currViewLock.RLock()
@@ -1047,14 +1057,20 @@ type decision struct {
 	delivered  chan struct{} // closed once the decision was delivered to the application
 }
 
+// SendConsensus sends a consensus message to the given node, with this node's protocol version.
+func (c *Controller) SendConsensus(targetID uint64, m *protos.Message) {
+	c.Comm.SendConsensus(targetID, withProtocolVersion(m))
+}
+
 // BroadcastConsensus broadcasts the message and informs the heartbeat monitor if necessary
 func (c *Controller) BroadcastConsensus(m *protos.Message) {
+	versioned := withProtocolVersion(m) // once for all the nodes
 	for _, node := range c.NodesList {
 		// Do not send to yourself
 		if c.ID == node {
 			continue
 		}
-		c.SendConsensus(node, m)
+		c.Comm.SendConsensus(node, versioned)
 	}
 
 	if m.GetPrePrepare() != nil || m.GetPrepare() != nil || m.GetCommit() != nil {
@@ -1062,6 +1078,17 @@ func (c *Controller) BroadcastConsensus(m *protos.Message) {
 			c.LeaderMonitor.HeartbeatWasSent()
 		}
 	}
+}
+
+// withProtocolVersion returns the message with this node's protocol version.
+// The message may be shared, for example when it is resent, so it is copied rather than modified in place.
+func withProtocolVersion(m *protos.Message) *protos.Message {
+	if m.GetVersion() == ProtocolVersion {
+		return m
+	}
+	versioned := proto.Clone(m).(*protos.Message)
+	versioned.Version = ProtocolVersion
+	return versioned
 }
 
 type MutuallyExclusiveDeliver struct {
