@@ -2,6 +2,7 @@ package test
 
 import (
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -103,6 +104,74 @@ func TestPoolPrunedAfterReconfig(t *testing.T) {
 	newConfig := fastConfig
 	newConfig.RequestForwardTimeout = forwardTimeout
 	newConfig.RequestComplainTimeout = 2 * forwardTimeout
+
+	nodes[0].Submit(Request{
+		ClientID: "reconfig",
+		ID:       "10",
+		Reconfig: Reconfig{
+			InLatestDecision: true,
+			CurrentNodes:     nodesToInt(nodes[0].Node.Nodes()),
+			CurrentConfig:    recconfigToInt(types.Reconfig{CurrentConfig: newConfig}).CurrentConfig,
+		},
+	})
+
+	data := make([]*AppRecord, 0)
+	for i := range numberOfNodes {
+		d := <-nodes[i].Delivered
+		data = append(data, d)
+	}
+	for i := range numberOfNodes - 1 {
+		require.Equal(t, data[i], data[i+1])
+	}
+
+	require.Eventually(t, func() bool {
+		return follower.Consensus.Pool.Size() == 0
+	}, 10*time.Second, 100*time.Millisecond)
+
+	nodes[0].Submit(Request{ID: "11", ClientID: "alice"})
+	data = make([]*AppRecord, 0)
+	for i := range numberOfNodes {
+		d := <-nodes[i].Delivered
+		data = append(data, d)
+	}
+	for i := range numberOfNodes - 1 {
+		require.Equal(t, data[i], data[i+1])
+	}
+}
+
+func TestOversizedRequestPrunedAfterReconfig(t *testing.T) {
+	// A follower holds a request in its pool that is bigger than the RequestMaxBytes of a reconfig,
+	// so the request must be pruned from the pool after the reconfig. Otherwise, it never fits
+	// in a batch of the new configuration and blocks the requests behind it.
+
+	t.Parallel()
+	network := NewNetwork()
+	defer network.Shutdown()
+
+	testDir := t.TempDir()
+
+	// Long enough for the follower to never forward the request to the leader during the test
+	forwardTimeout := time.Minute
+
+	numberOfNodes := 4
+	nodes := make([]*App, 0)
+	for i := 1; i <= numberOfNodes; i++ {
+		n := newNode(uint64(i), network, t.Name(), testDir, false, 0)
+		n.Consensus.Config.RequestForwardTimeout = forwardTimeout
+		n.Consensus.Config.RequestComplainTimeout = 2 * forwardTimeout
+		nodes = append(nodes, n)
+	}
+	startNodes(nodes, network)
+
+	follower := nodes[1]
+	follower.Submit(Request{ID: strings.Repeat("1", 2048), ClientID: "bob"})
+	require.Equal(t, 1, follower.Consensus.Pool.Size())
+
+	newConfig := fastConfig
+	newConfig.RequestForwardTimeout = forwardTimeout
+	newConfig.RequestComplainTimeout = 2 * forwardTimeout
+	newConfig.RequestMaxBytes = 1024
+	newConfig.RequestBatchMaxBytes = 1024
 
 	nodes[0].Submit(Request{
 		ClientID: "reconfig",
