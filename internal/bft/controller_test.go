@@ -7,6 +7,7 @@ package bft_test
 
 import (
 	"errors"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -22,6 +23,7 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -1684,3 +1686,99 @@ func (*fakeProposer) GetMetadata() []byte {
 }
 
 func (*fakeProposer) HandleMessage(uint64, *protos.Message) {}
+
+// TestControllerMessageVersion makes sure that the controller sends messages with its protocol version,
+// and processes only messages of the versions it supports.
+func TestControllerMessageVersion(t *testing.T) {
+	basicLog, err := zap.NewDevelopment()
+	require.NoError(t, err)
+
+	t.Run("sent messages carry the protocol version", func(t *testing.T) {
+		var sent []*protos.Message
+		comm := &mocks.CommMock{}
+		comm.On("SendConsensus", mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
+			sent = append(sent, args.Get(1).(*protos.Message))
+		})
+		controller := &bft.Controller{
+			ID:        1,
+			N:         4,
+			NodesList: []uint64{1, 2, 3, 4},
+			Logger:    basicLog.Sugar(),
+			Comm:      comm,
+		}
+
+		msg := proto.Clone(heartbeat).(*protos.Message)
+		controller.SendConsensus(2, msg)
+		require.Len(t, sent, 1)
+		require.Equal(t, types.ProtocolVersion, sent[0].GetVersion())
+		require.Same(t, msg.GetHeartBeat(), sent[0].GetHeartBeat(), "the content was copied")
+		require.Zero(t, msg.GetVersion(), "the message passed in was modified")
+
+		sent = nil
+		controller.BroadcastConsensus(msg)
+		require.Len(t, sent, 3)
+		for _, m := range sent {
+			require.Equal(t, types.ProtocolVersion, m.GetVersion())
+			require.Same(t, sent[0], m, "a new message was made for each node")
+		}
+		require.Zero(t, msg.GetVersion(), "the message passed in was modified")
+
+		sent = nil
+		require.NotPanics(t, func() { controller.SendConsensus(2, nil) })
+		require.Len(t, sent, 1)
+	})
+
+	for _, test := range []struct {
+		description string
+		version     uint64
+		processed   bool
+	}{
+		{description: "a message without a version, from a node that predates versions", version: 0, processed: true},
+		{description: "a message of the current version", version: types.ProtocolVersion, processed: true},
+		{description: "a message of a later version", version: types.ProtocolVersion + 1, processed: false},
+	} {
+		t.Run(test.description, func(t *testing.T) {
+			leaderMon := &mocks.LeaderMonitor{}
+			leaderMon.On("ProcessMsg", mock.Anything, mock.Anything)
+			controller := &bft.Controller{
+				ID:            1,
+				Logger:        basicLog.Sugar(),
+				LeaderMonitor: leaderMon,
+			}
+
+			msg := proto.Clone(heartbeat).(*protos.Message)
+			msg.Version = test.version
+			controller.ProcessMessages(2, msg)
+
+			if test.processed {
+				leaderMon.AssertCalled(t, "ProcessMsg", uint64(2), msg)
+			} else {
+				leaderMon.AssertNotCalled(t, "ProcessMsg", mock.Anything, mock.Anything)
+			}
+		})
+	}
+
+	t.Run("a message of an unsupported version is warned about once per sender and version", func(t *testing.T) {
+		var warnings atomic.Int32
+		logger := basicLog.WithOptions(zap.Hooks(func(entry zapcore.Entry) error {
+			if entry.Level == zapcore.WarnLevel && strings.Contains(entry.Message, "of protocol version") {
+				warnings.Add(1)
+			}
+			return nil
+		})).Sugar()
+		controller := &bft.Controller{ID: 1, Logger: logger}
+
+		msg := proto.Clone(heartbeat).(*protos.Message)
+		msg.Version = types.ProtocolVersion + 1
+		for range 3 {
+			controller.ProcessMessages(2, msg)
+		}
+		require.Equal(t, int32(1), warnings.Load())
+
+		controller.ProcessMessages(3, msg) // another sender
+		msg = proto.Clone(msg).(*protos.Message)
+		msg.Version = types.ProtocolVersion + 2
+		controller.ProcessMessages(2, msg) // another version
+		require.Equal(t, int32(3), warnings.Load())
+	})
+}
