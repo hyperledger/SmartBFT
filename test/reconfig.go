@@ -60,7 +60,7 @@ func (r Reconfig) recconfigToUint(id uint64) types.Reconfig {
 			SpeedUpViewChange:             r.CurrentConfig.SpeedUpViewChange,
 			LeaderRotation:                r.CurrentConfig.LeaderRotation,
 			DecisionsPerLeader:            uint64(r.CurrentConfig.DecisionsPerLeader),
-			RequestMaxBytes:               uint64(r.CurrentConfig.RequestBatchMaxBytes),
+			RequestMaxBytes:               uint64(r.CurrentConfig.RequestMaxBytes),
 			RequestPoolSubmitTimeout:      r.CurrentConfig.RequestPoolSubmitTimeout,
 		},
 	}
@@ -89,7 +89,7 @@ func recconfigToInt(reconfig types.Reconfig) Reconfig {
 			SpeedUpViewChange:             reconfig.CurrentConfig.SpeedUpViewChange,
 			LeaderRotation:                reconfig.CurrentConfig.LeaderRotation,
 			DecisionsPerLeader:            int64(reconfig.CurrentConfig.DecisionsPerLeader),
-			RequestMaxBytes:               int64(reconfig.CurrentConfig.RequestBatchMaxBytes),
+			RequestMaxBytes:               int64(reconfig.CurrentConfig.RequestMaxBytes),
 			RequestPoolSubmitTimeout:      reconfig.CurrentConfig.RequestPoolSubmitTimeout,
 		},
 	}

@@ -171,7 +171,6 @@ func TestOversizedRequestPrunedAfterReconfig(t *testing.T) {
 	newConfig.RequestForwardTimeout = forwardTimeout
 	newConfig.RequestComplainTimeout = 2 * forwardTimeout
 	newConfig.RequestMaxBytes = 1024
-	newConfig.RequestBatchMaxBytes = 1024
 
 	nodes[0].Submit(Request{
 		ClientID: "reconfig",
