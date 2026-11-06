@@ -243,6 +243,9 @@ func (c *Consensus) reconfig(reconfig types.Reconfig) {
 	verificationSeq := c.Verifier.VerificationSequence()
 	c.Logger.Infof("Pruning the request pool after reconfig with verification sequence %d", verificationSeq)
 	c.Pool.Prune(func(req []byte) error {
+		if uint64(len(req)) > c.Config.RequestMaxBytes {
+			return fmt.Errorf("request (%d) is bigger than request max bytes (%d)", len(req), c.Config.RequestMaxBytes)
+		}
 		_, err := c.Verifier.VerifyRequest(req)
 		return err
 	})
