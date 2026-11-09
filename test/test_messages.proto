@@ -5,7 +5,7 @@
 
 syntax = "proto3";
 
-option go_package = "github.com/hyperledger-labs/SmartBFT/test";
+option go_package = "github.com/hyperledger/SmartBFT/test";
 
 package test;
 

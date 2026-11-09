@@ -8,68 +8,44 @@ package bft_test
 import (
 	"testing"
 
-	"github.com/hyperledger-labs/SmartBFT/internal/bft"
-	"github.com/hyperledger-labs/SmartBFT/pkg/api"
-	"github.com/hyperledger-labs/SmartBFT/pkg/metrics/disabled"
-	"github.com/hyperledger-labs/SmartBFT/pkg/types"
-	protos "github.com/hyperledger-labs/SmartBFT/smartbftprotos"
-	"github.com/stretchr/testify/assert"
+	"github.com/hyperledger/SmartBFT/internal/bft"
+	"github.com/hyperledger/SmartBFT/internal/bft/mocks"
+	"github.com/hyperledger/SmartBFT/pkg/api"
+	"github.com/hyperledger/SmartBFT/pkg/metrics/disabled"
+	"github.com/hyperledger/SmartBFT/pkg/types"
+	protos "github.com/hyperledger/SmartBFT/smartbftprotos"
+	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
+	"google.golang.org/protobuf/proto"
 )
 
 func TestStateRestore(t *testing.T) {
-	prePrepare := &protos.PrePrepare{
-		Proposal: &protos.Proposal{
-			Header:  []byte{1},
-			Payload: []byte{1},
-			Metadata: bft.MarshalOrPanic(&protos.ViewMetadata{
-				DecisionsInView: 0,
-				LatestSequence:  0,
-				ViewId:          1,
-			}),
-			VerificationSequence: 100,
-		},
-		Seq:  200,
-		View: 300,
-	}
+	proposedRecord := newProposalRecord(200, 300, &protos.ViewMetadata{
+		DecisionsInView: 0,
+		LatestSequence:  0,
+		ViewId:          1,
+	})
+	prePrepare := proposedRecord.GetProposedRecord().GetPrePrepare()
 
 	expectedInFlightProposal := &types.Proposal{
-		VerificationSequence: int64(prePrepare.Proposal.VerificationSequence),
-		Metadata:             prePrepare.Proposal.Metadata,
-		Payload:              prePrepare.Proposal.Payload,
-		Header:               prePrepare.Proposal.Header,
+		VerificationSequence: int64(prePrepare.GetProposal().GetVerificationSequence()),
+		Metadata:             prePrepare.GetProposal().GetMetadata(),
+		Payload:              prePrepare.GetProposal().GetPayload(),
+		Header:               prePrepare.GetProposal().GetHeader(),
 	}
 
-	proposedRecord := &protos.SavedMessage{
-		Content: &protos.SavedMessage_ProposedRecord{
-			ProposedRecord: &protos.ProposedRecord{
-				PrePrepare: prePrepare,
-				Prepare: &protos.Prepare{
-					Seq:  200,
-					View: 300,
-				},
-			},
-		},
-	}
+	preparedProof := newCommitRecord(200, 300)
 
-	preparedProof := &protos.SavedMessage{
-		Content: &protos.SavedMessage_Commit{
-			Commit: &protos.Message{
-				Content: &protos.Message_Commit{
-					Commit: &protos.Commit{
-						Seq:  200,
-						View: 300,
-						Signature: &protos.Signature{
-							Signer: 11,
-						},
-					},
-				},
-			},
+	savedViewChange := &protos.SavedMessage{
+		Content: &protos.SavedMessage_ViewChange{
+			ViewChange: &protos.ViewChange{NextView: 300},
 		},
 	}
 
 	for _, testCase := range []struct {
 		proposalSeqViewInitializedWith uint64
+		viewNumberInitializedWith      uint64
 		description                    string
 		WALContent                     [][]byte
 		expectedError                  string
@@ -101,6 +77,16 @@ func TestStateRestore(t *testing.T) {
 			expectedProposalSeq:      200,
 			WALContent:               [][]byte{bft.MarshalOrPanic(proposedRecord)},
 			expectedInFlightProposal: expectedInFlightProposal,
+		},
+		{
+			// A sync delivered the proposal after it was saved, and wrote nothing
+			// to the WAL, so the view starts after it.
+			description:                    "proposed and already committed",
+			expectedPhase:                  bft.COMMITTED,
+			expectedViewNumber:             300,
+			expectedProposalSeq:            201,
+			proposalSeqViewInitializedWith: 201,
+			WALContent:                     [][]byte{bft.MarshalOrPanic(proposedRecord)},
 		},
 		{
 			description:   "commit persisted but pre-prepare nowhere to be found",
@@ -137,6 +123,98 @@ func TestStateRestore(t *testing.T) {
 			},
 		},
 		{
+			description:                    "new view after prepared proposal",
+			expectedPhase:                  bft.COMMITTED,
+			expectedViewNumber:             301,
+			expectedProposalSeq:            200,
+			viewNumberInitializedWith:      301,
+			proposalSeqViewInitializedWith: 200,
+			WALContent: [][]byte{
+				bft.MarshalOrPanic(proposedRecord),
+				bft.MarshalOrPanic(preparedProof),
+				bft.MarshalOrPanic(newViewRecord(301, 199)),
+			},
+			expectedInFlightProposal: expectedInFlightProposal,
+			expectedInFlightPrepared: true,
+		},
+		{
+			description:                    "view change after prepared proposal",
+			expectedPhase:                  bft.COMMITTED,
+			expectedViewNumber:             300,
+			expectedProposalSeq:            200,
+			proposalSeqViewInitializedWith: 200,
+			WALContent: [][]byte{
+				bft.MarshalOrPanic(proposedRecord),
+				bft.MarshalOrPanic(preparedProof),
+				bft.MarshalOrPanic(savedViewChange),
+			},
+			expectedInFlightProposal: expectedInFlightProposal,
+			expectedInFlightPrepared: true,
+		},
+		{
+			description:                    "new view after proposed only",
+			expectedPhase:                  bft.COMMITTED,
+			expectedViewNumber:             301,
+			expectedProposalSeq:            200,
+			viewNumberInitializedWith:      301,
+			proposalSeqViewInitializedWith: 200,
+			WALContent: [][]byte{
+				bft.MarshalOrPanic(proposedRecord),
+				bft.MarshalOrPanic(newViewRecord(301, 199)),
+			},
+			expectedInFlightProposal: expectedInFlightProposal,
+			expectedInFlightPrepared: false,
+		},
+		{
+			description:                    "new view without in-flight proposal",
+			expectedPhase:                  bft.COMMITTED,
+			expectedViewNumber:             301,
+			expectedProposalSeq:            200,
+			viewNumberInitializedWith:      301,
+			proposalSeqViewInitializedWith: 200,
+			WALContent: [][]byte{
+				bft.MarshalOrPanic(newViewRecord(301, 199)),
+			},
+		},
+		{
+			description:                    "new view after already committed proposal",
+			expectedPhase:                  bft.COMMITTED,
+			expectedViewNumber:             301,
+			expectedProposalSeq:            201,
+			viewNumberInitializedWith:      301,
+			proposalSeqViewInitializedWith: 201,
+			WALContent: [][]byte{
+				bft.MarshalOrPanic(proposedRecord),
+				bft.MarshalOrPanic(preparedProof),
+				bft.MarshalOrPanic(newViewRecord(301, 200)),
+			},
+		},
+		{
+			description:                    "new view after proposal ahead of committed",
+			expectedPhase:                  bft.COMMITTED,
+			expectedProposalSeq:            199,
+			viewNumberInitializedWith:      301,
+			proposalSeqViewInitializedWith: 199,
+			WALContent: [][]byte{
+				bft.MarshalOrPanic(proposedRecord),
+				bft.MarshalOrPanic(preparedProof),
+				bft.MarshalOrPanic(newViewRecord(301, 198)),
+			},
+			expectedError: "last proposal sequence persisted into WAL is 200" +
+				" which is greater than last committed sequence is 199",
+		},
+		{
+			description:               "commit without pre-prepare before new view",
+			expectedPhase:             bft.COMMITTED,
+			expectedViewNumber:        301,
+			viewNumberInitializedWith: 301,
+			WALContent: [][]byte{
+				bft.MarshalOrPanic(preparedProof),
+				bft.MarshalOrPanic(newViewRecord(301, 199)),
+			},
+			expectedError: "commit record has no preceding pre-prepare",
+		},
+		{
 			description:   "WAL out of sync",
 			expectedPhase: bft.COMMITTED,
 			// Metadata holds sequence 198 but WAL has sequence 200
@@ -170,7 +248,7 @@ func TestStateRestore(t *testing.T) {
 	} {
 		t.Run(testCase.description, func(t *testing.T) {
 			basicLog, err := zap.NewDevelopment()
-			assert.NoError(t, err)
+			require.NoError(t, err)
 			log := basicLog.Sugar()
 
 			state := &bft.PersistedState{
@@ -179,24 +257,411 @@ func TestStateRestore(t *testing.T) {
 				InFlightProposal: &bft.InFlightData{},
 			}
 
+			verifier := &mocks.VerifierMock{}
+			verifier.On("RequestsFromProposal", mock.Anything).Return(nil)
+			viewNumber := testCase.viewNumberInitializedWith
+			if viewNumber == 0 {
+				viewNumber = 300
+			}
 			view := &bft.View{
-				Number:           300,
+				Number:           viewNumber,
 				ProposalSequence: testCase.proposalSeqViewInitializedWith,
 				MetricsView:      api.NewMetricsView(&disabled.Provider{}),
+				Verifier:         verifier,
 			}
 
 			err = state.Restore(view)
 
 			if testCase.expectedError == "" {
-				assert.NoError(t, err)
-				assert.Equal(t, testCase.expectedPhase, view.Phase)
-				assert.Equal(t, testCase.expectedViewNumber, view.Number)
-				assert.Equal(t, testCase.expectedProposalSeq, view.ProposalSequence)
-				assert.Equal(t, testCase.expectedInFlightProposal, state.InFlightProposal.InFlightProposal())
-				assert.Equal(t, testCase.expectedInFlightPrepared, state.InFlightProposal.IsInFlightPrepared())
+				require.NoError(t, err)
+				require.Equal(t, testCase.expectedPhase, view.Phase)
+				require.Equal(t, testCase.expectedViewNumber, view.Number)
+				require.Equal(t, testCase.expectedProposalSeq, view.ProposalSequence)
+				require.Equal(t, testCase.expectedInFlightProposal, state.InFlightProposal.InFlightProposal())
+				require.Equal(t, testCase.expectedInFlightPrepared, state.InFlightProposal.IsInFlightPrepared())
 			} else {
-				assert.Contains(t, err.Error(), testCase.expectedError)
+				require.Contains(t, err.Error(), testCase.expectedError)
 			}
 		})
 	}
+}
+
+func TestStateLoadIfApplicable(t *testing.T) {
+	newView := &protos.SavedMessage{
+		Content: &protos.SavedMessage_NewView{
+			NewView: &protos.ViewMetadata{
+				ViewId:         5,
+				LatestSequence: 10,
+			},
+		},
+	}
+
+	viewChange := &protos.ViewChange{
+		NextView: 6,
+		Reason:   "leader is unresponsive",
+	}
+	savedViewChange := &protos.SavedMessage{
+		Content: &protos.SavedMessage_ViewChange{
+			ViewChange: viewChange,
+		},
+	}
+
+	proposedRecord := &protos.SavedMessage{
+		Content: &protos.SavedMessage_ProposedRecord{
+			ProposedRecord: &protos.ProposedRecord{
+				PrePrepare: &protos.PrePrepare{Seq: 11, View: 5},
+			},
+		},
+	}
+
+	commitRecord := newCommitRecord(11, 5)
+
+	for _, testCase := range []struct {
+		description        string
+		WALContent         [][]byte
+		expectedError      string
+		expectedViewAndSeq *types.ViewAndSeq
+		expectedViewChange *protos.ViewChange
+	}{
+		{
+			description: "empty",
+		},
+		{
+			description:   "malformed record",
+			WALContent:    [][]byte{{1, 2, 3}},
+			expectedError: "failed unmarshaling",
+		},
+		{
+			description: "new view followed by a proposal",
+			WALContent:  [][]byte{bft.MarshalOrPanic(newView), bft.MarshalOrPanic(proposedRecord)},
+			// The proposal belongs to the new view, so the new view still
+			// defines the starting view.
+			expectedViewAndSeq: &types.ViewAndSeq{View: 5, Seq: 10},
+		},
+		{
+			description:        "new view followed by a commit",
+			WALContent:         [][]byte{bft.MarshalOrPanic(newView), bft.MarshalOrPanic(commitRecord)},
+			expectedViewAndSeq: &types.ViewAndSeq{View: 5, Seq: 10},
+		},
+		{
+			description:        "new view followed by a proposal and a view change",
+			WALContent:         [][]byte{bft.MarshalOrPanic(newView), bft.MarshalOrPanic(proposedRecord), bft.MarshalOrPanic(savedViewChange)},
+			expectedViewChange: viewChange,
+			// The later view change supersedes the new view.
+		},
+		{
+			description:        "last record is a new view",
+			WALContent:         [][]byte{bft.MarshalOrPanic(savedViewChange), bft.MarshalOrPanic(newView)},
+			expectedViewAndSeq: &types.ViewAndSeq{View: 5, Seq: 10},
+		},
+		{
+			description:        "last record is a view change",
+			WALContent:         [][]byte{bft.MarshalOrPanic(newView), bft.MarshalOrPanic(savedViewChange)},
+			expectedViewChange: viewChange,
+		},
+	} {
+		t.Run(testCase.description, func(t *testing.T) {
+			basicLog, err := zap.NewDevelopment()
+			require.NoError(t, err)
+
+			state := &bft.PersistedState{
+				Entries: testCase.WALContent,
+				Logger:  basicLog.Sugar(),
+			}
+
+			viewAndSeq, err := state.LoadNewViewIfApplicable()
+			if testCase.expectedError != "" {
+				require.ErrorContains(t, err, testCase.expectedError)
+			} else {
+				require.NoError(t, err)
+			}
+			require.Equal(t, testCase.expectedViewAndSeq, viewAndSeq)
+
+			vc, err := state.LoadViewChangeIfApplicable()
+			if testCase.expectedError != "" {
+				require.ErrorContains(t, err, testCase.expectedError)
+			} else {
+				require.NoError(t, err)
+			}
+			if testCase.expectedViewChange == nil {
+				require.Nil(t, vc)
+			} else {
+				require.True(t, proto.Equal(testCase.expectedViewChange, vc))
+			}
+		})
+	}
+}
+
+func TestLoadLastProposalView(t *testing.T) {
+	proposalMetadata := &protos.ViewMetadata{ViewId: 5, LatestSequence: 10, DecisionsInView: 3}
+	proposal := newProposalRecord(11, 5, proposalMetadata)
+	commit := newCommitRecord(11, 5)
+	newView := newViewRecord(6, 10)
+	viewChange := &protos.SavedMessage{
+		Content: &protos.SavedMessage_ViewChange{
+			ViewChange: &protos.ViewChange{NextView: 6},
+		},
+	}
+
+	for _, testCase := range []struct {
+		description      string
+		WALContent       [][]byte
+		expectedMetadata *protos.ViewMetadata
+		expectedError    string
+	}{
+		{
+			description: "empty",
+		},
+		{
+			description:      "last record is a proposal",
+			WALContent:       [][]byte{bft.MarshalOrPanic(proposal)},
+			expectedMetadata: proposalMetadata,
+		},
+		{
+			description:      "commit after its proposal",
+			WALContent:       [][]byte{bft.MarshalOrPanic(proposal), bft.MarshalOrPanic(commit)},
+			expectedMetadata: proposalMetadata,
+		},
+		{
+			description: "commit without a proposal",
+			WALContent:  [][]byte{bft.MarshalOrPanic(commit)},
+		},
+		{
+			description:      "new view followed by a proposal",
+			WALContent:       [][]byte{bft.MarshalOrPanic(newView), bft.MarshalOrPanic(proposal)},
+			expectedMetadata: proposalMetadata,
+		},
+		{
+			description: "proposal followed by a view change",
+			WALContent:  [][]byte{bft.MarshalOrPanic(proposal), bft.MarshalOrPanic(viewChange)},
+		},
+		{
+			description: "commit followed by a view change",
+			WALContent:  [][]byte{bft.MarshalOrPanic(proposal), bft.MarshalOrPanic(commit), bft.MarshalOrPanic(viewChange)},
+		},
+		{
+			description: "proposal followed by a new view",
+			WALContent:  [][]byte{bft.MarshalOrPanic(proposal), bft.MarshalOrPanic(newView)},
+		},
+		{
+			description:   "malformed record",
+			WALContent:    [][]byte{{1, 2, 3}},
+			expectedError: "failed unmarshaling",
+		},
+		{
+			description: "proposal without a pre-prepare",
+			WALContent: [][]byte{bft.MarshalOrPanic(&protos.SavedMessage{
+				Content: &protos.SavedMessage_ProposedRecord{
+					ProposedRecord: &protos.ProposedRecord{},
+				},
+			})},
+			expectedError: "proposed record has no pre-prepare",
+		},
+	} {
+		t.Run(testCase.description, func(t *testing.T) {
+			state := &bft.PersistedState{
+				Entries: testCase.WALContent,
+				Logger:  zap.NewNop().Sugar(),
+			}
+
+			metadata, err := state.LoadLastProposalView()
+			if testCase.expectedError != "" {
+				require.ErrorContains(t, err, testCase.expectedError)
+				return
+			}
+
+			require.NoError(t, err)
+			if testCase.expectedMetadata == nil {
+				require.Nil(t, metadata)
+				return
+			}
+			require.NotNil(t, metadata)
+			require.Equal(t, testCase.expectedMetadata.GetViewId(), metadata.GetViewId())
+			require.Equal(t, testCase.expectedMetadata.GetDecisionsInView(), metadata.GetDecisionsInView())
+		})
+	}
+}
+
+// When a proposal follows a NewView record, the new view record still defines
+// the starting view. Restore uses the proposal record to restore the in-flight
+// state and may change View.Number, so both must agree.
+func TestRestoreStartViewMatchesNewViewRecord(t *testing.T) {
+	basicLog, err := zap.NewDevelopment()
+	require.NoError(t, err)
+
+	entries := [][]byte{
+		bft.MarshalOrPanic(newViewRecord(301, 200)),
+		bft.MarshalOrPanic(newProposalRecord(201, 301, &protos.ViewMetadata{
+			ViewId:         301,
+			LatestSequence: 200,
+		})),
+	}
+
+	state := &bft.PersistedState{
+		Entries:          entries,
+		Logger:           basicLog.Sugar(),
+		InFlightProposal: &bft.InFlightData{},
+	}
+
+	viewAndSeq, err := state.LoadNewViewIfApplicable()
+	require.NoError(t, err)
+	require.NotNil(t, viewAndSeq)
+	require.Equal(t, uint64(301), viewAndSeq.View)
+	require.Equal(t, uint64(200), viewAndSeq.Seq)
+
+	verifier := &mocks.VerifierMock{}
+	verifier.On("RequestsFromProposal", mock.Anything).Return(nil)
+	view := &bft.View{
+		Number:           300,
+		ProposalSequence: 201,
+		MetricsView:      api.NewMetricsView(&disabled.Provider{}),
+		Verifier:         verifier,
+	}
+
+	require.NoError(t, state.Restore(view))
+	require.Equal(t, uint64(301), view.Number)
+	require.Equal(t, viewAndSeq.View, view.Number)
+}
+
+// recordingWAL stands in for the write ahead log at the api.WriteAheadLog seam
+// and keeps, in order, every appended record together with its truncation flag.
+type recordingWAL struct {
+	appended   [][]byte
+	truncateTo []bool
+}
+
+func (w *recordingWAL) Append(entry []byte, truncateTo bool) error {
+	w.appended = append(w.appended, entry)
+	w.truncateTo = append(w.truncateTo, truncateTo)
+
+	return nil
+}
+
+func newViewRecord(viewID, latestSequence uint64) *protos.SavedMessage {
+	return &protos.SavedMessage{
+		Content: &protos.SavedMessage_NewView{
+			NewView: &protos.ViewMetadata{
+				ViewId:         viewID,
+				LatestSequence: latestSequence,
+			},
+		},
+	}
+}
+
+func newProposalRecord(seq, view uint64, metadata *protos.ViewMetadata) *protos.SavedMessage {
+	return &protos.SavedMessage{
+		Content: &protos.SavedMessage_ProposedRecord{
+			ProposedRecord: &protos.ProposedRecord{
+				PrePrepare: &protos.PrePrepare{
+					Proposal: &protos.Proposal{
+						Header:               []byte{1},
+						Payload:              []byte{1},
+						Metadata:             bft.MarshalOrPanic(metadata),
+						VerificationSequence: 100,
+					},
+					Seq:  seq,
+					View: view,
+				},
+				Prepare: &protos.Prepare{
+					Seq:  seq,
+					View: view,
+				},
+			},
+		},
+	}
+}
+
+func newCommitRecord(seq, view uint64) *protos.SavedMessage {
+	return &protos.SavedMessage{
+		Content: &protos.SavedMessage_Commit{
+			Commit: &protos.Message{
+				Content: &protos.Message_Commit{
+					Commit: &protos.Commit{
+						Seq:  seq,
+						View: view,
+						Signature: &protos.Signature{
+							Signer: 11,
+						},
+					},
+				},
+			},
+		},
+	}
+}
+
+// The caller decides where the WAL may be truncated. Save must persist that
+// decision as given, together with the record.
+func TestSaveUsesTheGivenTruncationFlag(t *testing.T) {
+	for _, testCase := range []struct {
+		description   string
+		recordsToSave []*protos.SavedMessage
+		truncateTo    []bool
+	}{
+		{
+			description:   "a proposal begins the pair, so it is a truncation point",
+			recordsToSave: []*protos.SavedMessage{newProposalRecord(200, 300, &protos.ViewMetadata{ViewId: 1})},
+			truncateTo:    []bool{true},
+		},
+		{
+			description: "a commit right after the proposal keeps the pair",
+			recordsToSave: []*protos.SavedMessage{
+				newProposalRecord(200, 300, &protos.ViewMetadata{ViewId: 1}),
+				newCommitRecord(200, 300),
+			},
+			truncateTo: []bool{true, false},
+		},
+		{
+			description:   "a new view is saved with the flag given by the caller",
+			recordsToSave: []*protos.SavedMessage{newViewRecord(7, 4)},
+			truncateTo:    []bool{false},
+		},
+	} {
+		t.Run(testCase.description, func(t *testing.T) {
+			basicLog, err := zap.NewDevelopment()
+			require.NoError(t, err)
+
+			writeAheadLog := &recordingWAL{}
+			state := &bft.PersistedState{
+				InFlightProposal: &bft.InFlightData{},
+				Logger:           basicLog.Sugar(),
+				WAL:              writeAheadLog,
+			}
+
+			for i, record := range testCase.recordsToSave {
+				require.NoError(t, state.Save(record, testCase.truncateTo[i]))
+			}
+
+			require.Equal(t, testCase.truncateTo, writeAheadLog.truncateTo)
+
+			require.Len(t, writeAheadLog.appended, len(testCase.recordsToSave))
+			for i, record := range testCase.recordsToSave {
+				appended := &protos.SavedMessage{}
+				require.NoError(t, proto.Unmarshal(writeAheadLog.appended[i], appended))
+				require.True(t, proto.Equal(record, appended), "record %d was not appended as saved", i)
+			}
+		})
+	}
+}
+
+// A commit is never saved by the view with truncate=true: its pre-prepare has to
+// survive next to it. The flag is not read from the shared in-flight state, so it
+// cannot change while Save is running.
+func TestSaveCommitUsesTheGivenTruncationFlag(t *testing.T) {
+	basicLog, err := zap.NewDevelopment()
+	require.NoError(t, err)
+
+	inFlight := &bft.InFlightData{}
+	inFlight.StoreProposal(types.Proposal{VerificationSequence: 42})
+
+	writeAheadLog := &recordingWAL{}
+	state := &bft.PersistedState{
+		InFlightProposal: inFlight,
+		Logger:           basicLog.Sugar(),
+		WAL:              writeAheadLog,
+	}
+
+	require.NoError(t, state.Save(newCommitRecord(200, 300), false))
+
+	require.Equal(t, []bool{false}, writeAheadLog.truncateTo, "a commit must never be a truncation point")
+	require.True(t, inFlight.IsInFlightPrepared(), "saving a commit must not clear the proposal in flight")
 }

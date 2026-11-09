@@ -1,13 +1,13 @@
 package test
 
 import (
-	"fmt"
-	"os"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
-	"github.com/hyperledger-labs/SmartBFT/pkg/types"
-	"github.com/stretchr/testify/assert"
+	"github.com/hyperledger/SmartBFT/pkg/types"
+	"github.com/stretchr/testify/require"
 )
 
 func TestBasicReconfig(t *testing.T) {
@@ -15,9 +15,7 @@ func TestBasicReconfig(t *testing.T) {
 	network := NewNetwork()
 	defer network.Shutdown()
 
-	testDir, err := os.MkdirTemp("", t.Name())
-	assert.NoErrorf(t, err, "generate temporary test dir")
-	defer os.RemoveAll(testDir)
+	testDir := t.TempDir()
 
 	decisions := uint64(1)
 
@@ -36,8 +34,8 @@ func TestBasicReconfig(t *testing.T) {
 		d := <-nodes[i].Delivered
 		data = append(data, d)
 	}
-	for i := 0; i < numberOfNodes-1; i++ {
-		assert.Equal(t, data[i], data[i+1])
+	for i := range numberOfNodes - 1 {
+		require.Equal(t, data[i], data[i+1])
 	}
 
 	newConfig := fastConfig
@@ -60,8 +58,8 @@ func TestBasicReconfig(t *testing.T) {
 		d := <-nodes[i].Delivered
 		data = append(data, d)
 	}
-	for i := 0; i < numberOfNodes-1; i++ {
-		assert.Equal(t, data[i], data[i+1])
+	for i := range numberOfNodes - 1 {
+		require.Equal(t, data[i], data[i+1])
 	}
 
 	nodes[0].Submit(Request{ID: "11", ClientID: "alice"})
@@ -70,9 +68,218 @@ func TestBasicReconfig(t *testing.T) {
 		d := <-nodes[i].Delivered
 		data = append(data, d)
 	}
-	for i := 0; i < numberOfNodes-1; i++ {
-		assert.Equal(t, data[i], data[i+1])
+	for i := range numberOfNodes - 1 {
+		require.Equal(t, data[i], data[i+1])
 	}
+}
+
+func TestPoolPrunedAfterReconfig(t *testing.T) {
+	// A follower holds a request in its pool that becomes invalid once a reconfig is delivered,
+	// so the request must be pruned from the pool after the reconfig.
+
+	t.Parallel()
+	network := NewNetwork()
+	defer network.Shutdown()
+
+	testDir := t.TempDir()
+
+	// Long enough for the follower to never forward the request to the leader during the test
+	forwardTimeout := time.Minute
+
+	numberOfNodes := 4
+	nodes := make([]*App, 0)
+	for i := 1; i <= numberOfNodes; i++ {
+		n := newNode(uint64(i), network, t.Name(), testDir, false, 0)
+		n.Consensus.Config.RequestForwardTimeout = forwardTimeout
+		n.Consensus.Config.RequestComplainTimeout = 2 * forwardTimeout
+		n.clientsToRevoke = []string{"bob"}
+		nodes = append(nodes, n)
+	}
+	startNodes(nodes, network)
+
+	follower := nodes[1]
+	follower.Submit(Request{ID: "1", ClientID: "bob"})
+	require.Equal(t, 1, follower.Consensus.Pool.Size())
+
+	newConfig := fastConfig
+	newConfig.RequestForwardTimeout = forwardTimeout
+	newConfig.RequestComplainTimeout = 2 * forwardTimeout
+
+	nodes[0].Submit(Request{
+		ClientID: "reconfig",
+		ID:       "10",
+		Reconfig: Reconfig{
+			InLatestDecision: true,
+			CurrentNodes:     nodesToInt(nodes[0].Node.Nodes()),
+			CurrentConfig:    recconfigToInt(types.Reconfig{CurrentConfig: newConfig}).CurrentConfig,
+		},
+	})
+
+	data := make([]*AppRecord, 0)
+	for i := range numberOfNodes {
+		d := <-nodes[i].Delivered
+		data = append(data, d)
+	}
+	for i := range numberOfNodes - 1 {
+		require.Equal(t, data[i], data[i+1])
+	}
+
+	require.Eventually(t, func() bool {
+		return follower.Consensus.Pool.Size() == 0
+	}, 10*time.Second, 100*time.Millisecond)
+
+	nodes[0].Submit(Request{ID: "11", ClientID: "alice"})
+	data = make([]*AppRecord, 0)
+	for i := range numberOfNodes {
+		d := <-nodes[i].Delivered
+		data = append(data, d)
+	}
+	for i := range numberOfNodes - 1 {
+		require.Equal(t, data[i], data[i+1])
+	}
+}
+
+func TestOversizedRequestPrunedAfterReconfig(t *testing.T) {
+	// A follower holds a request in its pool that is bigger than the RequestMaxBytes of a reconfig,
+	// so the request must be pruned from the pool after the reconfig. Otherwise, it never fits
+	// in a batch of the new configuration and blocks the requests behind it.
+
+	t.Parallel()
+	network := NewNetwork()
+	defer network.Shutdown()
+
+	testDir := t.TempDir()
+
+	// Long enough for the follower to never forward the request to the leader during the test
+	forwardTimeout := time.Minute
+
+	numberOfNodes := 4
+	nodes := make([]*App, 0)
+	for i := 1; i <= numberOfNodes; i++ {
+		n := newNode(uint64(i), network, t.Name(), testDir, false, 0)
+		n.Consensus.Config.RequestForwardTimeout = forwardTimeout
+		n.Consensus.Config.RequestComplainTimeout = 2 * forwardTimeout
+		nodes = append(nodes, n)
+	}
+	startNodes(nodes, network)
+
+	follower := nodes[1]
+	follower.Submit(Request{ID: strings.Repeat("1", 2048), ClientID: "bob"})
+	require.Equal(t, 1, follower.Consensus.Pool.Size())
+
+	newConfig := fastConfig
+	newConfig.RequestForwardTimeout = forwardTimeout
+	newConfig.RequestComplainTimeout = 2 * forwardTimeout
+	newConfig.RequestMaxBytes = 1024
+
+	nodes[0].Submit(Request{
+		ClientID: "reconfig",
+		ID:       "10",
+		Reconfig: Reconfig{
+			InLatestDecision: true,
+			CurrentNodes:     nodesToInt(nodes[0].Node.Nodes()),
+			CurrentConfig:    recconfigToInt(types.Reconfig{CurrentConfig: newConfig}).CurrentConfig,
+		},
+	})
+
+	data := make([]*AppRecord, 0)
+	for i := range numberOfNodes {
+		d := <-nodes[i].Delivered
+		data = append(data, d)
+	}
+	for i := range numberOfNodes - 1 {
+		require.Equal(t, data[i], data[i+1])
+	}
+
+	require.Eventually(t, func() bool {
+		return follower.Consensus.Pool.Size() == 0
+	}, 10*time.Second, 100*time.Millisecond)
+
+	nodes[0].Submit(Request{ID: "11", ClientID: "alice"})
+	data = make([]*AppRecord, 0)
+	for i := range numberOfNodes {
+		d := <-nodes[i].Delivered
+		data = append(data, d)
+	}
+	for i := range numberOfNodes - 1 {
+		require.Equal(t, data[i], data[i+1])
+	}
+}
+
+func TestPoolPrunedAfterAsyncReconfig(t *testing.T) {
+	// The follower installs the new config while the request pool is pruned during reconfig,
+	// so that prune still sees the old config and keeps a request that becomes invalid.
+	// The request must then be pruned on the next decision.
+
+	t.Parallel()
+	network := NewNetwork()
+	defer network.Shutdown()
+
+	testDir := t.TempDir()
+
+	// Long enough for the follower to never forward the request to the leader during the test
+	forwardTimeout := time.Minute
+
+	numberOfNodes := 4
+	nodes := make([]*App, 0)
+	for i := 1; i <= numberOfNodes; i++ {
+		n := newNode(uint64(i), network, t.Name(), testDir, false, 0)
+		n.Consensus.Config.RequestForwardTimeout = forwardTimeout
+		n.Consensus.Config.RequestComplainTimeout = 2 * forwardTimeout
+		n.clientsToRevoke = []string{"bob"}
+		nodes = append(nodes, n)
+	}
+
+	follower := nodes[1]
+	follower.revokeDuringPrune = true
+
+	startNodes(nodes, network)
+
+	follower.Submit(Request{ID: "1", ClientID: "bob"})
+	require.Equal(t, 1, follower.Consensus.Pool.Size())
+
+	newConfig := fastConfig
+	newConfig.RequestForwardTimeout = forwardTimeout
+	newConfig.RequestComplainTimeout = 2 * forwardTimeout
+
+	nodes[0].Submit(Request{
+		ClientID: "reconfig",
+		ID:       "10",
+		Reconfig: Reconfig{
+			InLatestDecision: true,
+			CurrentNodes:     nodesToInt(nodes[0].Node.Nodes()),
+			CurrentConfig:    recconfigToInt(types.Reconfig{CurrentConfig: newConfig}).CurrentConfig,
+		},
+	})
+
+	data := make([]*AppRecord, 0)
+	for i := range numberOfNodes {
+		d := <-nodes[i].Delivered
+		data = append(data, d)
+	}
+	for i := range numberOfNodes - 1 {
+		require.Equal(t, data[i], data[i+1])
+	}
+
+	// The prune during reconfig installed the new config but kept the request
+	require.Eventually(t, func() bool {
+		return follower.VerificationSequence() == 1
+	}, 10*time.Second, 100*time.Millisecond)
+	require.Equal(t, 1, follower.Consensus.Pool.Size())
+
+	nodes[0].Submit(Request{ID: "11", ClientID: "alice"})
+	data = make([]*AppRecord, 0)
+	for i := range numberOfNodes {
+		d := <-nodes[i].Delivered
+		data = append(data, d)
+	}
+	for i := range numberOfNodes - 1 {
+		require.Equal(t, data[i], data[i+1])
+	}
+
+	require.Eventually(t, func() bool {
+		return follower.Consensus.Pool.Size() == 0
+	}, 10*time.Second, 100*time.Millisecond)
 }
 
 func TestBasicAddNodes(t *testing.T) {
@@ -80,9 +287,7 @@ func TestBasicAddNodes(t *testing.T) {
 	network := NewNetwork()
 	defer network.Shutdown()
 
-	testDir, err := os.MkdirTemp("", t.Name())
-	assert.NoErrorf(t, err, "generate temporary test dir")
-	defer os.RemoveAll(testDir)
+	testDir := t.TempDir()
 
 	decisions := uint64(1)
 
@@ -97,12 +302,12 @@ func TestBasicAddNodes(t *testing.T) {
 	nodes[0].Submit(Request{ID: "1", ClientID: "alice"})
 
 	data1 := make([]*AppRecord, 0)
-	for i := 0; i < numberOfNodes; i++ {
+	for i := range numberOfNodes {
 		d := <-nodes[i].Delivered
 		data1 = append(data1, d)
 	}
-	for i := 0; i < numberOfNodes-1; i++ {
-		assert.Equal(t, data1[i], data1[i+1])
+	for i := range numberOfNodes - 1 {
+		require.Equal(t, data1[i], data1[i+1])
 	}
 
 	newNode1 := newNode(5, network, t.Name(), testDir, true, decisions)
@@ -123,12 +328,12 @@ func TestBasicAddNodes(t *testing.T) {
 	})
 
 	data2 := make([]*AppRecord, 0)
-	for i := 0; i < numberOfNodes; i++ {
+	for i := range numberOfNodes {
 		d := <-nodes[i].Delivered
 		data2 = append(data2, d)
 	}
-	for i := 0; i < numberOfNodes-1; i++ {
-		assert.Equal(t, data2[i], data2[i+1])
+	for i := range numberOfNodes - 1 {
+		require.Equal(t, data2[i], data2[i+1])
 	}
 
 	nodes = append(nodes, newNode1, newNode2)
@@ -136,22 +341,22 @@ func TestBasicAddNodes(t *testing.T) {
 
 	d1 := <-nodes[4].Delivered
 	d2 := <-nodes[5].Delivered
-	assert.Equal(t, data1[0], d1)
-	assert.Equal(t, data1[0], d2)
+	require.Equal(t, data1[0], d1)
+	require.Equal(t, data1[0], d2)
 	d1 = <-nodes[4].Delivered
 	d2 = <-nodes[5].Delivered
-	assert.Equal(t, data2[0], d1)
-	assert.Equal(t, data2[0], d2)
+	require.Equal(t, data2[0], d1)
+	require.Equal(t, data2[0], d2)
 
 	nodes[0].Submit(Request{ID: "11", ClientID: "alice"})
 	numberOfNodes = 6
 	data := make([]*AppRecord, 0)
-	for i := 0; i < numberOfNodes; i++ {
+	for i := range numberOfNodes {
 		d := <-nodes[i].Delivered
 		data = append(data, d)
 	}
-	for i := 0; i < numberOfNodes-1; i++ {
-		assert.Equal(t, data[i], data[i+1])
+	for i := range numberOfNodes - 1 {
+		require.Equal(t, data[i], data[i+1])
 	}
 }
 
@@ -164,9 +369,7 @@ func TestBasicRemoveNodes(t *testing.T) {
 	network := NewNetwork()
 	defer network.Shutdown()
 
-	testDir, err := os.MkdirTemp("", t.Name())
-	assert.NoErrorf(t, err, "generate temporary test dir")
-	defer os.RemoveAll(testDir)
+	testDir := t.TempDir()
 
 	decisions := uint64(1)
 
@@ -181,12 +384,12 @@ func TestBasicRemoveNodes(t *testing.T) {
 	nodes[0].Submit(Request{ID: "1", ClientID: "alice"})
 
 	data := make([]*AppRecord, 0)
-	for i := 0; i < numberOfNodes; i++ {
+	for i := range numberOfNodes {
 		d := <-nodes[i].Delivered
 		data = append(data, d)
 	}
-	for i := 0; i < numberOfNodes-1; i++ {
-		assert.Equal(t, data[i], data[i+1])
+	for i := range numberOfNodes - 1 {
+		require.Equal(t, data[i], data[i+1])
 	}
 
 	newConfig := fastConfig
@@ -204,12 +407,12 @@ func TestBasicRemoveNodes(t *testing.T) {
 	})
 
 	data = make([]*AppRecord, 0)
-	for i := 0; i < numberOfNodes; i++ {
+	for i := range numberOfNodes {
 		d := <-nodes[i].Delivered
 		data = append(data, d)
 	}
-	for i := 0; i < numberOfNodes-1; i++ {
-		assert.Equal(t, data[i], data[i+1])
+	for i := range numberOfNodes - 1 {
+		require.Equal(t, data[i], data[i+1])
 	}
 
 	nodes[4].Disconnect()
@@ -219,12 +422,12 @@ func TestBasicRemoveNodes(t *testing.T) {
 	numberOfNodes = 4
 	nodes[0].Submit(Request{ID: "11", ClientID: "alice"})
 	data = make([]*AppRecord, 0)
-	for i := 0; i < numberOfNodes; i++ {
+	for i := range numberOfNodes {
 		d := <-nodes[i].Delivered
 		data = append(data, d)
 	}
-	for i := 0; i < numberOfNodes-1; i++ {
-		assert.Equal(t, data[i], data[i+1])
+	for i := range numberOfNodes - 1 {
+		require.Equal(t, data[i], data[i+1])
 	}
 }
 
@@ -233,9 +436,7 @@ func TestAddRemoveNodes(t *testing.T) {
 	network := NewNetwork()
 	defer network.Shutdown()
 
-	testDir, err := os.MkdirTemp("", t.Name())
-	assert.NoErrorf(t, err, "generate temporary test dir")
-	defer os.RemoveAll(testDir)
+	testDir := t.TempDir()
 
 	decisions := uint64(1)
 
@@ -250,12 +451,12 @@ func TestAddRemoveNodes(t *testing.T) {
 	nodes[0].Submit(Request{ID: "1", ClientID: "alice"})
 
 	data1 := make([]*AppRecord, 0)
-	for i := 0; i < numberOfNodes; i++ {
+	for i := range numberOfNodes {
 		d := <-nodes[i].Delivered
 		data1 = append(data1, d)
 	}
-	for i := 0; i < numberOfNodes-1; i++ {
-		assert.Equal(t, data1[i], data1[i+1])
+	for i := range numberOfNodes - 1 {
+		require.Equal(t, data1[i], data1[i+1])
 	}
 
 	for i := 5; i <= 10; i++ {
@@ -278,12 +479,12 @@ func TestAddRemoveNodes(t *testing.T) {
 	})
 
 	data2 := make([]*AppRecord, 0)
-	for i := 0; i < numberOfNodes; i++ {
+	for i := range numberOfNodes {
 		d := <-nodes[i].Delivered
 		data2 = append(data2, d)
 	}
-	for i := 0; i < numberOfNodes-1; i++ {
-		assert.Equal(t, data2[i], data2[i+1])
+	for i := range numberOfNodes - 1 {
+		require.Equal(t, data2[i], data2[i+1])
 	}
 
 	startNodes(nodes[4:], network)
@@ -295,26 +496,26 @@ func TestAddRemoveNodes(t *testing.T) {
 		d := <-nodes[i].Delivered
 		data = append(data, d)
 	}
-	for i := 0; i < numberOfNodes-4; i++ {
-		assert.Equal(t, data[i], data1[0])
+	for i := range numberOfNodes - 4 {
+		require.Equal(t, data[i], data1[0])
 	}
 	data = make([]*AppRecord, 0)
 	for i := 4; i < numberOfNodes; i++ {
 		d := <-nodes[i].Delivered
 		data = append(data, d)
 	}
-	for i := 0; i < numberOfNodes-4; i++ {
-		assert.Equal(t, data[i], data2[0])
+	for i := range numberOfNodes - 4 {
+		require.Equal(t, data[i], data2[0])
 	}
 
 	nodes[9].Submit(Request{ID: "11", ClientID: "alice"})
 	data3 := make([]*AppRecord, 0)
-	for i := 0; i < numberOfNodes; i++ {
+	for i := range numberOfNodes {
 		d := <-nodes[i].Delivered
 		data3 = append(data3, d)
 	}
-	for i := 0; i < numberOfNodes-1; i++ {
-		assert.Equal(t, data3[i], data3[i+1])
+	for i := range numberOfNodes - 1 {
+		require.Equal(t, data3[i], data3[i+1])
 	}
 
 	nodesToRemove := 4
@@ -327,7 +528,7 @@ func TestAddRemoveNodes(t *testing.T) {
 
 		nodes[9].Submit(Request{
 			ClientID: "reconfig",
-			ID:       fmt.Sprintf("%d", 50+r),
+			ID:       strconv.Itoa(50 + r),
 			Reconfig: Reconfig{
 				InLatestDecision: true,
 				CurrentNodes:     currentNodes,
@@ -340,8 +541,8 @@ func TestAddRemoveNodes(t *testing.T) {
 			d := <-nodes[i].Delivered
 			data = append(data, d)
 		}
-		for i := 0; i < numberOfNodes-r; i++ {
-			assert.Equal(t, data[i], data[i+1])
+		for i := range numberOfNodes - r {
+			require.Equal(t, data[i], data[i+1])
 		}
 
 		nodes[r-1].Disconnect()
@@ -353,8 +554,8 @@ func TestAddRemoveNodes(t *testing.T) {
 		d := <-nodes[i].Delivered
 		data = append(data, d)
 	}
-	for i := 0; i < numberOfNodes-nodesToRemove-1; i++ {
-		assert.Equal(t, data[i], data[i+1])
+	for i := range numberOfNodes - nodesToRemove - 1 {
+		require.Equal(t, data[i], data[i+1])
 	}
 }
 
@@ -363,9 +564,7 @@ func TestAddRemoveAddNodes(t *testing.T) {
 	network := NewNetwork()
 	defer network.Shutdown()
 
-	testDir, err := os.MkdirTemp("", t.Name())
-	assert.NoErrorf(t, err, "generate temporary test dir")
-	defer os.RemoveAll(testDir)
+	testDir := t.TempDir()
 
 	numberOfNodes := 4
 	nodes := make([]*App, 0)
@@ -383,8 +582,8 @@ func TestAddRemoveAddNodes(t *testing.T) {
 		d := <-nodes[i].Delivered
 		data1 = append(data1, d)
 	}
-	for i := 0; i < numberOfNodes-1; i++ {
-		assert.Equal(t, data1[i], data1[i+1])
+	for i := range numberOfNodes - 1 {
+		require.Equal(t, data1[i], data1[i+1])
 	}
 
 	newNode := newNode(uint64(5), network, t.Name(), testDir, false, 0)
@@ -409,8 +608,8 @@ func TestAddRemoveAddNodes(t *testing.T) {
 		d := <-nodes[i].Delivered
 		data2 = append(data2, d)
 	}
-	for i := 0; i < numberOfNodes-1; i++ {
-		assert.Equal(t, data2[i], data2[i+1])
+	for i := range numberOfNodes - 1 {
+		require.Equal(t, data2[i], data2[i+1])
 	}
 
 	startNodes(nodes[4:], network)
@@ -418,7 +617,7 @@ func TestAddRemoveAddNodes(t *testing.T) {
 	<-nodes[4].Delivered
 	d := <-nodes[4].Delivered
 
-	assert.Equal(t, "10", requestFromBytes(d.Batch.Requests[0]).ID)
+	require.Equal(t, "10", requestFromBytes(d.Batch.Requests[0]).ID)
 
 	nodes[4].Disconnect()
 
@@ -428,8 +627,8 @@ func TestAddRemoveAddNodes(t *testing.T) {
 		d := <-nodes[i].Delivered
 		data3 = append(data3, d)
 	}
-	for i := 0; i < numberOfNodes-1; i++ {
-		assert.Equal(t, data3[i], data3[i+1])
+	for i := range numberOfNodes - 1 {
+		require.Equal(t, data3[i], data3[i+1])
 	}
 
 	nodes[0].Submit(Request{ID: "12", ClientID: "alice"})
@@ -438,8 +637,8 @@ func TestAddRemoveAddNodes(t *testing.T) {
 		d := <-nodes[i].Delivered
 		data4 = append(data4, d)
 	}
-	for i := 0; i < numberOfNodes-1; i++ {
-		assert.Equal(t, data4[i], data4[i+1])
+	for i := range numberOfNodes - 1 {
+		require.Equal(t, data4[i], data4[i+1])
 	}
 
 	nodes[0].Submit(Request{ID: "13", ClientID: "alice"})
@@ -448,8 +647,8 @@ func TestAddRemoveAddNodes(t *testing.T) {
 		d := <-nodes[i].Delivered
 		data5 = append(data5, d)
 	}
-	for i := 0; i < numberOfNodes-1; i++ {
-		assert.Equal(t, data5[i], data5[i+1])
+	for i := range numberOfNodes - 1 {
+		require.Equal(t, data5[i], data5[i+1])
 	}
 
 	nodes[4].logger.Infof("--------------------------------")
@@ -467,7 +666,7 @@ func TestAddRemoveAddNodes(t *testing.T) {
 	data6 := make([]*AppRecord, 0)
 
 	fail := time.After(1 * time.Minute)
-	for i := 0; i < numberOfNodes+1; i++ {
+	for i := range numberOfNodes + 1 {
 		select {
 		case d := <-nodes[i].Delivered:
 			data6 = append(data6, d)
@@ -476,7 +675,7 @@ func TestAddRemoveAddNodes(t *testing.T) {
 		}
 	}
 	for i := range numberOfNodes {
-		assert.Equal(t, data6[i], data6[i+1])
+		require.Equal(t, data6[i], data6[i+1])
 	}
 }
 
@@ -489,9 +688,7 @@ func TestViewChangeAfterReconfig(t *testing.T) {
 	network := NewNetwork()
 	defer network.Shutdown()
 
-	testDir, err := os.MkdirTemp("", t.Name())
-	assert.NoErrorf(t, err, "generate temporary test dir")
-	defer os.RemoveAll(testDir)
+	testDir := t.TempDir()
 
 	numberOfNodes := 4
 	nodes := make([]*App, 0)
@@ -508,8 +705,8 @@ func TestViewChangeAfterReconfig(t *testing.T) {
 		d := <-nodes[i].Delivered
 		data = append(data, d)
 	}
-	for i := 0; i < numberOfNodes-1; i++ {
-		assert.Equal(t, data[i], data[i+1])
+	for i := range numberOfNodes - 1 {
+		require.Equal(t, data[i], data[i+1])
 	}
 
 	newNode := newNode(1, network, t.Name(), testDir, false, 0)
@@ -536,8 +733,8 @@ func TestViewChangeAfterReconfig(t *testing.T) {
 		d := <-nodes[i].Delivered
 		data = append(data, d)
 	}
-	for i := 0; i < numberOfNodes-1; i++ {
-		assert.Equal(t, data[i], data[i+1])
+	for i := range numberOfNodes - 1 {
+		require.Equal(t, data[i], data[i+1])
 	}
 
 	for i := range numberOfNodes {
@@ -548,8 +745,8 @@ func TestViewChangeAfterReconfig(t *testing.T) {
 		d := <-nodes[i].Delivered
 		data = append(data, d)
 	}
-	for i := 0; i < numberOfNodes-1; i++ {
-		assert.Equal(t, data[i], data[i+1])
+	for i := range numberOfNodes - 1 {
+		require.Equal(t, data[i], data[i+1])
 	}
 }
 
@@ -558,9 +755,7 @@ func TestAddNodeAfterManyRotations(t *testing.T) {
 	network := NewNetwork()
 	defer network.Shutdown()
 
-	testDir, err := os.MkdirTemp("", t.Name())
-	assert.NoErrorf(t, err, "generate temporary test dir")
-	defer os.RemoveAll(testDir)
+	testDir := t.TempDir()
 
 	decisions := uint64(1)
 
@@ -576,14 +771,14 @@ func TestAddNodeAfterManyRotations(t *testing.T) {
 	// deliver many blocks and rotate after each block
 	blocks := make([]*AppRecord, 0)
 	for j := 1; j <= blocksNum; j++ {
-		nodes[0].Submit(Request{ID: fmt.Sprintf("%d", j), ClientID: "alice"})
+		nodes[0].Submit(Request{ID: strconv.Itoa(j), ClientID: "alice"})
 		data := make([]*AppRecord, 0)
-		for i := 0; i < numberOfNodes; i++ {
+		for i := range numberOfNodes {
 			d := <-nodes[i].Delivered
 			data = append(data, d)
 		}
-		for i := 0; i < numberOfNodes-1; i++ {
-			assert.Equal(t, data[i], data[i+1])
+		for i := range numberOfNodes - 1 {
+			require.Equal(t, data[i], data[i+1])
 		}
 		blocks = append(blocks, data[0])
 	}
@@ -606,12 +801,12 @@ func TestAddNodeAfterManyRotations(t *testing.T) {
 	})
 
 	reconfigBlock := make([]*AppRecord, 0)
-	for i := 0; i < numberOfNodes; i++ {
+	for i := range numberOfNodes {
 		d := <-nodes[i].Delivered
 		reconfigBlock = append(reconfigBlock, d)
 	}
-	for i := 0; i < numberOfNodes-1; i++ {
-		assert.Equal(t, reconfigBlock[i], reconfigBlock[i+1])
+	for i := range numberOfNodes - 1 {
+		require.Equal(t, reconfigBlock[i], reconfigBlock[i+1])
 	}
 
 	nodes = append(nodes, newNode)
@@ -620,22 +815,22 @@ func TestAddNodeAfterManyRotations(t *testing.T) {
 	// make sure the new node synced with the many delivered blocks
 	for j := 1; j <= blocksNum; j++ {
 		d := <-nodes[4].Delivered
-		assert.Equal(t, blocks[j-1], d)
+		require.Equal(t, blocks[j-1], d)
 	}
 
 	// make sure the new node synced with the reconfig block
 	d := <-nodes[4].Delivered
-	assert.Equal(t, reconfigBlock[0], d)
+	require.Equal(t, reconfigBlock[0], d)
 
 	// submit another transaction and make sure all got it
 	nodes[0].Submit(Request{ID: "11", ClientID: "alice"})
 	numberOfNodes = 5
 	data := make([]*AppRecord, 0)
-	for i := 0; i < numberOfNodes; i++ {
+	for i := range numberOfNodes {
 		d := <-nodes[i].Delivered
 		data = append(data, d)
 	}
-	for i := 0; i < numberOfNodes-1; i++ {
-		assert.Equal(t, data[i], data[i+1])
+	for i := range numberOfNodes - 1 {
+		require.Equal(t, data[i], data[i+1])
 	}
 }

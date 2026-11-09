@@ -4,8 +4,9 @@ import (
 	"fmt"
 	"sort"
 	"strconv"
+	"strings"
 
-	"github.com/hyperledger-labs/SmartBFT/pkg/metrics"
+	"github.com/hyperledger/SmartBFT/pkg/metrics"
 )
 
 const (
@@ -52,11 +53,13 @@ func NewHistogramOpts(old metrics.HistogramOpts, labelNames []string) metrics.Hi
 
 func makeStatsdFormat(labelNames []string, str string) string {
 	sort.Strings(labelNames)
+	var b strings.Builder
+	b.WriteString(str)
 	for _, s := range labelNames {
-		str += fmt.Sprintf(".%%{%s}", s)
+		fmt.Fprintf(&b, ".%%{%s}", s)
 	}
 
-	return str
+	return b.String()
 }
 
 func makeLabelNames(labelNames []string, names ...string) []string {

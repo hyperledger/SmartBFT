@@ -13,13 +13,13 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/hyperledger-labs/SmartBFT/pkg/api"
-	"github.com/hyperledger-labs/SmartBFT/pkg/consensus"
-	"github.com/hyperledger-labs/SmartBFT/pkg/metrics"
-	"github.com/hyperledger-labs/SmartBFT/pkg/metrics/disabled"
-	"github.com/hyperledger-labs/SmartBFT/pkg/types"
-	"github.com/hyperledger-labs/SmartBFT/pkg/wal"
-	"github.com/hyperledger-labs/SmartBFT/smartbftprotos"
+	"github.com/hyperledger/SmartBFT/pkg/api"
+	"github.com/hyperledger/SmartBFT/pkg/consensus"
+	"github.com/hyperledger/SmartBFT/pkg/metrics"
+	"github.com/hyperledger/SmartBFT/pkg/metrics/disabled"
+	"github.com/hyperledger/SmartBFT/pkg/types"
+	"github.com/hyperledger/SmartBFT/pkg/wal"
+	"github.com/hyperledger/SmartBFT/smartbftprotos"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"google.golang.org/protobuf/proto"
@@ -62,9 +62,15 @@ type App struct {
 	logger          *zap.SugaredLogger
 	metricsProvider metrics.Provider
 	lastRecord      lastRecord
-	verificationSeq uint64
-	messageLost     func(*smartbftprotos.Message) bool
-	lock            sync.Mutex
+	verificationSeq atomic.Uint64
+	clientsToRevoke []string // clients whose requests become invalid once a reconfig is delivered
+	revokedClients  sync.Map
+	// revokeDuringPrune delays revoking the clients after a reconfig is delivered until the first request
+	// is verified afterwards, which models an application that installs the new config asynchronously
+	revokeDuringPrune bool
+	revokePending     atomic.Bool
+	messageLost       func(*smartbftprotos.Message) bool
+	lock              sync.Mutex
 }
 
 type lastRecord struct {
@@ -109,7 +115,7 @@ func (a *App) Sync() types.SyncResponse {
 			Payload:  record.Batch.toBytes(),
 			Metadata: record.Metadata,
 		}
-		a.logger.Debugf("Sync deliver view %d last seq %d", a.latestMD.ViewId, a.latestMD.LatestSequence)
+		a.logger.Debugf("Sync deliver view %d last seq %d", a.latestMD.GetViewId(), a.latestMD.GetLatestSequence())
 		a.Deliver(proposal, nil)
 		for _, req := range record.Batch.Requests {
 			request := requestFromBytes(req)
@@ -230,6 +236,12 @@ func (a *App) RequestsFromProposal(proposal types.Proposal) []types.RequestInfo 
 // VerifyRequest verifies the given request and returns its info
 func (a *App) VerifyRequest(val []byte) (types.RequestInfo, error) {
 	req := requestFromBytes(val)
+	if _, revoked := a.revokedClients.Load(req.ClientID); revoked {
+		return types.RequestInfo{}, fmt.Errorf("client %s is revoked", req.ClientID)
+	}
+	if a.revokePending.CompareAndSwap(true, false) {
+		a.revokeClients()
+	}
 	return types.RequestInfo{ID: req.ID, ClientID: req.ClientID}, nil
 }
 
@@ -249,7 +261,7 @@ func (a *App) VerifySignature(_ types.Signature) error {
 
 // VerificationSequence returns the current verification sequence
 func (a *App) VerificationSequence() uint64 {
-	return atomic.LoadUint64(&a.verificationSeq)
+	return a.verificationSeq.Load()
 }
 
 // Sign signs on the given value
@@ -269,7 +281,7 @@ func (a *App) SignProposal(_ types.Proposal, aux []byte) *types.Signature {
 // AssembleProposal assembles a new proposal from the given requests
 func (a *App) AssembleProposal(metadata []byte, requests [][]byte) types.Proposal {
 	return types.Proposal{
-		VerificationSequence: int64(atomic.LoadUint64(&a.verificationSeq)),
+		VerificationSequence: int64(a.verificationSeq.Load()),
 		Payload:              batch{Requests: requests}.toBytes(),
 		Metadata:             metadata,
 	}
@@ -299,15 +311,15 @@ func (a *App) Deliver(proposal types.Proposal, signatures []types.Signature) typ
 		Signatures: signatures,
 	}
 
-	prevSeq := a.latestMD.LatestSequence
+	prevSeq := a.latestMD.GetLatestSequence()
 
 	a.latestMD = &smartbftprotos.ViewMetadata{}
 	if err := proto.Unmarshal(proposal.Metadata, a.latestMD); err != nil {
 		panic(err)
 	}
 
-	a.logger.Debugf("Deliver view %d last seq %d prevSeq %d", a.latestMD.ViewId, a.latestMD.LatestSequence, prevSeq)
-	if prevSeq == a.latestMD.LatestSequence {
+	a.logger.Debugf("Deliver view %d last seq %d prevSeq %d", a.latestMD.GetViewId(), a.latestMD.GetLatestSequence(), prevSeq)
+	if prevSeq == a.latestMD.GetLatestSequence() {
 		a.logger.Panicf("Committed sequence %d twice", prevSeq)
 	}
 
@@ -316,12 +328,28 @@ func (a *App) Deliver(proposal types.Proposal, signatures []types.Signature) typ
 	for _, req := range record.Batch.Requests {
 		request := requestFromBytes(req)
 		if request.Reconfig.InLatestDecision {
+			if a.revokeDuringPrune {
+				a.revokePending.Store(true)
+			} else {
+				a.revokeClients()
+			}
 			reconfig := request.Reconfig.recconfigToUint(a.ID)
 			return types.Reconfig{InLatestDecision: true, CurrentNodes: reconfig.CurrentNodes, CurrentConfig: reconfig.CurrentConfig}
 		}
 	}
 
 	return types.Reconfig{InLatestDecision: false}
+}
+
+// revokeClients revokes the clients in clientsToRevoke and advances the verification sequence
+func (a *App) revokeClients() {
+	if len(a.clientsToRevoke) == 0 {
+		return
+	}
+	for _, client := range a.clientsToRevoke {
+		a.revokedClients.Store(client, struct{}{})
+	}
+	a.verificationSeq.Add(1)
 }
 
 type committedBatches struct {
@@ -339,10 +367,10 @@ func (cb *committedBatches) add(record *AppRecord) {
 		panic(err)
 	}
 
-	if cb.latestMD != nil && cb.latestMD.ViewId > md.ViewId {
+	if cb.latestMD != nil && cb.latestMD.GetViewId() > md.GetViewId() {
 		return
 	}
-	if cb.latestMD != nil && cb.latestMD.LatestSequence >= md.LatestSequence {
+	if cb.latestMD != nil && cb.latestMD.GetLatestSequence() >= md.GetLatestSequence() {
 		return
 	}
 	cb.latestMD = md
@@ -359,7 +387,7 @@ func (cb *committedBatches) readAll(from *smartbftprotos.ViewMetadata) []*AppRec
 		if err := proto.Unmarshal(entry.Metadata, md); err != nil {
 			panic(err)
 		}
-		if md.ViewId < from.ViewId || md.LatestSequence <= from.LatestSequence {
+		if md.GetViewId() < from.GetViewId() || md.GetLatestSequence() <= from.GetLatestSequence() {
 			continue
 		}
 		res = append(res, &AppRecord{
@@ -450,11 +478,9 @@ func newNode(id uint64, network *Network, testName string, testDir string, rotat
 			sugaredLogger.Panicf("Failed to initialize WAL: %s", err)
 		}
 
-		if app.Consensus != nil && app.Consensus.Config.DecisionsPerLeader > 0 {
+		if app.Consensus != nil {
 			config.DecisionsPerLeader = app.Consensus.Config.DecisionsPerLeader
-		}
-		if app.Consensus != nil && app.Consensus.Config.LeaderRotation {
-			config.LeaderRotation = true
+			config.LeaderRotation = app.Consensus.Config.LeaderRotation
 		}
 
 		c := &consensus.Consensus{

@@ -6,8 +6,8 @@
 package api
 
 import (
-	bft "github.com/hyperledger-labs/SmartBFT/pkg/types"
-	protos "github.com/hyperledger-labs/SmartBFT/smartbftprotos"
+	bft "github.com/hyperledger/SmartBFT/pkg/types"
+	protos "github.com/hyperledger/SmartBFT/smartbftprotos"
 )
 
 // Application delivers the consented proposal and corresponding signatures.

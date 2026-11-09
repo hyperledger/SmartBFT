@@ -13,9 +13,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/hyperledger-labs/SmartBFT/pkg/api"
-	"github.com/hyperledger-labs/SmartBFT/pkg/metrics/disabled"
-	"github.com/hyperledger-labs/SmartBFT/pkg/types"
+	"github.com/hyperledger/SmartBFT/pkg/api"
+	"github.com/hyperledger/SmartBFT/pkg/metrics/disabled"
+	"github.com/hyperledger/SmartBFT/pkg/types"
 	"golang.org/x/sync/semaphore"
 )
 
@@ -32,8 +32,6 @@ var (
 	ErrRequestTooBig       = errors.New("submitted request is too big")
 	ErrSubmitTimeout       = errors.New("timeout submitting to request pool")
 )
-
-//go:generate mockery -dir . -name RequestTimeoutHandler -case underscore -output ./mocks/
 
 // RequestTimeoutHandler defines the methods called by request timeout timers created by time.AfterFunc.
 // This interface is implemented by the bft.Controller.
@@ -379,7 +377,7 @@ func (rp *Pool) RemoveRequest(requestInfo types.RequestInfo) error {
 	if !exist {
 		rp.moveToDelSlice(requestInfo)
 		errStr := fmt.Sprintf("request %s is not in the pool at remove time", requestInfo)
-		rp.logger.Debugf(errStr)
+		rp.logger.Debugf("%s", errStr)
 		return errors.New(errStr)
 	}
 

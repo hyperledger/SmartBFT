@@ -7,28 +7,27 @@ package bft_test
 
 import (
 	"errors"
-	"os"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
-	"github.com/hyperledger-labs/SmartBFT/internal/bft"
-	"github.com/hyperledger-labs/SmartBFT/internal/bft/mocks"
-	"github.com/hyperledger-labs/SmartBFT/pkg/api"
-	"github.com/hyperledger-labs/SmartBFT/pkg/metrics/disabled"
-	"github.com/hyperledger-labs/SmartBFT/pkg/types"
-	"github.com/hyperledger-labs/SmartBFT/pkg/wal"
-	protos "github.com/hyperledger-labs/SmartBFT/smartbftprotos"
-	"github.com/stretchr/testify/assert"
+	"github.com/hyperledger/SmartBFT/internal/bft"
+	"github.com/hyperledger/SmartBFT/internal/bft/mocks"
+	"github.com/hyperledger/SmartBFT/pkg/api"
+	"github.com/hyperledger/SmartBFT/pkg/metrics/disabled"
+	"github.com/hyperledger/SmartBFT/pkg/types"
+	"github.com/hyperledger/SmartBFT/pkg/wal"
+	protos "github.com/hyperledger/SmartBFT/smartbftprotos"
 	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 	"google.golang.org/protobuf/proto"
 )
 
 func TestControllerBasic(t *testing.T) {
 	basicLog, err := zap.NewDevelopment()
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	log := basicLog.Sugar()
 	app := &mocks.ApplicationMock{}
 	app.On("Deliver", mock.Anything, mock.Anything)
@@ -65,21 +64,21 @@ func TestControllerBasic(t *testing.T) {
 
 	configureProposerBuilder(controller)
 
-	controller.Start(1, 0, 0, false)
+	controller.Start(1, 0, 0, 1, false)
 
 	leaderMon.On("ProcessMsg", uint64(2), heartbeat)
 	controller.ProcessMessages(2, heartbeat)
 	controller.ViewChanged(2, 1)
 	controller.ViewChanged(3, 2)
-	controller.AbortView(3)
-	controller.AbortView(3)
+	controller.AbortView(3, nil)
+	controller.AbortView(3, nil)
 	controller.Stop()
 	controller.Stop()
 }
 
 func TestControllerLeaderBasic(t *testing.T) {
 	basicLog, err := zap.NewDevelopment()
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	log := basicLog.Sugar()
 	batcher := &mocks.Batcher{}
 	batcher.On("Close")
@@ -122,7 +121,7 @@ func TestControllerLeaderBasic(t *testing.T) {
 
 	configureProposerBuilder(controller)
 
-	controller.Start(1, 0, 0, false)
+	controller.Start(1, 0, 0, 1, false)
 	<-batcherChan
 	controller.Stop()
 	batcher.AssertCalled(t, "NextBatch")
@@ -130,7 +129,7 @@ func TestControllerLeaderBasic(t *testing.T) {
 
 func TestLeaderPropose(t *testing.T) {
 	basicLog, err := zap.NewDevelopment()
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	log := basicLog.Sugar()
 	req := []byte{1}
 	batcher := &mocks.Batcher{}
@@ -183,11 +182,9 @@ func TestLeaderPropose(t *testing.T) {
 	leaderMon.On("HeartbeatWasSent")
 	leaderMon.On("Close")
 
-	testDir, err := os.MkdirTemp("", "controller-unittest")
-	assert.NoErrorf(t, err, "generate temporary test dir")
-	defer os.RemoveAll(testDir)
+	testDir := t.TempDir()
 	wal, err := wal.Create(log, testDir, nil)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	synchronizer := &mocks.SynchronizerMock{}
 	synchronizer.On("Sync").Run(func(args mock.Arguments) {}).Return(types.SyncResponse{Latest: types.Decision{
@@ -233,7 +230,7 @@ func TestLeaderPropose(t *testing.T) {
 	configureProposerBuilder(controller)
 
 	commWG.Add(9)
-	controller.Start(1, 0, 0, true)
+	controller.Start(1, 0, 0, 1, true)
 	commWG.Wait() // propose + state request
 
 	commWG.Add(3)
@@ -266,12 +263,12 @@ func TestLeaderPropose(t *testing.T) {
 		VerificationSequence: uint64(proposal.VerificationSequence),
 	}
 	proposal, signatures := controller.Checkpoint.Get()
-	assert.Equal(t, expected, proposal)
+	require.Equal(t, expected, proposal)
 	signaturesBySigners := make(map[uint64]*protos.Signature)
 	for _, sig := range signatures {
-		signaturesBySigners[sig.Signer] = sig
+		signaturesBySigners[sig.GetSigner()] = sig
 	}
-	assert.Equal(t, map[uint64]*protos.Signature{
+	require.Equal(t, map[uint64]*protos.Signature{
 		17: {Signer: 17, Value: []byte{4}},
 		23: {Signer: 23, Value: []byte{4}},
 		37: {Signer: 37, Value: []byte{4}},
@@ -284,7 +281,7 @@ func TestLeaderPropose(t *testing.T) {
 
 func TestViewChanged(t *testing.T) {
 	basicLog, err := zap.NewDevelopment()
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	log := basicLog.Sugar()
 	req := []byte{1}
 	batcher := &mocks.Batcher{}
@@ -322,11 +319,9 @@ func TestViewChanged(t *testing.T) {
 	signer := &mocks.SignerMock{}
 	signer.On("Sign", mock.Anything).Return(nil)
 
-	testDir, err := os.MkdirTemp("", "controller-unittest")
-	assert.NoErrorf(t, err, "generate temporary test dir")
-	defer os.RemoveAll(testDir)
+	testDir := t.TempDir()
 	wal, err := wal.Create(log, testDir, nil)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	synchronizer := &mocks.SynchronizerMock{}
 	synchronizer.On("Sync").Run(func(args mock.Arguments) {}).Return(types.SyncResponse{Latest: types.Decision{
@@ -369,7 +364,7 @@ func TestViewChanged(t *testing.T) {
 	configureProposerBuilder(controller)
 
 	commWG.Add(3) // state request
-	controller.Start(1, 0, 0, true)
+	controller.Start(1, 0, 0, 1, true)
 	commWG.Wait()
 
 	commWG.Add(6) // propose
@@ -386,7 +381,7 @@ func TestViewChanged(t *testing.T) {
 
 func TestSyncPrevView(t *testing.T) {
 	basicLog, err := zap.NewDevelopment()
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	log := basicLog.Sugar()
 	app := &mocks.ApplicationMock{}
 	appWG := sync.WaitGroup{}
@@ -436,11 +431,9 @@ func TestSyncPrevView(t *testing.T) {
 	startedWG := sync.WaitGroup{}
 	startedWG.Add(1)
 
-	testDir, err := os.MkdirTemp("", "controller-unittest")
-	assert.NoErrorf(t, err, "generate temporary test dir")
-	defer os.RemoveAll(testDir)
+	testDir := t.TempDir()
 	wal, err := wal.Create(log, testDir, nil)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	collector := bft.StateCollector{
 		SelfID:         0,
@@ -479,7 +472,7 @@ func TestSyncPrevView(t *testing.T) {
 	controller.ViewSequences = vs
 
 	leaderMonWG.Add(1)
-	controller.Start(1, 0, 0, false)
+	controller.Start(1, 0, 0, 1, false)
 	leaderMonWG.Wait()
 
 	appWG.Add(1)
@@ -512,9 +505,9 @@ func TestSyncPrevView(t *testing.T) {
 	controller.ProcessMessages(2, prePrepareNext)
 
 	nextProp := types.Proposal{
-		Header:               prePrepareNextGet.Proposal.Header,
-		Payload:              prePrepareNextGet.Proposal.Payload,
-		Metadata:             prePrepareNextGet.Proposal.Metadata,
+		Header:               prePrepareNextGet.GetProposal().GetHeader(),
+		Payload:              prePrepareNextGet.GetProposal().GetPayload(),
+		Metadata:             prePrepareNextGet.GetProposal().GetMetadata(),
 		VerificationSequence: 1,
 	}
 	prepareNext := proto.Clone(prepare).(*protos.Message)
@@ -578,7 +571,7 @@ func TestControllerLeaderRequestHandling(t *testing.T) {
 			var submittedToPool sync.WaitGroup
 
 			basicLog, err := zap.NewDevelopment()
-			assert.NoError(t, err)
+			require.NoError(t, err)
 
 			log := basicLog.Sugar()
 
@@ -647,7 +640,7 @@ func TestControllerLeaderRequestHandling(t *testing.T) {
 			controller.Deliver = &bft.MutuallyExclusiveDeliver{C: controller}
 
 			configureProposerBuilder(controller)
-			controller.Start(testCase.startViewNum, 0, 0, true)
+			controller.Start(testCase.startViewNum, 0, 0, 0, true)
 
 			controller.HandleRequest(3, []byte{1, 2, 3})
 
@@ -702,7 +695,7 @@ func configureProposerBuilder(controller *bft.Controller) *atomic.Value {
 
 func TestSyncInform(t *testing.T) {
 	basicLog, err := zap.NewDevelopment()
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	log := basicLog.Sugar()
 	req := []byte{1}
 	batcher := &mocks.Batcher{}
@@ -756,11 +749,9 @@ func TestSyncInform(t *testing.T) {
 	signer := &mocks.SignerMock{}
 	signer.On("Sign", mock.Anything).Return(nil)
 
-	testDir, err := os.MkdirTemp("", "controller-unittest")
-	assert.NoErrorf(t, err, "generate temporary test dir")
-	defer os.RemoveAll(testDir)
+	testDir := t.TempDir()
 	wal, err := wal.Create(log, testDir, nil)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	synchronizer := &mocks.SynchronizerMock{}
 	synchronizerWG := sync.WaitGroup{}
@@ -784,7 +775,9 @@ func TestSyncInform(t *testing.T) {
 	reqTimer.On("StopTimers")
 	reqTimer.On("RestartTimers")
 	controllerMock := &mocks.ViewController{}
-	controllerMock.On("AbortView", mock.Anything)
+	controllerMock.On("AbortView", mock.Anything, mock.Anything)
+	controllerMock.On("AbortViewAndHold", mock.Anything, mock.Anything).Return(true)
+	controllerMock.On("ReleaseViewWrite")
 
 	collector := bft.StateCollector{
 		SelfID:         0,
@@ -839,14 +832,14 @@ func TestSyncInform(t *testing.T) {
 
 	synchronizerWG.Add(1)
 	commWG.Add(9)
-	controller.Start(1, 0, 0, true)
+	controller.Start(1, 0, 0, 1, true)
 	synchronizerWG.Wait()
 	commWG.Wait()
 
 	vc.StartViewChange(2, true)
 	msg := <-msgChan
-	assert.NotNil(t, msg.GetViewChange())
-	assert.Equal(t, syncToView+1, msg.GetViewChange().NextView) // view number did change according to info
+	require.NotNil(t, msg.GetViewChange())
+	require.Equal(t, syncToView+1, msg.GetViewChange().GetNextView()) // view number did change according to info
 
 	batcher.AssertNumberOfCalls(t, "NextBatch", 1)
 	assembler.AssertNumberOfCalls(t, "AssembleProposal", 1)
@@ -861,14 +854,12 @@ func TestSyncInform(t *testing.T) {
 
 func TestRotateFromLeaderToFollower(t *testing.T) {
 	basicLog, err := zap.NewDevelopment()
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	log := basicLog.Sugar()
 
-	testDir, err := os.MkdirTemp("", "controller-unittest")
-	assert.NoErrorf(t, err, "generate temporary test dir")
-	defer os.RemoveAll(testDir)
+	testDir := t.TempDir()
 	wal, err := wal.Create(log, testDir, nil)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	defer wal.Close()
 
 	var restartTimersWG sync.WaitGroup
@@ -954,7 +945,7 @@ func TestRotateFromLeaderToFollower(t *testing.T) {
 	controller.ViewSequences = vs
 
 	commWG.Add(6)
-	controller.Start(1, 0, 0, false)
+	controller.Start(1, 0, 0, 1, false)
 	commWG.Wait() // propose (pre-prepare + prepare)
 
 	commWG.Add(3)
@@ -985,9 +976,9 @@ func TestRotateFromLeaderToFollower(t *testing.T) {
 	commWG.Wait()
 
 	nextProp := types.Proposal{
-		Header:               prePrepareNextGet.Proposal.Header,
-		Payload:              prePrepareNextGet.Proposal.Payload,
-		Metadata:             prePrepareNextGet.Proposal.Metadata,
+		Header:               prePrepareNextGet.GetProposal().GetHeader(),
+		Payload:              prePrepareNextGet.GetProposal().GetPayload(),
+		Metadata:             prePrepareNextGet.GetProposal().GetMetadata(),
 		VerificationSequence: 1,
 	}
 	prepareNext := proto.Clone(prepare).(*protos.Message)
@@ -1023,14 +1014,12 @@ func TestRotateFromLeaderToFollower(t *testing.T) {
 
 func TestRotateFromFollowerToLeader(t *testing.T) {
 	basicLog, err := zap.NewDevelopment()
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	log := basicLog.Sugar()
 
-	testDir, err := os.MkdirTemp("", "controller-unittest")
-	assert.NoErrorf(t, err, "generate temporary test dir")
-	defer os.RemoveAll(testDir)
+	testDir := t.TempDir()
 	wal, err := wal.Create(log, testDir, nil)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	defer wal.Close()
 
 	var restartTimersWG sync.WaitGroup
@@ -1076,9 +1065,9 @@ func TestRotateFromFollowerToLeader(t *testing.T) {
 		LatestSequence:  1,
 		ViewId:          1,
 		PrevCommitSignatureDigest: bft.CommitSignaturesDigest([]*protos.Signature{
-			commit1.GetCommit().Signature,
-			commit2.GetCommit().Signature,
-			commit3.GetCommit().Signature,
+			commit1.GetCommit().GetSignature(),
+			commit2.GetCommit().GetSignature(),
+			commit3.GetCommit().GetSignature(),
 		}),
 	})
 	nextProp := types.Proposal{
@@ -1138,7 +1127,7 @@ func TestRotateFromFollowerToLeader(t *testing.T) {
 	controller.ViewSequences = vs
 
 	followerMonWG.Add(1) // change role
-	controller.Start(1, 0, 0, false)
+	controller.Start(1, 0, 0, 1, false)
 	followerMonWG.Wait()
 
 	commWG.Add(3)
@@ -1194,7 +1183,6 @@ func TestRotateFromFollowerToLeader(t *testing.T) {
 }
 
 func TestDeliverTwiceOnceFromSyncAndOnceFromViewData(t *testing.T) {
-
 	// In this scenario a decision is delivered twice.
 	// Once by the synchronizer and a second time by the view data received during a view change.
 	// In the beginning there is a view change timeout and there is a view still running concurrently.
@@ -1205,14 +1193,12 @@ func TestDeliverTwiceOnceFromSyncAndOnceFromViewData(t *testing.T) {
 	// If the checkpoint was updated correctly then this decision should not be delivered twice.
 
 	basicLog, err := zap.NewDevelopment()
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	log := basicLog.Sugar()
 
-	testDir, err := os.MkdirTemp("", "controller-unittest")
-	assert.NoErrorf(t, err, "generate temporary test dir")
-	defer os.RemoveAll(testDir)
+	testDir := t.TempDir()
 	wal, err := wal.Create(log, testDir, nil)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	comm := &mocks.CommMock{}
 	comm.On("BroadcastConsensus", mock.Anything)
@@ -1238,7 +1224,12 @@ func TestDeliverTwiceOnceFromSyncAndOnceFromViewData(t *testing.T) {
 	batcher.On("Close")
 
 	state := &mocks.State{}
-	state.On("Save", mock.Anything).Return(nil)
+	state.On("Save", mock.MatchedBy(func(m *protos.SavedMessage) bool {
+		return m.GetProposedRecord() != nil
+	}), true).Return(nil)
+	state.On("Save", mock.MatchedBy(func(m *protos.SavedMessage) bool {
+		return m.GetProposedRecord() == nil
+	}), false).Return(nil)
 
 	verifier := &mocks.VerifierMock{}
 	verifier.On("VerificationSequence").Return(uint64(1))
@@ -1314,7 +1305,7 @@ func TestDeliverTwiceOnceFromSyncAndOnceFromViewData(t *testing.T) {
 		if err := proto.Unmarshal(proposal.Metadata, md); err != nil {
 			panic("Error unmarshaling metadata")
 		}
-		if md.LatestSequence == 1 {
+		if md.GetLatestSequence() == 1 {
 			panic("Delivering sequence 1 twice")
 		}
 	}).Return(types.Reconfig{InLatestDecision: false})
@@ -1374,7 +1365,7 @@ func TestDeliverTwiceOnceFromSyncAndOnceFromViewData(t *testing.T) {
 	controller.ViewSequences = vs
 
 	leaderMonWG.Add(1)
-	controller.Start(0, 1, 0, false)
+	controller.Start(0, 1, 0, 1, false)
 	leaderMonWG.Wait()
 
 	// Starting view change
@@ -1573,3 +1564,123 @@ func createNewViewMsgForDeliverTwiceTest(nextView uint64) *protos.Message {
 		},
 	}
 }
+
+// TestControllerKeepsRunningAfterDecideWaiterLeft makes sure that the controller keeps running
+// when the view that decided is aborted while the decision is being delivered,
+// so that the waiter in Decide has already left once the delivery completes.
+func TestControllerKeepsRunningAfterDecideWaiterLeft(t *testing.T) {
+	basicLog, err := zap.NewDevelopment()
+	require.NoError(t, err)
+	log := basicLog.Sugar()
+
+	delivering := make(chan struct{})
+	releaseDelivery := make(chan struct{})
+	app := &mocks.ApplicationMock{}
+	app.On("Deliver", mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
+		close(delivering)
+		<-releaseDelivery
+	}).Return(types.Reconfig{InLatestDecision: false})
+	batcher := &mocks.Batcher{}
+	batcher.On("Close")
+	pool := &mocks.RequestPool{}
+	pool.On("Close")
+	leaderMon := &mocks.LeaderMonitor{}
+	leaderMon.On("ChangeRole", mock.Anything, mock.Anything, mock.Anything)
+	leaderMon.On("Close")
+	verifier := &mocks.VerifierMock{}
+	verifier.On("VerificationSequence").Return(uint64(1))
+
+	views := make(chan *fakeProposer, 2)
+	pb := &mocks.ProposerBuilder{}
+	pb.On("NewProposer", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).
+		Return(func(leader uint64, _ uint64, _ uint64, _ uint64, _ int) bft.Proposer {
+			view := &fakeProposer{leader: leader, abortChan: make(chan struct{})}
+			views <- view
+			return view
+		}, bft.Phase(bft.COMMITTED))
+
+	startedWG := sync.WaitGroup{}
+	startedWG.Add(1)
+
+	controller := &bft.Controller{
+		Checkpoint:      &types.Checkpoint{},
+		Batcher:         batcher,
+		RequestPool:     pool,
+		LeaderMonitor:   leaderMon,
+		ID:              3, // not the leader of view 0 nor of view 1
+		N:               4,
+		NodesList:       []uint64{1, 2, 3, 4},
+		Logger:          log,
+		Deliver:         app,
+		Verifier:        verifier,
+		ProposerBuilder: pb,
+		StartedWG:       &startedWG,
+	}
+
+	controller.Start(0, 1, 0, 1, false)
+	view := <-views
+
+	decided := make(chan struct{})
+	go func() {
+		defer close(decided)
+		controller.Decide(types.Proposal{}, nil, nil)
+	}()
+
+	<-delivering
+	view.Abort()
+	<-decided // the waiter in Decide left since its view was aborted
+	close(releaseDelivery)
+
+	controller.ViewChanged(1, 2)
+	select {
+	case <-views:
+	case <-time.After(3 * time.Second):
+		require.Fail(t, "the controller did not start the next view after the decision was delivered")
+	}
+
+	controller.Stop()
+}
+
+// fakeProposer is a view that does nothing but can be aborted.
+type fakeProposer struct {
+	leader    uint64
+	abortChan chan struct{}
+	abortOnce sync.Once
+}
+
+func (*fakeProposer) Propose(types.Proposal) {}
+
+func (*fakeProposer) Start() {}
+
+func (p *fakeProposer) Abort() {
+	p.AbortWithCancel(nil)
+}
+
+func (p *fakeProposer) AbortWithCancel(<-chan struct{}) {
+	p.abortOnce.Do(func() {
+		close(p.abortChan)
+	})
+}
+
+func (p *fakeProposer) Stopped() bool {
+	select {
+	case <-p.abortChan:
+		return true
+	default:
+		return false
+	}
+}
+
+func (p *fakeProposer) AbortChan() <-chan struct{} {
+	return p.abortChan
+}
+
+func (p *fakeProposer) GetLeaderID() uint64 {
+	return p.leader
+}
+
+func (*fakeProposer) GetMetadata() []byte {
+	return nil
+}
+
+func (*fakeProposer) HandleMessage(uint64, *protos.Message) {}

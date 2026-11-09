@@ -8,21 +8,21 @@ package bft_test
 import (
 	"errors"
 	"fmt"
-	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
-	"github.com/hyperledger-labs/SmartBFT/internal/bft"
-	"github.com/hyperledger-labs/SmartBFT/internal/bft/mocks"
-	"github.com/hyperledger-labs/SmartBFT/pkg/api"
-	"github.com/hyperledger-labs/SmartBFT/pkg/metrics/disabled"
-	"github.com/hyperledger-labs/SmartBFT/pkg/types"
-	"github.com/hyperledger-labs/SmartBFT/pkg/wal"
-	protos "github.com/hyperledger-labs/SmartBFT/smartbftprotos"
-	"github.com/stretchr/testify/assert"
+	"github.com/hyperledger/SmartBFT/internal/bft"
+	"github.com/hyperledger/SmartBFT/internal/bft/mocks"
+	"github.com/hyperledger/SmartBFT/pkg/api"
+	"github.com/hyperledger/SmartBFT/pkg/metrics/disabled"
+	"github.com/hyperledger/SmartBFT/pkg/types"
+	"github.com/hyperledger/SmartBFT/pkg/wal"
+	protos "github.com/hyperledger/SmartBFT/smartbftprotos"
 	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"google.golang.org/protobuf/proto"
@@ -124,7 +124,7 @@ var (
 func TestViewBasic(t *testing.T) {
 	// A simple test that starts a view and aborts it
 	basicLog, err := zap.NewDevelopment()
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	log := basicLog.Sugar()
 	state := &bft.StateRecorder{}
 	view := &bft.View{
@@ -164,7 +164,7 @@ func TestPrePrepareAndPrevCommits(t *testing.T) {
 	} {
 		t.Run(testCase.description, func(t *testing.T) {
 			basicLog, err := zap.NewDevelopment()
-			assert.NoError(t, err)
+			require.NoError(t, err)
 			log := basicLog.Sugar()
 			comm := &mocks.CommMock{}
 			commWG := sync.WaitGroup{}
@@ -392,7 +392,7 @@ func TestBadPrePrepare(t *testing.T) {
 	} {
 		t.Run(testCase.description, func(t *testing.T) {
 			basicLog, err := zap.NewDevelopment()
-			assert.NoError(t, err)
+			require.NoError(t, err)
 			var errorLogged sync.WaitGroup
 			errorLogged.Add(1)
 
@@ -476,7 +476,7 @@ func TestBadPrepare(t *testing.T) {
 	} {
 		t.Run(test.description, func(t *testing.T) {
 			basicLog, err := zap.NewDevelopment()
-			assert.NoError(t, err)
+			require.NoError(t, err)
 			var warningMsgLogged sync.WaitGroup
 			warningMsgLogged.Add(1)
 			log := basicLog.WithOptions(zap.Hooks(func(entry zapcore.Entry) error {
@@ -558,7 +558,7 @@ func TestBadCommit(t *testing.T) {
 	// Ensure that a commit with a wrong digest or a bad signature doesn't pass inspection.
 
 	basicLog, err := zap.NewDevelopment()
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	digestLog := make(chan struct{})
 	verifyLog := make(chan struct{})
 	log := basicLog.WithOptions(zap.Hooks(func(entry zapcore.Entry) error {
@@ -634,14 +634,14 @@ func TestNormalPath(t *testing.T) {
 	})
 
 	nextProp := types.Proposal{
-		Header:               prePrepareNextGet.Proposal.Header,
-		Payload:              prePrepareNextGet.Proposal.Payload,
-		Metadata:             prePrepareNextGet.Proposal.Metadata,
+		Header:               prePrepareNextGet.GetProposal().GetHeader(),
+		Payload:              prePrepareNextGet.GetProposal().GetPayload(),
+		Metadata:             prePrepareNextGet.GetProposal().GetMetadata(),
 		VerificationSequence: 1,
 	}
 
 	basicLog, err := zap.NewDevelopment()
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	log := basicLog.Sugar()
 	comm := &mocks.CommMock{}
 	commWG := sync.WaitGroup{}
@@ -707,12 +707,12 @@ func TestNormalPath(t *testing.T) {
 	view.HandleMessage(3, commit3)
 	deciderWG.Wait()
 	dProp := <-decidedProposal
-	assert.Equal(t, proposal, dProp)
+	require.Equal(t, proposal, dProp)
 	dSigs := <-decidedSigs
-	assert.Equal(t, 3, len(dSigs))
+	require.Len(t, dSigs, 3)
 	for _, sig := range dSigs {
 		if sig.ID != 2 && sig.ID != 3 && sig.ID != 4 {
-			assert.Fail(t, "signatures is from a different node with id", sig.ID)
+			require.Fail(t, "signatures is from a different node with id", sig.ID)
 		}
 	}
 
@@ -743,7 +743,9 @@ func TestNormalPath(t *testing.T) {
 	view.HandleMessage(2, commit2Next)
 	view.HandleMessage(3, commit3Next)
 	deciderWG.Wait()
-	assert.Equal(t, bft.ViewSequence{ViewActive: true, ProposalSeq: 1}, viewSeq.Load().(bft.ViewSequence))
+	// after deciding sequence 1 the view advertises the sequence it proposes next, which
+	// is the one followers compare their own sequence against
+	require.Equal(t, bft.ViewSequence{ViewActive: true, ProposalSeq: 2}, viewSeq.Load().(bft.ViewSequence))
 	dProp = <-decidedProposal
 	secondProposal := proposal
 	secondProposal.Metadata = bft.MarshalOrPanic(&protos.ViewMetadata{
@@ -751,12 +753,12 @@ func TestNormalPath(t *testing.T) {
 		LatestSequence:  1,
 		ViewId:          1,
 	})
-	assert.Equal(t, secondProposal, dProp)
+	require.Equal(t, secondProposal, dProp)
 	dSigs = <-decidedSigs
-	assert.Equal(t, 3, len(dSigs))
+	require.Len(t, dSigs, 3)
 	for _, sig := range dSigs {
 		if sig.ID != 2 && sig.ID != 3 && sig.ID != 4 {
-			assert.Fail(t, "signatures is from a different node with id", sig.ID)
+			require.Fail(t, "signatures is from a different node with id", sig.ID)
 		}
 	}
 
@@ -768,7 +770,7 @@ func TestTwoSequences(t *testing.T) {
 	// when all messages are sent in advanced for both sequences.
 
 	basicLog, err := zap.NewDevelopment()
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	log := basicLog.Sugar()
 	comm := &mocks.CommMock{}
 	commWG := sync.WaitGroup{}
@@ -872,22 +874,22 @@ func TestTwoSequences(t *testing.T) {
 
 	deciderWG.Wait()
 	dProp := <-decidedProposal
-	assert.Equal(t, proposal, dProp)
+	require.Equal(t, proposal, dProp)
 	dSigs := <-decidedSigs
-	assert.Equal(t, 3, len(dSigs))
+	require.Len(t, dSigs, 3)
 	for _, sig := range dSigs {
 		if sig.ID != 1 && sig.ID != 2 && sig.ID != 4 {
-			assert.Fail(t, "signatures is from a different node with id", sig.ID)
+			require.Fail(t, "signatures is from a different node with id", sig.ID)
 		}
 	}
 
 	dProp = <-decidedProposal
-	assert.Equal(t, secondProposal, dProp)
+	require.Equal(t, secondProposal, dProp)
 	dSigs = <-decidedSigs
-	assert.Equal(t, 3, len(dSigs))
+	require.Len(t, dSigs, 3)
 	for _, sig := range dSigs {
 		if sig.ID != 1 && sig.ID != 2 && sig.ID != 4 {
-			assert.Fail(t, "signatures is from a different node with id", sig.ID)
+			require.Fail(t, "signatures is from a different node with id", sig.ID)
 		}
 	}
 
@@ -918,10 +920,12 @@ func TestViewPersisted(t *testing.T) {
 		},
 	} {
 		t.Run(testCase.description, func(t *testing.T) {
+			requests := []types.RequestInfo{{ClientID: "1", ID: "1"}, {ClientID: "1", ID: "2"}}
 			verifier := &mocks.VerifierMock{}
 			verifier.On("VerifySignature", mock.Anything).Return(nil)
 			verifier.On("VerificationSequence").Return(uint64(1))
-			verifier.On("VerifyProposal", mock.Anything).Return(nil, nil)
+			verifier.On("VerifyProposal", mock.Anything).Return(requests, nil)
+			verifier.On("RequestsFromProposal", mock.Anything).Return(requests).Maybe()
 			verifier.On("VerifyConsenterSig", mock.Anything, mock.Anything).Return(nil, nil)
 
 			var prepareSent sync.WaitGroup
@@ -947,7 +951,7 @@ func TestViewPersisted(t *testing.T) {
 			})
 
 			basicLog, err := zap.NewDevelopment()
-			assert.NoError(t, err)
+			require.NoError(t, err)
 			log := basicLog.Sugar()
 
 			signer := &mocks.SignerMock{}
@@ -956,10 +960,13 @@ func TestViewPersisted(t *testing.T) {
 
 			var deciderWG sync.WaitGroup
 			deciderWG.Add(1)
+			var decidedRequests []types.RequestInfo
 			decider := &mocks.Decider{}
-			decider.On("Decide", mock.Anything, mock.Anything, mock.Anything).Run(func(_ mock.Arguments) {
+			decider.On("Decide", mock.Anything, mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
+				decidedRequests = args.Get(2).([]types.RequestInfo)
 				deciderWG.Done()
 			})
+			histograms := &histogramsRecorder{}
 
 			state := &mocks.State{}
 
@@ -981,17 +988,15 @@ func TestViewPersisted(t *testing.T) {
 					ProposalSequence:   0,
 					ViewSequences:      &atomic.Value{},
 					InMsgQSize:         40,
-					MetricsView:        api.NewMetricsView(&disabled.Provider{}),
+					MetricsView:        api.NewMetricsView(histograms),
 				}
 			}
 
 			view := constructView()
 
-			testDir, err := os.MkdirTemp("", "view-unittest")
-			assert.NoErrorf(t, err, "generate temporary test dir")
-			defer os.RemoveAll(testDir)
+			testDir := t.TempDir()
 			writeAheadLog, err := wal.Create(log, testDir, nil)
-			assert.NoError(t, err)
+			require.NoError(t, err)
 
 			persistedState := &bft.PersistedState{
 				InFlightProposal: &bft.InFlightData{},
@@ -1000,10 +1005,16 @@ func TestViewPersisted(t *testing.T) {
 			}
 			var persistedToLog sync.WaitGroup
 			persistedToLog.Add(1)
-			state.On("Save", mock.Anything).Return(nil).Run(func(args mock.Arguments) {
+			saveToLog := func(args mock.Arguments) {
 				persistedToLog.Done()
-				persistedState.Save(args.Get(0).(*protos.SavedMessage))
-			})
+				persistedState.Save(args.Get(0).(*protos.SavedMessage), args.Get(1).(bool))
+			}
+			state.On("Save", mock.MatchedBy(func(m *protos.SavedMessage) bool {
+				return m.GetProposedRecord() != nil
+			}), true).Return(nil).Run(saveToLog)
+			state.On("Save", mock.MatchedBy(func(m *protos.SavedMessage) bool {
+				return m.GetCommit() != nil
+			}), false).Return(nil).Run(saveToLog)
 
 			view.Start()
 
@@ -1023,14 +1034,14 @@ func TestViewPersisted(t *testing.T) {
 
 				writeAheadLog.Close()
 				writeAheadLog, err = wal.Open(log, testDir, nil)
-				assert.NoError(t, err)
+				require.NoError(t, err)
 				persistedState.WAL = writeAheadLog
 
 				view = constructView()
 
 				// Recover the view from WAL.
 				persistedState.Entries, err = writeAheadLog.ReadAll()
-				assert.NoError(t, err)
+				require.NoError(t, err)
 				persistedState.Restore(view)
 
 				// It should broadcast prepare right after starting it.
@@ -1065,15 +1076,15 @@ func TestViewPersisted(t *testing.T) {
 
 				writeAheadLog.Close()
 				writeAheadLog, err = wal.Open(log, testDir, nil)
-				assert.NoError(t, err)
+				require.NoError(t, err)
 				persistedState.WAL = writeAheadLog
 
 				view = constructView()
 
 				// Recover the view from WAL.
 				persistedState.Entries, err = writeAheadLog.ReadAll()
-				assert.NoError(t, err)
-				assert.Equal(t, 2, len(persistedState.Entries))
+				require.NoError(t, err)
+				require.Len(t, persistedState.Entries, 2)
 				persistedState.Restore(view)
 
 				// It should broadcast a commit again after it is restored.
@@ -1092,6 +1103,15 @@ func TestViewPersisted(t *testing.T) {
 
 			// Wait for the proposal to be committed.
 			deciderWG.Wait()
+
+			// The requests of the proposal are decided with it, also when the view was restored from the WAL.
+			require.Equal(t, requests, decidedRequests)
+			// The time it took to process the proposal is measured from when the view got it, or was restored with it.
+			latencies := histograms.observed("view_latency_batch_processing")
+			require.Len(t, latencies, 1)
+			for _, latency := range latencies {
+				require.Less(t, latency, time.Minute.Seconds())
+			}
 
 			view.Abort()
 
@@ -1168,7 +1188,7 @@ func TestDiscoverDeliberateCensorship(t *testing.T) {
 	} {
 		t.Run(testCase.description, func(t *testing.T) {
 			basicLog, err := zap.NewDevelopment()
-			assert.NoError(t, err)
+			require.NoError(t, err)
 
 			makeCommit := func(view, seq uint64, digest string) *protos.Message {
 				return &protos.Message{
@@ -1215,9 +1235,9 @@ func TestDiscoverDeliberateCensorship(t *testing.T) {
 			// Send some un-related messages, to ensure we processed the messages before this one.
 			// We send exactly 10 * int(view.N) + 2 (the incoming messages buffer size) so that we
 			// are sure that the above 2 messages were processed.
-			// Otherwise we might finish the test too early and get a false negative (Sync would have been
+			// Otherwise, we might finish the test too early and get a false negative (Sync would have been
 			// called wrongly had the test been run for longer).
-			for i := 0; i < 10*int(view.N)+2; i++ {
+			for range 10*view.N + 2 {
 				view.HandleMessage(2, prepare)
 			}
 
@@ -1228,7 +1248,7 @@ func TestDiscoverDeliberateCensorship(t *testing.T) {
 
 func TestTwoPrePreparesInARow(t *testing.T) {
 	basicLog, err := zap.NewDevelopment()
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	prePrepareNext := proto.Clone(prePrepare).(*protos.Message)
 	prePrepareNextGet := prePrepareNext.GetPrePrepare()
@@ -1323,8 +1343,8 @@ func TestTwoPrePreparesInARow(t *testing.T) {
 		loggedMessages = append(loggedMessages, logEntry)
 	}
 
-	assert.Contains(t, loggedMessages, "Got a pre-prepare for next sequence without processing previous one, dropping message")
-	assert.Contains(t, loggedMessages, "Got a pre-prepare for current sequence without processing previous one, dropping message")
+	require.Contains(t, loggedMessages, "Got a pre-prepare for next sequence without processing previous one, dropping message")
+	require.Contains(t, loggedMessages, "Got a pre-prepare for current sequence without processing previous one, dropping message")
 }
 
 func TestViewLaggingCatchup(t *testing.T) {
@@ -1469,21 +1489,21 @@ func newNetwork(t *testing.T, size int) testedNetwork {
 }
 
 type testedView struct {
-	offline   uint32
+	offline   atomic.Uint32
 	deciderWG sync.WaitGroup
 	*bft.View
 }
 
 func (tv *testedView) setOffline() {
-	atomic.StoreUint32(&tv.offline, 1)
+	tv.offline.Store(1)
 }
 
 func (tv *testedView) setOnline() {
-	atomic.StoreUint32(&tv.offline, 0)
+	tv.offline.Store(0)
 }
 
 func (tv *testedView) HandleMessage(sender uint64, m *protos.Message) {
-	if atomic.LoadUint32(&tv.offline) == uint32(1) {
+	if tv.offline.Load() == uint32(1) {
 		return
 	}
 	tv.View.HandleMessage(sender, m)
@@ -1512,7 +1532,7 @@ func newView(t *testing.T, selfID uint64, network map[uint64]*testedView) *teste
 	})
 
 	basicLog, err := zap.NewDevelopment()
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	log := basicLog.Sugar()
 
 	signer := &mocks.SignerMock{}
@@ -1525,7 +1545,12 @@ func newView(t *testing.T, selfID uint64, network map[uint64]*testedView) *teste
 	})
 
 	state := &mocks.State{}
-	state.On("Save", mock.Anything).Return(nil)
+	state.On("Save", mock.MatchedBy(func(m *protos.SavedMessage) bool {
+		return m.GetProposedRecord() != nil
+	}), true).Return(nil)
+	state.On("Save", mock.MatchedBy(func(m *protos.SavedMessage) bool {
+		return m.GetCommit() != nil
+	}), false).Return(nil)
 
 	tv.View = &bft.View{
 		RetrieveCheckpoint: (&types.Checkpoint{}).Get,

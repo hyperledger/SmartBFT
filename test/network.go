@@ -7,11 +7,11 @@ package test
 
 import (
 	"fmt"
-	"math/rand"
+	"math/rand/v2"
 	"slices"
 	"sync"
 
-	"github.com/hyperledger-labs/SmartBFT/smartbftprotos"
+	"github.com/hyperledger/SmartBFT/smartbftprotos"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -234,7 +234,7 @@ func (node *Node) serve() {
 				}
 				handler.HandleMessage(uint64(m.from), msg)
 			default:
-				handler.HandleRequest(uint64(m.from), msg.(*FwdMessage).Payload)
+				handler.HandleRequest(uint64(m.from), msg.(*FwdMessage).GetPayload())
 			}
 		}
 	}

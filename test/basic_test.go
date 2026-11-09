@@ -9,7 +9,6 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
-	"os"
 	"runtime"
 	"strconv"
 	"strings"
@@ -18,9 +17,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hyperledger-labs/SmartBFT/internal/bft"
-	"github.com/hyperledger-labs/SmartBFT/smartbftprotos"
-	"github.com/stretchr/testify/assert"
+	"github.com/hyperledger/SmartBFT/internal/bft"
+	"github.com/hyperledger/SmartBFT/smartbftprotos"
+	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"google.golang.org/protobuf/proto"
@@ -35,9 +34,7 @@ func TestBasic(t *testing.T) {
 	network := NewNetwork()
 	defer network.Shutdown()
 
-	testDir, err := os.MkdirTemp("", t.Name())
-	assert.NoErrorf(t, err, "generate temporary test dir")
-	defer os.RemoveAll(testDir)
+	testDir := t.TempDir()
 
 	numberOfNodes := 4
 	nodes := make([]*App, 0)
@@ -48,7 +45,7 @@ func TestBasic(t *testing.T) {
 	startNodes(nodes, network)
 
 	for i := 1; i < 5; i++ {
-		nodes[0].Submit(Request{ID: fmt.Sprintf("%d", i), ClientID: "alice"})
+		nodes[0].Submit(Request{ID: strconv.Itoa(i), ClientID: "alice"})
 	}
 
 	data := make([]*AppRecord, 0)
@@ -56,8 +53,8 @@ func TestBasic(t *testing.T) {
 		d := <-nodes[i].Delivered
 		data = append(data, d)
 	}
-	for i := 0; i < numberOfNodes-1; i++ {
-		assert.Equal(t, data[i], data[i+1])
+	for i := range numberOfNodes - 1 {
+		require.Equal(t, data[i], data[i+1])
 	}
 }
 
@@ -66,9 +63,7 @@ func TestNodeViewChangeWhileInPartition(t *testing.T) {
 	network := NewNetwork()
 	defer network.Shutdown()
 
-	testDir, err := os.MkdirTemp("", t.Name())
-	assert.NoErrorf(t, err, "generate temporary test dir")
-	defer os.RemoveAll(testDir)
+	testDir := t.TempDir()
 
 	numberOfNodes := 4
 	nodes := make([]*App, 0)
@@ -122,7 +117,7 @@ func TestNodeViewChangeWhileInPartition(t *testing.T) {
 
 	nodes[0].Submit(Request{ID: "1", ClientID: "alice"}) // submit to a node
 
-	for i := 0; i < numberOfNodes-1; i++ {
+	for i := range numberOfNodes - 1 {
 		<-nodes[i].Delivered
 	}
 
@@ -155,9 +150,7 @@ func TestRestartFollowers(t *testing.T) {
 	network := NewNetwork()
 	defer network.Shutdown()
 
-	testDir, err := os.MkdirTemp("", t.Name())
-	assert.NoErrorf(t, err, "generate temporary test dir")
-	defer os.RemoveAll(testDir)
+	testDir := t.TempDir()
 
 	numberOfNodes := 4
 	nodes := make([]*App, 0)
@@ -190,8 +183,8 @@ func TestRestartFollowers(t *testing.T) {
 	d1 := <-nodes[1].Delivered
 
 	data = append(data, d0, d1, d2, d3)
-	for i := 0; i < numberOfNodes-1; i++ {
-		assert.Equal(t, data[i], data[i+1])
+	for i := range numberOfNodes - 1 {
+		require.Equal(t, data[i], data[i+1])
 	}
 
 	nodes[2].Restart()
@@ -208,8 +201,8 @@ func TestRestartFollowers(t *testing.T) {
 	d3 = <-nodes[3].Delivered
 
 	data = append(data, d0, d1, d2, d3)
-	for i := 0; i < numberOfNodes-1; i++ {
-		assert.Equal(t, data[i], data[i+1])
+	for i := range numberOfNodes - 1 {
+		require.Equal(t, data[i], data[i+1])
 	}
 }
 
@@ -218,9 +211,7 @@ func TestLeaderInPartition(t *testing.T) {
 	network := NewNetwork()
 	defer network.Shutdown()
 
-	testDir, err := os.MkdirTemp("", t.Name())
-	assert.NoErrorf(t, err, "generate temporary test dir")
-	defer os.RemoveAll(testDir)
+	testDir := t.TempDir()
 
 	numberOfNodes := 4
 	nodes := make([]*App, 0)
@@ -229,9 +220,9 @@ func TestLeaderInPartition(t *testing.T) {
 		nodes = append(nodes, n)
 	}
 
-	assert.Equal(t, uint64(0), nodes[2].Consensus.GetLeaderID())
+	require.Equal(t, uint64(0), nodes[2].Consensus.GetLeaderID())
 	startNodes(nodes, network)
-	assert.Equal(t, uint64(1), nodes[2].Consensus.GetLeaderID())
+	require.Equal(t, uint64(1), nodes[2].Consensus.GetLeaderID())
 
 	nodes[0].Disconnect() // leader in partition
 
@@ -244,10 +235,10 @@ func TestLeaderInPartition(t *testing.T) {
 		d := <-nodes[i].Delivered
 		data = append(data, d)
 	}
-	for i := 0; i < numberOfNodes-2; i++ {
-		assert.Equal(t, data[i], data[i+1])
+	for i := range numberOfNodes - 2 {
+		require.Equal(t, data[i], data[i+1])
 	}
-	assert.LessOrEqual(t, uint64(2), nodes[2].Consensus.GetLeaderID())
+	require.LessOrEqual(t, uint64(2), nodes[2].Consensus.GetLeaderID())
 }
 
 func TestAfterDecisionLeaderInPartition(t *testing.T) {
@@ -255,9 +246,7 @@ func TestAfterDecisionLeaderInPartition(t *testing.T) {
 	network := NewNetwork()
 	defer network.Shutdown()
 
-	testDir, err := os.MkdirTemp("", t.Name())
-	assert.NoErrorf(t, err, "generate temporary test dir")
-	defer os.RemoveAll(testDir)
+	testDir := t.TempDir()
 
 	numberOfNodes := 4
 	nodes := make([]*App, 0)
@@ -274,8 +263,8 @@ func TestAfterDecisionLeaderInPartition(t *testing.T) {
 		d := <-nodes[i].Delivered
 		data = append(data, d)
 	}
-	for i := 0; i < numberOfNodes-1; i++ {
-		assert.Equal(t, data[i], data[i+1])
+	for i := range numberOfNodes - 1 {
+		require.Equal(t, data[i], data[i+1])
 	}
 
 	nodes[0].Submit(Request{ID: "2", ClientID: "alice"})
@@ -285,8 +274,8 @@ func TestAfterDecisionLeaderInPartition(t *testing.T) {
 		d := <-nodes[i].Delivered
 		data = append(data, d)
 	}
-	for i := 0; i < numberOfNodes-1; i++ {
-		assert.Equal(t, data[i], data[i+1])
+	for i := range numberOfNodes - 1 {
+		require.Equal(t, data[i], data[i+1])
 	}
 
 	nodes[0].Disconnect() // leader in partition
@@ -300,8 +289,8 @@ func TestAfterDecisionLeaderInPartition(t *testing.T) {
 		d := <-nodes[i].Delivered
 		data = append(data, d)
 	}
-	for i := 0; i < numberOfNodes-2; i++ {
-		assert.Equal(t, data[i], data[i+1])
+	for i := range numberOfNodes - 2 {
+		require.Equal(t, data[i], data[i+1])
 	}
 
 	for i := 1; i < numberOfNodes; i++ {
@@ -313,8 +302,8 @@ func TestAfterDecisionLeaderInPartition(t *testing.T) {
 		d := <-nodes[i].Delivered
 		data = append(data, d)
 	}
-	for i := 0; i < numberOfNodes-2; i++ {
-		assert.Equal(t, data[i], data[i+1])
+	for i := range numberOfNodes - 2 {
+		require.Equal(t, data[i], data[i+1])
 	}
 }
 
@@ -324,9 +313,7 @@ func TestLeaderInPartitionWithHealing(t *testing.T) {
 	network := NewNetwork()
 	defer network.Shutdown()
 
-	testDir, err := os.MkdirTemp("", t.Name())
-	assert.NoErrorf(t, err, "generate temporary test dir")
-	defer os.RemoveAll(testDir)
+	testDir := t.TempDir()
 
 	numberOfNodes := 4
 	nodes := make([]*App, 0)
@@ -343,8 +330,8 @@ func TestLeaderInPartitionWithHealing(t *testing.T) {
 		d := <-nodes[i].Delivered
 		data = append(data, d)
 	}
-	for i := 0; i < numberOfNodes-1; i++ {
-		assert.Equal(t, data[i], data[i+1])
+	for i := range numberOfNodes - 1 {
+		require.Equal(t, data[i], data[i+1])
 	}
 
 	nodes[0].Submit(Request{ID: "2", ClientID: "alice"})
@@ -354,8 +341,8 @@ func TestLeaderInPartitionWithHealing(t *testing.T) {
 		d := <-nodes[i].Delivered
 		data = append(data, d)
 	}
-	for i := 0; i < numberOfNodes-1; i++ {
-		assert.Equal(t, data[i], data[i+1])
+	for i := range numberOfNodes - 1 {
+		require.Equal(t, data[i], data[i+1])
 	}
 
 	nodes[0].Disconnect() // leader in partition
@@ -370,17 +357,17 @@ func TestLeaderInPartitionWithHealing(t *testing.T) {
 		d := <-nodes[i].Delivered
 		data = append(data, d)
 	}
-	for i := 0; i < numberOfNodes-2; i++ {
-		assert.Equal(t, data[i], data[i+1])
+	for i := range numberOfNodes - 2 {
+		require.Equal(t, data[i], data[i+1])
 	}
 
-	assert.Len(t, nodes[0].Delivered, 0) // n0 did not receive it
+	require.Empty(t, nodes[0].Delivered) // n0 did not receive it
 
 	nodes[0].Connect() // partition heals, leader should eventually sync, become a follower, and deliver
 	t.Log("Connected n0")
 
 	data0 := <-nodes[0].Delivered
-	assert.Equal(t, data[0], data0)
+	require.Equal(t, data[0], data0)
 }
 
 func TestMultiLeadersPartition(t *testing.T) {
@@ -388,9 +375,7 @@ func TestMultiLeadersPartition(t *testing.T) {
 	network := NewNetwork()
 	defer network.Shutdown()
 
-	testDir, err := os.MkdirTemp("", t.Name())
-	assert.NoErrorf(t, err, "generate temporary test dir")
-	defer os.RemoveAll(testDir)
+	testDir := t.TempDir()
 
 	numberOfNodes := 7
 	nodes := make([]*App, 0)
@@ -405,9 +390,9 @@ func TestMultiLeadersPartition(t *testing.T) {
 		n.viewChangeTime <- start
 		n.Setup()
 	}
-	assert.Equal(t, uint64(0), nodes[0].Consensus.GetLeaderID())
+	require.Equal(t, uint64(0), nodes[0].Consensus.GetLeaderID())
 	startNodes(nodes, network)
-	assert.Equal(t, uint64(1), nodes[0].Consensus.GetLeaderID())
+	require.Equal(t, uint64(1), nodes[0].Consensus.GetLeaderID())
 
 	nodes[0].Disconnect() // leader in partition
 	nodes[1].Disconnect() // next leader in partition
@@ -427,14 +412,14 @@ func TestMultiLeadersPartition(t *testing.T) {
 		d := <-nodes[i].Delivered
 		data = append(data, d)
 	}
-	for i := 0; i < numberOfNodes-3; i++ {
-		assert.Equal(t, data[i], data[i+1])
+	for i := range numberOfNodes - 3 {
+		require.Equal(t, data[i], data[i+1])
 	}
 
 	lID := nodes[2].Consensus.GetLeaderID()
-	assert.LessOrEqual(t, uint64(3), lID)
+	require.LessOrEqual(t, uint64(3), lID)
 	for i := 3; i < numberOfNodes; i++ {
-		assert.Equal(t, lID, nodes[i].Consensus.GetLeaderID())
+		require.Equal(t, lID, nodes[i].Consensus.GetLeaderID())
 	}
 }
 
@@ -443,9 +428,7 @@ func TestHeartbeatTimeoutCausesViewChange(t *testing.T) {
 	network := NewNetwork()
 	defer network.Shutdown()
 
-	testDir, err := os.MkdirTemp("", t.Name())
-	assert.NoErrorf(t, err, "generate temporary test dir")
-	defer os.RemoveAll(testDir)
+	testDir := t.TempDir()
 
 	numberOfNodes := 4
 	nodes := make([]*App, 0)
@@ -495,8 +478,8 @@ func TestHeartbeatTimeoutCausesViewChange(t *testing.T) {
 		d := <-nodes[i].Delivered
 		data = append(data, d)
 	}
-	for i := 0; i < numberOfNodes-2; i++ {
-		assert.Equal(t, data[i], data[i+1])
+	for i := range numberOfNodes - 2 {
+		require.Equal(t, data[i], data[i+1])
 	}
 }
 
@@ -505,9 +488,7 @@ func TestMultiViewChangeWithNoRequestsTimeout(t *testing.T) {
 	network := NewNetwork()
 	defer network.Shutdown()
 
-	testDir, err := os.MkdirTemp("", t.Name())
-	assert.NoErrorf(t, err, "generate temporary test dir")
-	defer os.RemoveAll(testDir)
+	testDir := t.TempDir()
 
 	numberOfNodes := 7
 	nodes := make([]*App, 0)
@@ -560,8 +541,8 @@ func TestMultiViewChangeWithNoRequestsTimeout(t *testing.T) {
 		d := <-nodes[i].Delivered
 		data = append(data, d)
 	}
-	for i := 0; i < numberOfNodes-3; i++ {
-		assert.Equal(t, data[i], data[i+1])
+	for i := range numberOfNodes - 3 {
+		require.Equal(t, data[i], data[i+1])
 	}
 }
 
@@ -570,9 +551,7 @@ func TestCatchingUpWithViewChange(t *testing.T) {
 	network := NewNetwork()
 	defer network.Shutdown()
 
-	testDir, err := os.MkdirTemp("", t.Name())
-	assert.NoErrorf(t, err, "generate temporary test dir")
-	defer os.RemoveAll(testDir)
+	testDir := t.TempDir()
 
 	numberOfNodes := 4
 	nodes := make([]*App, 0)
@@ -612,12 +591,12 @@ func TestCatchingUpWithViewChange(t *testing.T) {
 	nodes[0].Submit(Request{ID: "1", ClientID: "alice"}) // submit to leader
 
 	data := make([]*AppRecord, 0)
-	for i := 0; i < numberOfNodes-1; i++ {
+	for i := range numberOfNodes - 1 {
 		d := <-nodes[i].Delivered
 		data = append(data, d)
 	}
-	for i := 0; i < numberOfNodes-2; i++ {
-		assert.Equal(t, data[i], data[i+1])
+	for i := range numberOfNodes - 2 {
+		require.Equal(t, data[i], data[i+1])
 	}
 
 	nodes[3].Connect()
@@ -631,7 +610,7 @@ func TestCatchingUpWithViewChange(t *testing.T) {
 	accelerateTime(nodes, done, false, true, &counter)
 
 	data3 := <-nodes[3].Delivered // from catch up
-	assert.Equal(t, data[0], data3)
+	require.Equal(t, data[0], data3)
 
 	viewChangeFinishWG.Wait()
 	close(done)
@@ -641,8 +620,8 @@ func TestCatchingUpWithViewChange(t *testing.T) {
 		d := <-nodes[i].Delivered
 		data = append(data, d)
 	}
-	for i := 0; i < numberOfNodes-2; i++ {
-		assert.Equal(t, data[i], data[i+1])
+	for i := range numberOfNodes - 2 {
+		require.Equal(t, data[i], data[i+1])
 	}
 }
 
@@ -651,9 +630,7 @@ func TestLeaderCatchingUpAfterViewChange(t *testing.T) {
 	network := NewNetwork()
 	defer network.Shutdown()
 
-	testDir, err := os.MkdirTemp("", t.Name())
-	assert.NoErrorf(t, err, "generate temporary test dir")
-	defer os.RemoveAll(testDir)
+	testDir := t.TempDir()
 
 	numberOfNodes := 4
 	nodes := make([]*App, 0)
@@ -670,8 +647,8 @@ func TestLeaderCatchingUpAfterViewChange(t *testing.T) {
 		d := <-nodes[i].Delivered
 		data = append(data, d)
 	}
-	for i := 0; i < numberOfNodes-1; i++ {
-		assert.Equal(t, data[i], data[i+1])
+	for i := range numberOfNodes - 1 {
+		require.Equal(t, data[i], data[i+1])
 	}
 
 	nodes[0].Disconnect() // leader in partition
@@ -684,16 +661,16 @@ func TestLeaderCatchingUpAfterViewChange(t *testing.T) {
 		d := <-nodes[i].Delivered
 		data = append(data, d)
 	}
-	for i := 0; i < numberOfNodes-2; i++ {
-		assert.Equal(t, data[i], data[i+1])
+	for i := range numberOfNodes - 2 {
+		require.Equal(t, data[i], data[i+1])
 	}
 
 	nodes[0].Connect() // old leader woke up
 
 	// We create new batches until it catches up
 	for reqID := 3; reqID < 100; reqID++ {
-		nodes[1].Submit(Request{ID: fmt.Sprintf("%d", reqID), ClientID: "alice"})
-		nodes[2].Submit(Request{ID: fmt.Sprintf("%d", reqID), ClientID: "alice"})
+		nodes[1].Submit(Request{ID: strconv.Itoa(reqID), ClientID: "alice"})
+		nodes[2].Submit(Request{ID: strconv.Itoa(reqID), ClientID: "alice"})
 		<-nodes[1].Delivered // Wait for new leader to commit
 		<-nodes[2].Delivered // Wait for follower to commit
 		caughtUp := waitForCatchup(reqID, nodes[0].Delivered)
@@ -709,9 +686,7 @@ func TestRestartAfterViewChangeAndRestoreNewView(t *testing.T) {
 	network := NewNetwork()
 	defer network.Shutdown()
 
-	testDir, err := os.MkdirTemp("", t.Name())
-	assert.NoErrorf(t, err, "generate temporary test dir")
-	defer os.RemoveAll(testDir)
+	testDir := t.TempDir()
 
 	numberOfNodes := 4
 	nodes := make([]*App, 0)
@@ -768,8 +743,8 @@ func TestRestartAfterViewChangeAndRestoreNewView(t *testing.T) {
 		d := <-nodes[i].Delivered
 		data = append(data, d)
 	}
-	for i := 0; i < numberOfNodes-2; i++ {
-		assert.Equal(t, data[i], data[i+1])
+	for i := range numberOfNodes - 2 {
+		require.Equal(t, data[i], data[i+1])
 	}
 }
 
@@ -778,9 +753,7 @@ func TestRestoringViewChange(t *testing.T) {
 	network := NewNetwork()
 	defer network.Shutdown()
 
-	testDir, err := os.MkdirTemp("", t.Name())
-	assert.NoErrorf(t, err, "generate temporary test dir")
-	defer os.RemoveAll(testDir)
+	testDir := t.TempDir()
 
 	numberOfNodes := 7
 	nodes := make([]*App, 0)
@@ -848,8 +821,8 @@ func TestRestoringViewChange(t *testing.T) {
 		d := <-nodes[i].Delivered
 		data = append(data, d)
 	}
-	for i := 0; i < numberOfNodes-3; i++ {
-		assert.Equal(t, data[i], data[i+1])
+	for i := range numberOfNodes - 3 {
+		require.Equal(t, data[i], data[i+1])
 	}
 }
 
@@ -858,9 +831,7 @@ func TestLeaderForwarding(t *testing.T) {
 	network := NewNetwork()
 	defer network.Shutdown()
 
-	testDir, err := os.MkdirTemp("", t.Name())
-	assert.NoErrorf(t, err, "generate temporary test dir")
-	defer os.RemoveAll(testDir)
+	testDir := t.TempDir()
 
 	numberOfNodes := 4
 	nodes := make([]*App, 0)
@@ -885,8 +856,8 @@ func TestLeaderForwarding(t *testing.T) {
 		}
 	}
 
-	assert.Equal(t, committedBatches[0], committedBatches[1])
-	assert.Equal(t, committedBatches[0], committedBatches[2])
+	require.Equal(t, committedBatches[0], committedBatches[1])
+	require.Equal(t, committedBatches[0], committedBatches[2])
 }
 
 func TestLeaderExclusion(t *testing.T) {
@@ -896,9 +867,7 @@ func TestLeaderExclusion(t *testing.T) {
 	network := NewNetwork()
 	defer network.Shutdown()
 
-	testDir, err := os.MkdirTemp("", t.Name())
-	assert.NoErrorf(t, err, "generate temporary test dir")
-	defer os.RemoveAll(testDir)
+	testDir := t.TempDir()
 
 	numberOfNodes := 4
 	nodes := make([]*App, 0)
@@ -913,7 +882,7 @@ func TestLeaderExclusion(t *testing.T) {
 
 	// We create new batches until the disconnected node catches up the quorum.
 	for reqID := 1; reqID < 100; reqID++ {
-		nodes[1].Submit(Request{ID: fmt.Sprintf("%d", reqID), ClientID: "alice"})
+		nodes[1].Submit(Request{ID: strconv.Itoa(reqID), ClientID: "alice"})
 		<-nodes[1].Delivered // Wait for follower to commit
 		caughtUp := waitForCatchup(reqID, nodes[3].Delivered)
 		if caughtUp {
@@ -928,9 +897,7 @@ func TestCatchingUpWithSyncAssisted(t *testing.T) {
 	network := NewNetwork()
 	defer network.Shutdown()
 
-	testDir, err := os.MkdirTemp("", t.Name())
-	assert.NoErrorf(t, err, "generate temporary test dir")
-	defer os.RemoveAll(testDir)
+	testDir := t.TempDir()
 
 	numberOfNodes := 4
 	nodes := make([]*App, 0)
@@ -943,10 +910,10 @@ func TestCatchingUpWithSyncAssisted(t *testing.T) {
 	nodes[3].Disconnect() // will need to catch up
 
 	for i := 1; i <= 10; i++ {
-		for j := 0; j <= 2; j++ {
-			nodes[j].Submit(Request{ID: fmt.Sprintf("%d", i), ClientID: "alice"})
+		for j := range 3 {
+			nodes[j].Submit(Request{ID: strconv.Itoa(i), ClientID: "alice"})
 		}
-		for j := 0; j <= 2; j++ {
+		for j := range 3 {
 			<-nodes[j].Delivered
 		}
 	}
@@ -955,10 +922,10 @@ func TestCatchingUpWithSyncAssisted(t *testing.T) {
 
 	// We create new batches until it catches up the quorum.
 	for reqID := 11; reqID < 100; reqID++ {
-		for j := 0; j <= 2; j++ {
-			nodes[j].Submit(Request{ID: fmt.Sprintf("%d", reqID), ClientID: "alice"})
+		for j := range 3 {
+			nodes[j].Submit(Request{ID: strconv.Itoa(reqID), ClientID: "alice"})
 		}
-		for j := 0; j <= 2; j++ {
+		for j := range 3 {
 			<-nodes[j].Delivered
 		}
 		caughtUp := waitForCatchup(reqID, nodes[3].Delivered)
@@ -974,9 +941,7 @@ func TestCatchingUpWithSyncAutonomous(t *testing.T) {
 	network := NewNetwork()
 	defer network.Shutdown()
 
-	testDir, err := os.MkdirTemp("", t.Name())
-	assert.NoErrorf(t, err, "generate temporary test dir")
-	defer os.RemoveAll(testDir)
+	testDir := t.TempDir()
 
 	numberOfNodes := 4
 	nodes := make([]*App, 0)
@@ -985,12 +950,12 @@ func TestCatchingUpWithSyncAutonomous(t *testing.T) {
 		nodes = append(nodes, n)
 	}
 
-	var detectedSequenceGap uint32
+	var detectedSequenceGap atomic.Uint32
 
 	baseLogger := nodes[3].Consensus.Logger.(*zap.SugaredLogger).Desugar()
 	nodes[3].Consensus.Logger = baseLogger.WithOptions(zap.Hooks(func(entry zapcore.Entry) error {
 		if strings.Contains(entry.Message, "Leader's sequence is 10 and ours is 1") {
-			atomic.StoreUint32(&detectedSequenceGap, 1)
+			detectedSequenceGap.Store(1)
 		}
 		return nil
 	})).Sugar()
@@ -1010,10 +975,10 @@ func TestCatchingUpWithSyncAutonomous(t *testing.T) {
 	nodes[3].Disconnect() // will need to catch up
 
 	for i := 1; i <= 5; i++ {
-		for j := 0; j <= 2; j++ {
-			nodes[j].Submit(Request{ID: fmt.Sprintf("%d", i), ClientID: "alice"})
+		for j := range 3 {
+			nodes[j].Submit(Request{ID: strconv.Itoa(i), ClientID: "alice"})
 		}
-		for j := 0; j <= 2; j++ {
+		for j := range 3 {
 			<-nodes[j].Delivered
 		}
 	}
@@ -1046,7 +1011,7 @@ func TestCatchingUpWithSyncAutonomous(t *testing.T) {
 	}
 
 	close(done)
-	assert.Equal(t, uint32(0), atomic.LoadUint32(&detectedSequenceGap))
+	require.Equal(t, uint32(0), detectedSequenceGap.Load())
 }
 
 func TestSyncSameHeightPreservesDecisionsInView(t *testing.T) {
@@ -1059,9 +1024,7 @@ func TestSyncSameHeightPreservesDecisionsInView(t *testing.T) {
 	network := NewNetwork()
 	defer network.Shutdown()
 
-	testDir, err := os.MkdirTemp("", t.Name())
-	assert.NoErrorf(t, err, "generate temporary test dir")
-	defer os.RemoveAll(testDir)
+	testDir := t.TempDir()
 
 	numberOfNodes := 4
 	nodes := make([]*App, 0)
@@ -1073,12 +1036,12 @@ func TestSyncSameHeightPreservesDecisionsInView(t *testing.T) {
 	// Hook node 4's logger to detect:
 	// 1. When sync is processed (so we know it's safe to submit more proposals)
 	// 2. The bug symptom: "Expected decisions in view" validation failure
-	var syncProcessed uint32
+	var syncProcessed atomic.Uint32
 	bugDetected := make(chan struct{}, 1)
 	baseLogger := nodes[3].Consensus.Logger.(*zap.SugaredLogger).Desugar()
 	nodes[3].Consensus.Logger = baseLogger.WithOptions(zap.Hooks(func(entry zapcore.Entry) error {
 		if strings.Contains(entry.Message, "get msg from syncChan") {
-			atomic.StoreUint32(&syncProcessed, 1)
+			syncProcessed.Store(1)
 		}
 		if strings.Contains(entry.Message, "Expected decisions in view") {
 			select {
@@ -1093,8 +1056,8 @@ func TestSyncSameHeightPreservesDecisionsInView(t *testing.T) {
 
 	// Phase 1: Submit 5 proposals to build up DecisionsInView on all nodes.
 	for i := 1; i <= 5; i++ {
-		nodes[0].Submit(Request{ID: fmt.Sprintf("%d", i), ClientID: "alice"})
-		for j := 0; j < numberOfNodes; j++ {
+		nodes[0].Submit(Request{ID: strconv.Itoa(i), ClientID: "alice"})
+		for j := range numberOfNodes {
 			<-nodes[j].Delivered
 		}
 	}
@@ -1125,8 +1088,8 @@ func TestSyncSameHeightPreservesDecisionsInView(t *testing.T) {
 	nodes[3].Consensus.HandleMessage(1, fakeHeartbeat)
 
 	// Wait for the sync to be processed by the controller's run loop.
-	assert.Eventually(t, func() bool {
-		return atomic.LoadUint32(&syncProcessed) == 1
+	require.Eventually(t, func() bool {
+		return syncProcessed.Load() == 1
 	}, 30*time.Second, 50*time.Millisecond,
 		"Node 4 should process sync triggered by fake heartbeat")
 
@@ -1134,8 +1097,8 @@ func TestSyncSameHeightPreservesDecisionsInView(t *testing.T) {
 	// restarted with DecisionsInView=0, so it rejects proposals from the
 	// leader (which has DecisionsInView=5).
 	for i := 6; i <= 10; i++ {
-		nodes[0].Submit(Request{ID: fmt.Sprintf("%d", i), ClientID: "alice"})
-		for j := 0; j < numberOfNodes; j++ {
+		nodes[0].Submit(Request{ID: strconv.Itoa(i), ClientID: "alice"})
+		for j := range numberOfNodes {
 			select {
 			case <-nodes[j].Delivered:
 			case <-bugDetected:
@@ -1145,7 +1108,6 @@ func TestSyncSameHeightPreservesDecisionsInView(t *testing.T) {
 			}
 		}
 	}
-
 }
 
 func TestFollowerStateTransfer(t *testing.T) {
@@ -1158,9 +1120,7 @@ func TestFollowerStateTransfer(t *testing.T) {
 	network := NewNetwork()
 	defer network.Shutdown()
 
-	testDir, err := os.MkdirTemp("", t.Name())
-	assert.NoErrorf(t, err, "generate temporary test dir")
-	defer os.RemoveAll(testDir)
+	testDir := t.TempDir()
 
 	numberOfNodes := 7
 	nodes := make([]*App, 0)
@@ -1226,12 +1186,13 @@ func TestFollowerStateTransfer(t *testing.T) {
 		d := <-nodes[i].Delivered
 		data = append(data, d)
 	}
-	for i := 0; i < numberOfNodes-3; i++ {
-		assert.Equal(t, data[i], data[i+1])
+	for i := range numberOfNodes - 3 {
+		require.Equal(t, data[i], data[i+1])
 	}
 }
 
 func TestLeaderModifiesPreprepare(t *testing.T) {
+	t.Parallel()
 	for _, test := range []struct {
 		description  string
 		mutatingFunc func(target uint64, m *smartbftprotos.Message)
@@ -1251,7 +1212,7 @@ func TestLeaderModifiesPreprepare(t *testing.T) {
 				if m.GetPrePrepare() == nil {
 					return
 				}
-				incReq := Request{ID: fmt.Sprintf("%d", target), ClientID: "alice"}
+				incReq := Request{ID: strconv.FormatUint(target, 10), ClientID: "alice"}
 				incData := batch{
 					Requests: [][]byte{incReq.ToBytes()},
 				}
@@ -1295,9 +1256,7 @@ func TestLeaderModifiesPreprepare(t *testing.T) {
 			network := NewNetwork()
 			defer network.Shutdown()
 
-			testDir, err := os.MkdirTemp("", test.description)
-			assert.NoErrorf(t, err, "generate temporary test dir")
-			defer os.RemoveAll(testDir)
+			testDir := t.TempDir()
 
 			numberOfNodes := 4
 			nodes := make([]*App, 0)
@@ -1327,7 +1286,7 @@ func TestLeaderModifiesPreprepare(t *testing.T) {
 			}
 
 			for i := range numberOfNodes {
-				nodes[i].Submit(Request{ID: fmt.Sprintf("%d", 1), ClientID: "alice"})
+				nodes[i].Submit(Request{ID: strconv.Itoa(1), ClientID: "alice"})
 			}
 
 			viewChangeWG.Wait()
@@ -1337,15 +1296,15 @@ func TestLeaderModifiesPreprepare(t *testing.T) {
 				d := <-nodes[i].Delivered
 				data = append(data, d)
 			}
-			for i := 0; i < numberOfNodes-1; i++ {
-				assert.Equal(t, data[i], data[i+1])
+			for i := range numberOfNodes - 1 {
+				require.Equal(t, data[i], data[i+1])
 			}
 
 			md := &smartbftprotos.ViewMetadata{}
 			if err := proto.Unmarshal(data[0].Metadata, md); err != nil {
-				assert.NoError(t, err)
+				require.NoError(t, err)
 			}
-			assert.Equal(t, uint64(1), md.LatestSequence)
+			require.Equal(t, uint64(1), md.GetLatestSequence())
 
 			for i := 2; i <= numberOfNodes; i++ {
 				nodes[0].ClearMutateSend(uint64(i))
@@ -1359,9 +1318,7 @@ func TestLeaderCatchUpWithoutSync(t *testing.T) {
 	network := NewNetwork()
 	defer network.Shutdown()
 
-	testDir, err := os.MkdirTemp("", t.Name())
-	assert.NoErrorf(t, err, "generate temporary test dir")
-	defer os.RemoveAll(testDir)
+	testDir := t.TempDir()
 
 	numberOfNodes := 4
 	nodes := make([]*App, 0)
@@ -1377,9 +1334,9 @@ func TestLeaderCatchUpWithoutSync(t *testing.T) {
 	restoredWG := sync.WaitGroup{}
 	restoredWG.Add(1)
 
-	var blockCommits uint32
+	var blockCommits atomic.Uint32
 	nodes[0].LoseMessages(func(msg *smartbftprotos.Message) bool {
-		return msg.GetCommit() != nil && atomic.LoadUint32(&blockCommits) == 1
+		return msg.GetCommit() != nil && blockCommits.Load() == 1
 	})
 	baseLogger := nodes[0].logger.Desugar()
 	nodes[0].logger = baseLogger.WithOptions(zap.Hooks(func(entry zapcore.Entry) error {
@@ -1392,7 +1349,7 @@ func TestLeaderCatchUpWithoutSync(t *testing.T) {
 		return nil
 	})).Sugar()
 	nodes[0].Setup()
-	atomic.StoreUint32(&blockCommits, 1)
+	blockCommits.Store(1)
 
 	startNodes(nodes, network)
 
@@ -1400,7 +1357,7 @@ func TestLeaderCatchUpWithoutSync(t *testing.T) {
 
 	restartWG.Wait()
 	nodes[0].RestartSync(false)
-	atomic.StoreUint32(&blockCommits, 0)
+	blockCommits.Store(0)
 	restoredWG.Wait()
 
 	data := make([]*AppRecord, 0)
@@ -1408,8 +1365,8 @@ func TestLeaderCatchUpWithoutSync(t *testing.T) {
 		d := <-nodes[i].Delivered
 		data = append(data, d)
 	}
-	for i := 0; i < numberOfNodes-1; i++ {
-		assert.Equal(t, data[i], data[i+1])
+	for i := range numberOfNodes - 1 {
+		require.Equal(t, data[i], data[i+1])
 	}
 
 	nodes[0].Submit(Request{ID: "2", ClientID: "alice"})
@@ -1419,8 +1376,8 @@ func TestLeaderCatchUpWithoutSync(t *testing.T) {
 		d := <-nodes[i].Delivered
 		data = append(data, d)
 	}
-	for i := 0; i < numberOfNodes-1; i++ {
-		assert.Equal(t, data[i], data[i+1])
+	for i := range numberOfNodes - 1 {
+		require.Equal(t, data[i], data[i+1])
 	}
 }
 
@@ -1429,9 +1386,7 @@ func TestLeaderProposeAfterRestartWithoutSync(t *testing.T) {
 	network := NewNetwork()
 	defer network.Shutdown()
 
-	testDir, err := os.MkdirTemp("", t.Name())
-	assert.NoErrorf(t, err, "generate temporary test dir")
-	defer os.RemoveAll(testDir)
+	testDir := t.TempDir()
 
 	numberOfNodes := 4
 	nodes := make([]*App, 0)
@@ -1450,9 +1405,9 @@ func TestLeaderProposeAfterRestartWithoutSync(t *testing.T) {
 	contViewWG := sync.WaitGroup{}
 	contViewWG.Add(2)
 
-	var blockCommits uint32
+	var blockCommits atomic.Uint32
 	nodes[0].LoseMessages(func(msg *smartbftprotos.Message) bool {
-		return msg.GetCommit() != nil && atomic.LoadUint32(&blockCommits) == 1
+		return msg.GetCommit() != nil && blockCommits.Load() == 1
 	})
 	baseLogger := nodes[0].logger.Desugar()
 	nodes[0].logger = baseLogger.WithOptions(zap.Hooks(func(entry zapcore.Entry) error {
@@ -1477,7 +1432,7 @@ func TestLeaderProposeAfterRestartWithoutSync(t *testing.T) {
 		return nil
 	})).Sugar()
 	nodes[0].Setup()
-	atomic.StoreUint32(&blockCommits, 1)
+	blockCommits.Store(1)
 
 	startNodes(nodes, network)
 
@@ -1485,7 +1440,7 @@ func TestLeaderProposeAfterRestartWithoutSync(t *testing.T) {
 
 	restartWG.Wait()
 	nodes[0].RestartSync(false)
-	atomic.StoreUint32(&blockCommits, 0)
+	blockCommits.Store(0)
 	restoredWG.Wait()
 
 	nodes[0].Submit(Request{ID: "2", ClientID: "alice"})
@@ -1495,8 +1450,8 @@ func TestLeaderProposeAfterRestartWithoutSync(t *testing.T) {
 		d := <-nodes[i].Delivered
 		data = append(data, d)
 	}
-	for i := 0; i < numberOfNodes-1; i++ {
-		assert.Equal(t, data[i], data[i+1])
+	for i := range numberOfNodes - 1 {
+		require.Equal(t, data[i], data[i+1])
 	}
 
 	data = make([]*AppRecord, 0)
@@ -1504,8 +1459,8 @@ func TestLeaderProposeAfterRestartWithoutSync(t *testing.T) {
 		d := <-nodes[i].Delivered
 		data = append(data, d)
 	}
-	for i := 0; i < numberOfNodes-1; i++ {
-		assert.Equal(t, data[i], data[i+1])
+	for i := range numberOfNodes - 1 {
+		require.Equal(t, data[i], data[i+1])
 	}
 }
 
@@ -1519,9 +1474,7 @@ func TestGradualStart(t *testing.T) {
 	network := NewNetwork()
 	defer network.Shutdown()
 
-	testDir, err := os.MkdirTemp("", t.Name())
-	assert.NoErrorf(t, err, "generate temporary test dir")
-	defer os.RemoveAll(testDir)
+	testDir := t.TempDir()
 
 	// start with only one node
 	n0 := newNode(uint64(1), network, t.Name(), testDir, true, 1)
@@ -1531,101 +1484,101 @@ func TestGradualStart(t *testing.T) {
 	}
 	network.StartServe()
 
-	n0.Submit(Request{ID: fmt.Sprintf("%d", 1), ClientID: "alice"})
+	n0.Submit(Request{ID: strconv.Itoa(1), ClientID: "alice"})
 
 	d0 := <-n0.Delivered
 	md := &smartbftprotos.ViewMetadata{}
 	if err := proto.Unmarshal(d0.Metadata, md); err != nil {
-		assert.NoError(t, err)
+		require.NoError(t, err)
 	}
-	assert.Equal(t, uint64(0), md.ViewId)
-	assert.Equal(t, uint64(1), md.LatestSequence)
+	require.Equal(t, uint64(0), md.GetViewId())
+	require.Equal(t, uint64(1), md.GetLatestSequence())
 	first := d0
 
 	network.StopServe()
 
 	// add a second node
 	n1 := newNode(uint64(2), network, t.Name(), testDir, true, 1)
-	atomic.AddUint64(&n1.verificationSeq, 1)
+	n1.verificationSeq.Add(1)
 
 	if err := n1.Consensus.Start(); err != nil {
 		n1.logger.Panicf("Consensus returned an error : %v", err)
 	}
 
-	atomic.AddUint64(&n0.verificationSeq, 1)
+	n0.verificationSeq.Add(1)
 	n0.Restart()
 
 	network.StartServe()
 
 	d1 := <-n1.Delivered
-	assert.Equal(t, d0, d1)
+	require.Equal(t, d0, d1)
 
-	n0.Submit(Request{ID: fmt.Sprintf("%d", 2), ClientID: "alice"})
+	n0.Submit(Request{ID: strconv.Itoa(2), ClientID: "alice"})
 
 	d0 = <-n0.Delivered
 	md = &smartbftprotos.ViewMetadata{}
 	if err := proto.Unmarshal(d0.Metadata, md); err != nil {
-		assert.NoError(t, err)
+		require.NoError(t, err)
 	}
-	assert.Equal(t, uint64(0), md.ViewId)
-	assert.Equal(t, uint64(2), md.LatestSequence)
+	require.Equal(t, uint64(0), md.GetViewId())
+	require.Equal(t, uint64(2), md.GetLatestSequence())
 	second := d0
 
 	d1 = <-n1.Delivered
-	assert.Equal(t, d0, d1)
+	require.Equal(t, d0, d1)
 
 	network.StopServe()
 
 	// add a third node
 	n2 := newNode(uint64(3), network, t.Name(), testDir, true, 1)
-	atomic.AddUint64(&n2.verificationSeq, 2)
+	n2.verificationSeq.Add(2)
 
 	if err := n2.Consensus.Start(); err != nil {
 		n2.logger.Panicf("Consensus returned an error : %v", err)
 	}
 
-	atomic.AddUint64(&n1.verificationSeq, 1)
-	atomic.AddUint64(&n0.verificationSeq, 1)
+	n1.verificationSeq.Add(1)
+	n0.verificationSeq.Add(1)
 	n0.Restart()
 	n1.Restart()
 
 	network.StartServe()
 
 	d2 := <-n2.Delivered
-	assert.Equal(t, first, d2)
+	require.Equal(t, first, d2)
 	d2 = <-n2.Delivered
-	assert.Equal(t, second, d2)
+	require.Equal(t, second, d2)
 
-	n0.Submit(Request{ID: fmt.Sprintf("%d", 3), ClientID: "alice"})
+	n0.Submit(Request{ID: strconv.Itoa(3), ClientID: "alice"})
 
 	d0 = <-n0.Delivered
 	md = &smartbftprotos.ViewMetadata{}
 	if err := proto.Unmarshal(d0.Metadata, md); err != nil {
-		assert.NoError(t, err)
+		require.NoError(t, err)
 	}
-	assert.Equal(t, uint64(0), md.ViewId)
-	assert.Equal(t, uint64(3), md.LatestSequence)
+	require.Equal(t, uint64(0), md.GetViewId())
+	require.Equal(t, uint64(3), md.GetLatestSequence())
 
 	d1 = <-n1.Delivered
-	assert.Equal(t, d0, d1)
+	require.Equal(t, d0, d1)
 	d2 = <-n2.Delivered
-	assert.Equal(t, d0, d2)
+	require.Equal(t, d0, d2)
 
 	n0.Disconnect() // disconnect the leader
 
-	n1.Submit(Request{ID: fmt.Sprintf("%d", 4), ClientID: "alice"})
-	n2.Submit(Request{ID: fmt.Sprintf("%d", 4), ClientID: "alice"})
+	n1.Submit(Request{ID: strconv.Itoa(4), ClientID: "alice"})
+	n2.Submit(Request{ID: strconv.Itoa(4), ClientID: "alice"})
 
 	d1 = <-n1.Delivered
 	md = &smartbftprotos.ViewMetadata{}
 	if err := proto.Unmarshal(d1.Metadata, md); err != nil {
-		assert.NoError(t, err)
+		require.NoError(t, err)
 	}
-	assert.Equal(t, uint64(1), md.ViewId) // view was changed
-	assert.Equal(t, uint64(4), md.LatestSequence)
+	require.Equal(t, uint64(1), md.GetViewId()) // view was changed
+	require.Equal(t, uint64(4), md.GetLatestSequence())
 
 	d2 = <-n2.Delivered
-	assert.Equal(t, d1, d2)
+	require.Equal(t, d1, d2)
 }
 
 func TestReconfigAndViewChange(t *testing.T) {
@@ -1633,9 +1586,7 @@ func TestReconfigAndViewChange(t *testing.T) {
 	network := NewNetwork()
 	defer network.Shutdown()
 
-	testDir, err := os.MkdirTemp("", t.Name())
-	assert.NoErrorf(t, err, "generate temporary test dir")
-	defer os.RemoveAll(testDir)
+	testDir := t.TempDir()
 
 	numberOfNodes := 4
 	nodes := make([]*App, 0)
@@ -1650,7 +1601,7 @@ func TestReconfigAndViewChange(t *testing.T) {
 	startNodes(nodes, network)
 
 	for i := 1; i < 5; i++ {
-		nodes[0].Submit(Request{ID: fmt.Sprintf("%d", i), ClientID: "alice"})
+		nodes[0].Submit(Request{ID: strconv.Itoa(i), ClientID: "alice"})
 	}
 
 	data := make([]*AppRecord, 0)
@@ -1658,8 +1609,8 @@ func TestReconfigAndViewChange(t *testing.T) {
 		d := <-nodes[i].Delivered
 		data = append(data, d)
 	}
-	for i := 0; i < numberOfNodes-1; i++ {
-		assert.Equal(t, data[i], data[i+1])
+	for i := range numberOfNodes - 1 {
+		require.Equal(t, data[i], data[i+1])
 	}
 
 	for i := range numberOfNodes {
@@ -1678,7 +1629,7 @@ func TestReconfigAndViewChange(t *testing.T) {
 	}
 
 	d := <-nodes[4].Delivered
-	assert.Equal(t, d, data[0]) // make sure the new added node (leader) is synced
+	require.Equal(t, d, data[0]) // make sure the new added node (leader) is synced
 
 	nodes[4].Disconnect() // leader in partition
 
@@ -1691,8 +1642,8 @@ func TestReconfigAndViewChange(t *testing.T) {
 		d := <-nodes[i].Delivered
 		data = append(data, d)
 	}
-	for i := 0; i < numberOfNodes-1; i++ {
-		assert.Equal(t, data[i], data[i+1])
+	for i := range numberOfNodes - 1 {
+		require.Equal(t, data[i], data[i+1])
 	}
 }
 
@@ -1701,9 +1652,7 @@ func TestRotateAndViewChange(t *testing.T) {
 	network := NewNetwork()
 	defer network.Shutdown()
 
-	testDir, err := os.MkdirTemp("", t.Name())
-	assert.NoErrorf(t, err, "generate temporary test dir")
-	defer os.RemoveAll(testDir)
+	testDir := t.TempDir()
 
 	numberOfNodes := 4
 	nodes := make([]*App, 0)
@@ -1761,8 +1710,8 @@ func TestRotateAndViewChange(t *testing.T) {
 		d := <-nodes[i].Delivered
 		data = append(data, d)
 	}
-	for i := 0; i < numberOfNodes-1; i++ {
-		assert.Equal(t, data[i], data[i+1])
+	for i := range numberOfNodes - 1 {
+		require.Equal(t, data[i], data[i+1])
 	}
 
 	nodes[1].Submit(Request{ID: "2", ClientID: "alice"}) // submit to second leader
@@ -1772,8 +1721,8 @@ func TestRotateAndViewChange(t *testing.T) {
 		d := <-nodes[i].Delivered
 		data = append(data, d)
 	}
-	for i := 0; i < numberOfNodes-1; i++ {
-		assert.Equal(t, data[i], data[i+1])
+	for i := range numberOfNodes - 1 {
+		require.Equal(t, data[i], data[i+1])
 	}
 
 	nodes[2].Submit(Request{ID: "3", ClientID: "alice"}) // submit to third leader
@@ -1783,8 +1732,8 @@ func TestRotateAndViewChange(t *testing.T) {
 		d := <-nodes[i].Delivered
 		data = append(data, d)
 	}
-	for i := 0; i < numberOfNodes-1; i++ {
-		assert.Equal(t, data[i], data[i+1])
+	for i := range numberOfNodes - 1 {
+		require.Equal(t, data[i], data[i+1])
 	}
 
 	nodes[3].Disconnect() // fourth leader in partition
@@ -1807,19 +1756,19 @@ func TestRotateAndViewChange(t *testing.T) {
 		d := <-nodes[i].Delivered
 		data = append(data, d)
 	}
-	for i := 0; i < numberOfNodes-1; i++ {
-		assert.Equal(t, data[i], data[i+1])
+	for i := range numberOfNodes - 1 {
+		require.Equal(t, data[i], data[i+1])
 	}
 }
 
-func TestMigrateToBlacklistAndBackAgain(t *testing.T) {
+func TestMigrateToBlacklistAndBackAgain(t *testing.T) { //nolint:tparallel // subtests are sequential phases sharing the same nodes
 	t.Parallel()
 	network := NewNetwork()
-	defer network.Shutdown()
+	t.Cleanup(func() {
+		network.Shutdown()
+	})
 
-	testDir, err := os.MkdirTemp("", t.Name())
-	assert.NoErrorf(t, err, "generate temporary test dir")
-	defer os.RemoveAll(testDir)
+	testDir := t.TempDir()
 
 	numberOfNodes := 4
 	var nodes []*App
@@ -1828,16 +1777,16 @@ func TestMigrateToBlacklistAndBackAgain(t *testing.T) {
 		nodes = append(nodes, n)
 	}
 
-	var leaderRotationDisabled uint64
-	var boundCommitSignatures uint64
+	var leaderRotationDisabled atomic.Uint64
+	var boundCommitSignatures atomic.Uint64
 
 	setupLogger := func(node *App) {
 		node.logger = node.logger.Desugar().WithOptions(zap.Hooks(func(entry zapcore.Entry) error {
 			if strings.Contains(entry.Message, "Bound 3 commit signatures to proposal") {
-				atomic.AddUint64(&boundCommitSignatures, 1)
+				boundCommitSignatures.Add(1)
 			}
 			if strings.Contains(entry.Message, "Leader rotation is disabled, will not bind signatures to proposals") {
-				atomic.AddUint64(&leaderRotationDisabled, 1)
+				leaderRotationDisabled.Add(1)
 			}
 			return nil
 		})).Sugar()
@@ -1857,8 +1806,8 @@ func TestMigrateToBlacklistAndBackAgain(t *testing.T) {
 			<-nodes[i].Delivered
 		}
 
-		assert.Equal(t, uint64(1), atomic.LoadUint64(&leaderRotationDisabled))
-		assert.Equal(t, uint64(0), atomic.LoadUint64(&boundCommitSignatures))
+		require.Equal(t, uint64(1), leaderRotationDisabled.Load())
+		require.Equal(t, uint64(0), boundCommitSignatures.Load())
 
 		nodes[0].Submit(Request{ID: "2", ClientID: "alice"})
 
@@ -1866,8 +1815,8 @@ func TestMigrateToBlacklistAndBackAgain(t *testing.T) {
 			<-nodes[i].Delivered
 		}
 
-		assert.Equal(t, uint64(2), atomic.LoadUint64(&leaderRotationDisabled))
-		assert.Equal(t, uint64(0), atomic.LoadUint64(&boundCommitSignatures))
+		require.Equal(t, uint64(2), leaderRotationDisabled.Load())
+		require.Equal(t, uint64(0), boundCommitSignatures.Load())
 	})
 
 	t.Run("Activate leader rotation", func(t *testing.T) {
@@ -1887,8 +1836,8 @@ func TestMigrateToBlacklistAndBackAgain(t *testing.T) {
 			<-nodes[i].Delivered
 		}
 
-		assert.Equal(t, uint64(2), atomic.LoadUint64(&leaderRotationDisabled))
-		assert.Equal(t, uint64(1), atomic.LoadUint64(&boundCommitSignatures))
+		require.Equal(t, uint64(2), leaderRotationDisabled.Load())
+		require.Equal(t, uint64(1), boundCommitSignatures.Load())
 
 		nodes[0].Submit(Request{ID: "4", ClientID: "alice"})
 
@@ -1896,12 +1845,11 @@ func TestMigrateToBlacklistAndBackAgain(t *testing.T) {
 			<-nodes[i].Delivered
 		}
 
-		assert.Equal(t, uint64(2), atomic.LoadUint64(&leaderRotationDisabled))
-		assert.Equal(t, uint64(2), atomic.LoadUint64(&boundCommitSignatures))
+		require.Equal(t, uint64(2), leaderRotationDisabled.Load())
+		require.Equal(t, uint64(2), boundCommitSignatures.Load())
 	})
 
 	t.Run("Deactivate leader rotation", func(t *testing.T) {
-		t.Skip()
 		network.StopServe()
 
 		for _, n := range nodes {
@@ -1918,7 +1866,8 @@ func TestMigrateToBlacklistAndBackAgain(t *testing.T) {
 			<-nodes[i].Delivered
 		}
 
-		assert.Equal(t, uint64(2), atomic.LoadUint64(&boundCommitSignatures))
+		require.Equal(t, uint64(3), leaderRotationDisabled.Load())
+		require.Equal(t, uint64(2), boundCommitSignatures.Load())
 
 		nodes[0].Submit(Request{ID: "6", ClientID: "alice"})
 
@@ -1926,7 +1875,8 @@ func TestMigrateToBlacklistAndBackAgain(t *testing.T) {
 			<-nodes[i].Delivered
 		}
 
-		assert.Equal(t, uint64(2), atomic.LoadUint64(&boundCommitSignatures))
+		require.Equal(t, uint64(4), leaderRotationDisabled.Load())
+		require.Equal(t, uint64(2), boundCommitSignatures.Load())
 	})
 }
 
@@ -1935,9 +1885,7 @@ func TestNodeInFlightFails(t *testing.T) {
 	network := NewNetwork()
 	defer network.Shutdown()
 
-	testDir, err := os.MkdirTemp("", t.Name())
-	assert.NoErrorf(t, err, "generate temporary test dir")
-	defer os.RemoveAll(testDir)
+	testDir := t.TempDir()
 
 	numberOfNodes := 4
 	nodes := make([]*App, 0)
@@ -1954,8 +1902,8 @@ func TestNodeInFlightFails(t *testing.T) {
 	var inFlightCommit sync.WaitGroup
 	inFlightCommit.Add(2)
 
-	var blockCommits uint32
-	var blockCommitsForLastNode uint32
+	var blockCommits atomic.Uint32
+	var blockCommitsForLastNode atomic.Uint32
 
 	for i := 1; i <= numberOfNodes; i++ {
 		n := newNode(uint64(i), network, t.Name(), testDir, false, 0)
@@ -1971,7 +1919,7 @@ func TestNodeInFlightFails(t *testing.T) {
 
 		id := n.ID
 		n.Consensus.Logger = baseLogger.WithOptions(zap.Hooks(func(entry zapcore.Entry) error {
-			if strings.Contains(entry.Message, "collected 2 prepares") && atomic.LoadUint32(&blockCommits) == 1 {
+			if strings.Contains(entry.Message, "collected 2 prepares") && blockCommits.Load() == 1 {
 				collectPreparesWG.Done()
 			}
 
@@ -1998,19 +1946,19 @@ func TestNodeInFlightFails(t *testing.T) {
 			if msg.GetCommit() == nil {
 				return false
 			}
-			return atomic.LoadUint32(&blockCommits) == 1
+			return blockCommits.Load() == 1
 		})
 	}
 
 	// However the last node never receives any commits.
 	nodes[len(nodes)-1].LoseMessages(func(msg *smartbftprotos.Message) bool {
-		return msg.GetCommit() != nil && atomic.LoadUint32(&blockCommitsForLastNode) == 1
+		return msg.GetCommit() != nil && blockCommitsForLastNode.Load() == 1
 	})
 
 	startNodes(nodes, network)
 
-	atomic.StoreUint32(&blockCommits, 1)
-	atomic.StoreUint32(&blockCommitsForLastNode, 1)
+	blockCommits.Store(1)
+	blockCommitsForLastNode.Store(1)
 
 	nodes[0].Submit(Request{ID: "first request", ClientID: "alice"})
 
@@ -2021,20 +1969,22 @@ func TestNodeInFlightFails(t *testing.T) {
 	var doNotCommitWG sync.WaitGroup
 	doNotCommitWG.Add(numberOfNodes)
 
+	var committedTooEarly atomic.Bool
 	for i := range numberOfNodes {
 		go func(deliverChannel chan *AppRecord) {
 			defer doNotCommitWG.Done()
 			select {
 			case <-deliverChannel:
-				assert.Fail(t, "should not have committed because first commit message should have been lost")
+				committedTooEarly.Store(true)
 			case <-time.After(time.Second):
 			}
 		}(nodes[i].Delivered)
 	}
 	doNotCommitWG.Wait()
+	require.False(t, committedTooEarly.Load(), "should not have committed because first commit message should have been lost")
 
 	// Re-enable commit messages to flow to all nodes but the last node
-	atomic.StoreUint32(&blockCommits, 0)
+	blockCommits.Store(0)
 
 	// Disconnect leader to force view change
 	nodes[0].Disconnect()
@@ -2056,19 +2006,19 @@ func TestNodeInFlightFails(t *testing.T) {
 	}
 
 	// Ensure all nodes that committed, committed the same decision
-	assert.Equal(t, d1, d2)
-	assert.Equal(t, d2, d3)
+	require.Equal(t, d1, d2)
+	require.Equal(t, d2, d3)
 
 	// Wait for in-flight view of view changer to time out
 	timeoutExpiredWG.Wait()
 	// Re-enable commits to flow to the last node
-	atomic.StoreUint32(&blockCommitsForLastNode, 0)
+	blockCommitsForLastNode.Store(0)
 	// Ensure the last node failed changing the view
 	failedViewChange.Wait()
 	// However, it eventually syncs successfully and delivers the proposal
 	select {
 	case d4 := <-nodes[3].Delivered:
-		assert.Equal(t, d3, d4)
+		require.Equal(t, d3, d4)
 	case <-time.After(time.Second * 30):
 		t.Fatalf("Didn't commit decision in a timely manner")
 	}
@@ -2079,9 +2029,7 @@ func TestBlacklistAndRedemption(t *testing.T) {
 	network := NewNetwork()
 	defer network.Shutdown()
 
-	testDir, err := os.MkdirTemp("", t.Name())
-	assert.NoErrorf(t, err, "generate temporary test dir")
-	defer os.RemoveAll(testDir)
+	testDir := t.TempDir()
 
 	numberOfNodes := 10
 	var nodes []*App
@@ -2137,7 +2085,7 @@ func TestBlacklistAndRedemption(t *testing.T) {
 	// Rotate the leader and ensure the view doesn't change, which proves
 	// node 1 never became the leader again
 	for j := range numberOfNodes {
-		nodes[1].Submit(Request{ID: fmt.Sprintf("%d", j), ClientID: "alice"})
+		nodes[1].Submit(Request{ID: strconv.Itoa(j), ClientID: "alice"})
 		for i := 1; i < numberOfNodes; i++ {
 			<-nodes[i].Delivered
 		}
@@ -2145,10 +2093,10 @@ func TestBlacklistAndRedemption(t *testing.T) {
 
 	// Ensure we remain on view 1, and that node 1 is in the blacklist
 	md := &smartbftprotos.ViewMetadata{}
-	err = proto.Unmarshal(nodes[1].lastDecision.Proposal.Metadata, md)
-	assert.NoError(t, err)
-	assert.Equal(t, uint64(1), md.ViewId)
-	assert.Equal(t, []uint64{1}, md.BlackList)
+	err := proto.Unmarshal(nodes[1].lastDecision.Proposal.Metadata, md)
+	require.NoError(t, err)
+	require.Equal(t, uint64(1), md.GetViewId())
+	require.Equal(t, []uint64{1}, md.GetBlackList())
 
 	// Next, re-connect node 1
 	nodes[0].Connect()
@@ -2169,7 +2117,7 @@ func TestBlacklistAndRedemption(t *testing.T) {
 		txID := make([]byte, 15)
 		rand.Read(txID)
 		nodes[1].Submit(Request{ID: hex.EncodeToString(txID), ClientID: "alice"})
-		for i := 0; i < len(nodes); i++ {
+		for i := range nodes {
 			select {
 			case <-nodes[i].Delivered:
 			case <-stop:
@@ -2178,8 +2126,8 @@ func TestBlacklistAndRedemption(t *testing.T) {
 		}
 		md := &smartbftprotos.ViewMetadata{}
 		err = proto.Unmarshal(nodes[1].lastDecision.Proposal.Metadata, md)
-		assert.NoError(t, err)
-		assert.Equal(t, uint64(1), md.ViewId)
+		require.NoError(t, err)
+		require.Equal(t, uint64(1), md.GetViewId())
 	}
 	go doInBackground(f, stop)
 	blacklistPrunedWG.Wait()
@@ -2192,9 +2140,7 @@ func TestBlacklistMultipleViewChanges(t *testing.T) {
 	network := NewNetwork()
 	defer network.Shutdown()
 
-	testDir, err := os.MkdirTemp("", t.Name())
-	assert.NoErrorf(t, err, "generate temporary test dir")
-	defer os.RemoveAll(testDir)
+	testDir := t.TempDir()
 
 	numberOfNodes := 10
 	var nodes []*App
@@ -2261,7 +2207,7 @@ func TestBlacklistMultipleViewChanges(t *testing.T) {
 	// Rotate the leader and ensure the view doesn't change, which proves
 	// nodes 2 and 3 never became the leader again
 	for j := range numberOfNodes {
-		nodes[5].Submit(Request{ID: fmt.Sprintf("%d", j), ClientID: "alice"})
+		nodes[5].Submit(Request{ID: strconv.Itoa(j), ClientID: "alice"})
 		for i := 3; i < numberOfNodes; i++ {
 			<-nodes[i].Delivered
 		}
@@ -2269,10 +2215,10 @@ func TestBlacklistMultipleViewChanges(t *testing.T) {
 
 	// Ensure we remain on view 2, and that nodes 2,3 are in the blacklist
 	md := &smartbftprotos.ViewMetadata{}
-	err = proto.Unmarshal(nodes[5].lastDecision.Proposal.Metadata, md)
-	assert.NoError(t, err)
-	assert.Equal(t, uint64(3), md.ViewId)
-	assert.Equal(t, []uint64{2, 3}, md.BlackList)
+	err := proto.Unmarshal(nodes[5].lastDecision.Proposal.Metadata, md)
+	require.NoError(t, err)
+	require.Equal(t, uint64(3), md.GetViewId())
+	require.Equal(t, []uint64{2, 3}, md.GetBlackList())
 
 	// Next, re-connect nodes 2,3
 	nodes[1].Connect()
@@ -2293,7 +2239,7 @@ func TestBlacklistMultipleViewChanges(t *testing.T) {
 		txID := make([]byte, 15)
 		rand.Read(txID)
 		nodes[3].Submit(Request{ID: hex.EncodeToString(txID), ClientID: "alice"})
-		for i := 0; i < len(nodes); i++ {
+		for i := range nodes {
 			select {
 			case <-nodes[i].Delivered:
 			case <-stop:
@@ -2302,8 +2248,8 @@ func TestBlacklistMultipleViewChanges(t *testing.T) {
 		}
 		md := &smartbftprotos.ViewMetadata{}
 		err = proto.Unmarshal(nodes[3].lastDecision.Proposal.Metadata, md)
-		assert.NoError(t, err)
-		assert.Equal(t, uint64(3), md.ViewId)
+		require.NoError(t, err)
+		require.Equal(t, uint64(3), md.GetViewId())
 	}
 	go doInBackground(f, stop)
 	node2RemovedFromBlacklist.Wait()
@@ -2316,14 +2262,12 @@ func TestNodeInFlightThenViewChange(t *testing.T) {
 	network := NewNetwork()
 	defer network.Shutdown()
 
-	testDir, err := os.MkdirTemp("", t.Name())
-	assert.NoErrorf(t, err, "generate temporary test dir")
-	defer os.RemoveAll(testDir)
+	testDir := t.TempDir()
 
 	numberOfNodes := 4
 	nodes := make([]*App, 0)
 
-	var blockCommits uint32
+	var blockCommits atomic.Uint32
 
 	for i := 1; i <= numberOfNodes; i++ {
 		n := newNode(uint64(i), network, t.Name(), testDir, false, 0)
@@ -2331,13 +2275,13 @@ func TestNodeInFlightThenViewChange(t *testing.T) {
 			if msg.GetCommit() == nil {
 				return false
 			}
-			return atomic.LoadUint32(&blockCommits) == 1
+			return blockCommits.Load() == 1
 		})
 		nodes = append(nodes, n)
 	}
 	startNodes(nodes, network)
 
-	atomic.StoreUint32(&blockCommits, 1)
+	blockCommits.Store(1)
 
 	nodes[0].Submit(Request{ID: "first request", ClientID: "alice"})
 
@@ -2345,19 +2289,21 @@ func TestNodeInFlightThenViewChange(t *testing.T) {
 	var wg sync.WaitGroup
 	wg.Add(numberOfNodes)
 
+	var committedTooEarly atomic.Bool
 	for i := range numberOfNodes {
 		go func(deliverChannel chan *AppRecord) {
 			defer wg.Done()
 			select {
 			case <-deliverChannel:
-				assert.Fail(t, "should not have committed because first commit message should have been lost")
+				committedTooEarly.Store(true)
 			case <-time.After(time.Second):
 			}
 		}(nodes[i].Delivered)
 	}
 
 	wg.Wait()
-	atomic.StoreUint32(&blockCommits, 0)
+	require.False(t, committedTooEarly.Load(), "should not have committed because first commit message should have been lost")
+	blockCommits.Store(0)
 
 	nodes[len(nodes)-1].Disconnect() // Last node in partition
 
@@ -2366,7 +2312,7 @@ func TestNodeInFlightThenViewChange(t *testing.T) {
 	nodes[1].Submit(Request{ID: "second request", ClientID: "alice"})
 	nodes[2].Submit(Request{ID: "second request", ClientID: "alice"})
 
-	for i := 0; i < numberOfNodes-1; i++ {
+	for i := range numberOfNodes - 1 {
 		<-nodes[i].Delivered // first request
 		<-nodes[i].Delivered // second request
 	}
@@ -2374,7 +2320,7 @@ func TestNodeInFlightThenViewChange(t *testing.T) {
 	// Submit a third request to one of the nodes
 	nodes[0].Submit(Request{ID: "third request", ClientID: "alice"})
 
-	for i := 0; i < numberOfNodes-1; i++ {
+	for i := range numberOfNodes - 1 {
 		<-nodes[i].Delivered
 	}
 
@@ -2403,14 +2349,12 @@ func TestNodeCommitTheRestPrepareAndCommittedNodeCrashesThenRecovers(t *testing.
 	network := NewNetwork()
 	defer network.Shutdown()
 
-	testDir, err := os.MkdirTemp("", t.Name())
-	assert.NoErrorf(t, err, "generate temporary test dir")
-	defer os.RemoveAll(testDir)
+	testDir := t.TempDir()
 
 	numberOfNodes := 4
 	nodes := make([]*App, 0)
 
-	var blockCommits uint32
+	var blockCommits atomic.Uint32
 
 	for i := 1; i <= numberOfNodes; i++ {
 		n := newNode(uint64(i), network, t.Name(), testDir, false, 0)
@@ -2420,7 +2364,7 @@ func TestNodeCommitTheRestPrepareAndCommittedNodeCrashesThenRecovers(t *testing.
 				if msg.GetCommit() == nil {
 					return false
 				}
-				return atomic.LoadUint32(&blockCommits) == 1
+				return blockCommits.Load() == 1
 			})
 		}
 
@@ -2428,7 +2372,7 @@ func TestNodeCommitTheRestPrepareAndCommittedNodeCrashesThenRecovers(t *testing.
 	}
 	startNodes(nodes, network)
 
-	atomic.StoreUint32(&blockCommits, 1)
+	blockCommits.Store(1)
 
 	nodes[0].Submit(Request{ID: "first request", ClientID: "alice"})
 
@@ -2442,7 +2386,7 @@ func TestNodeCommitTheRestPrepareAndCommittedNodeCrashesThenRecovers(t *testing.
 	nodes[0].Disconnect()
 
 	// Unblock commits
-	atomic.StoreUint32(&blockCommits, 0)
+	blockCommits.Store(0)
 
 	// Submit second request to all nodes to trigger view change
 	nodes[1].Submit(Request{ID: "second request", ClientID: "alice"})
@@ -2478,8 +2422,8 @@ func TestNodeCommitTheRestPrepareAndCommittedNodeCrashesThenRecovers(t *testing.
 	<-nodes[2].Delivered
 	<-nodes[3].Delivered
 
-	assert.Len(t, firstReqs, 1)
-	assert.Len(t, secondReqs, 1)
+	require.Len(t, firstReqs, 1)
+	require.Len(t, secondReqs, 1)
 }
 
 func TestNodePreparesTheRestInPartitionThenPartitionHeals(t *testing.T) {
@@ -2487,14 +2431,12 @@ func TestNodePreparesTheRestInPartitionThenPartitionHeals(t *testing.T) {
 	network := NewNetwork()
 	defer network.Shutdown()
 
-	testDir, err := os.MkdirTemp("", t.Name())
-	assert.NoErrorf(t, err, "generate temporary test dir")
-	defer os.RemoveAll(testDir)
+	testDir := t.TempDir()
 
 	numberOfNodes := 4
 	nodes := make([]*App, 0)
 
-	var blockPrepares uint32
+	var blockPrepares atomic.Uint32
 
 	for i := 1; i <= numberOfNodes; i++ {
 		n := newNode(uint64(i), network, t.Name(), testDir, false, 0)
@@ -2504,7 +2446,7 @@ func TestNodePreparesTheRestInPartitionThenPartitionHeals(t *testing.T) {
 				if msg.GetPrepare() == nil {
 					return false
 				}
-				return atomic.LoadUint32(&blockPrepares) == 1
+				return blockPrepares.Load() == 1
 			})
 		}
 
@@ -2518,7 +2460,7 @@ func TestNodePreparesTheRestInPartitionThenPartitionHeals(t *testing.T) {
 	baseLogger := nodes[0].logger.Desugar()
 	nodes[0].logger = baseLogger.WithOptions(zap.Hooks(func(entry zapcore.Entry) error {
 		// Only make not of log appends if we are interested in blocking prepares
-		if atomic.LoadUint32(&blockPrepares) == 0 {
+		if blockPrepares.Load() == 0 {
 			return nil
 		}
 		if strings.Contains(entry.Message, "LogRecord appended successfully") {
@@ -2530,7 +2472,7 @@ func TestNodePreparesTheRestInPartitionThenPartitionHeals(t *testing.T) {
 
 	startNodes(nodes, network)
 
-	atomic.StoreUint32(&blockPrepares, 1)
+	blockPrepares.Store(1)
 
 	nodes[0].Submit(Request{ID: "first request", ClientID: "alice"})
 
@@ -2540,7 +2482,7 @@ func TestNodePreparesTheRestInPartitionThenPartitionHeals(t *testing.T) {
 	// Disconnect node 0
 	nodes[0].Disconnect()
 
-	atomic.StoreUint32(&blockPrepares, 0)
+	blockPrepares.Store(0)
 
 	// Submit second request to all nodes to trigger view change
 	nodes[1].Submit(Request{ID: "second request", ClientID: "alice"})
@@ -2574,7 +2516,7 @@ func TestNodePreparesTheRestInPartitionThenPartitionHeals(t *testing.T) {
 	<-nodes[2].Delivered
 	<-nodes[3].Delivered
 
-	assert.Len(t, secondReqs, 1)
+	require.Len(t, secondReqs, 1)
 }
 
 // TestViewChangeAfterTryingToFork - there is some redundancy in the test,
@@ -2598,9 +2540,7 @@ func TestViewChangeAfterTryingToFork(t *testing.T) {
 	network := NewNetwork()
 	defer network.Shutdown()
 
-	testDir, err := os.MkdirTemp("", t.Name())
-	assert.NoErrorf(t, err, "generate temporary test dir")
-	defer os.RemoveAll(testDir)
+	testDir := t.TempDir()
 
 	numberOfNodes := 7
 	nodes := make([]*App, 0, 7)
@@ -2750,7 +2690,7 @@ func TestViewChangeAfterTryingToFork(t *testing.T) {
 	nodes[5].Disconnect()
 	nodes[4].Disconnect()
 
-	for i := 0; i < numberOfNodes-3; i++ {
+	for i := range numberOfNodes - 3 {
 		nodes[i].Submit(Request{ID: "1", ClientID: "alice"}) // submit to other nodes
 	}
 
@@ -2814,8 +2754,8 @@ ExternalLoop:
 		}
 	}
 
-	for i := 0; i < numberOfNodes-1; i++ {
-		assert.Equal(t, data[i], data[i+1])
+	for i := range numberOfNodes - 1 {
+		require.Equal(t, data[i], data[i+1])
 	}
 
 	if storeI == -1 {
@@ -2833,8 +2773,8 @@ ExternalLoop:
 		}
 	}
 
-	for i := 0; i < numberOfNodes-1; i++ {
-		assert.Equal(t, data1[i], data1[i+1])
+	for i := range numberOfNodes - 1 {
+		require.Equal(t, data1[i], data1[i+1])
 	}
 }
 
@@ -2847,9 +2787,7 @@ func TestFetchStateWhenSyncReturnsPrevView(t *testing.T) {
 	network := NewNetwork()
 	defer network.Shutdown()
 
-	testDir, err := os.MkdirTemp("", t.Name())
-	assert.NoErrorf(t, err, "generate temporary test dir")
-	defer os.RemoveAll(testDir)
+	testDir := t.TempDir()
 
 	numberOfNodes := 4
 	nodes := make([]*App, 0)
@@ -2921,8 +2859,8 @@ func TestFetchStateWhenSyncReturnsPrevView(t *testing.T) {
 		d := <-nodes[i].Delivered
 		data = append(data, d)
 	}
-	for i := 0; i < numberOfNodes-2; i++ {
-		assert.Equal(t, data[i], data[i+1])
+	for i := range numberOfNodes - 2 {
+		require.Equal(t, data[i], data[i+1])
 	}
 
 	nodes[0].Disconnect() // leader in partition
@@ -2972,8 +2910,8 @@ func TestFetchStateWhenSyncReturnsPrevView(t *testing.T) {
 		d := <-nodes[i].Delivered
 		data = append(data, d)
 	}
-	for i := 0; i < numberOfNodes-2; i++ {
-		assert.Equal(t, data[i], data[i+1])
+	for i := range numberOfNodes - 2 {
+		require.Equal(t, data[i], data[i+1])
 	}
 }
 
@@ -2983,9 +2921,7 @@ func TestLeaderStopSendHeartbeat(t *testing.T) {
 	network := NewNetwork()
 	defer network.Shutdown()
 
-	testDir, err := os.MkdirTemp("", t.Name())
-	assert.NoErrorf(t, err, "generate temporary test dir")
-	defer os.RemoveAll(testDir)
+	testDir := t.TempDir()
 
 	numberOfNodes := 4
 	nodes := make([]*App, 0, 4)
@@ -3097,8 +3033,8 @@ func TestLeaderStopSendHeartbeat(t *testing.T) {
 		data = append(data, d)
 	}
 
-	for i := 0; i < numberOfNodes-1; i++ {
-		assert.Equal(t, data[i], data[i+1])
+	for i := range numberOfNodes - 1 {
+		require.Equal(t, data[i], data[i+1])
 	}
 }
 
@@ -3121,11 +3057,7 @@ func TestTryCommittedSequenceTwice(t *testing.T) {
 	network := NewNetwork()
 	defer network.Shutdown()
 
-	testDir, err := os.MkdirTemp("", t.Name())
-	assert.NoErrorf(t, err, "generate temporary test dir")
-	defer func() {
-		_ = os.RemoveAll(testDir)
-	}()
+	testDir := t.TempDir()
 
 	numberOfNodes := 7
 	nodes := make([]*App, 0, 7)
@@ -3169,6 +3101,7 @@ func TestTryCommittedSequenceTwice(t *testing.T) {
 
 	twiceDeliverBeginCh := make(chan struct{}, 2)
 	deliverControlCh := make(chan struct{})
+	var deliverControlOnce sync.Once
 	deliverViewChangerCh := make(chan struct{})
 	go func() {
 		// 2. [twice] Waiting for the moment when both goroutines are ready to deliver the transaction
@@ -3177,6 +3110,22 @@ func TestTryCommittedSequenceTwice(t *testing.T) {
 		// 3. [twice] Started delivery in goroutine viewchanger
 		close(deliverViewChangerCh)
 	}()
+	// The view changer and the controller do not always both try to deliver the transaction, depending on the order
+	// in which node 4 gets the messages, so each goroutine waits for the other only for a while instead of forever.
+	const twiceDeliverWait = 5 * time.Second
+	readyToDeliver := func() {
+		select {
+		case twiceDeliverBeginCh <- struct{}{}:
+		default: // both goroutines were already ready once, this is a later delivery
+		}
+	}
+	waitFor := func(ch <-chan struct{}, what string) {
+		select {
+		case <-ch:
+		case <-time.After(twiceDeliverWait):
+			t.Logf("Node 4 did not %s, delivering without it", what)
+		}
+	}
 
 	for i := range numberOfNodes {
 		id := nodes[i].ID
@@ -3270,29 +3219,29 @@ func TestTryCommittedSequenceTwice(t *testing.T) {
 				// Suspension of gorutins and their launch to try to implement twice-delivery
 				if strings.Contains(entry.Message, "Delivering to app from deliverDecision the last decision proposal") {
 					// 1. [twice] Waited by the time the transaction was delivered
-					twiceDeliverBeginCh <- struct{}{}
+					readyToDeliver()
 					// 4. [twice] Started delivery in goroutine "viewchanger"
-					<-deliverViewChangerCh
+					waitFor(deliverViewChangerCh, "start delivering in the controller")
 				}
 				if strings.Contains(entry.Message, "Delivering to app from Decide the last decision proposal") {
 					// 1. [twice] Waited by the time the transaction was delivered
-					twiceDeliverBeginCh <- struct{}{}
+					readyToDeliver()
 					// 4. [twice] Started delivery in goroutine "viewchanger"
-					<-deliverViewChangerCh
+					waitFor(deliverViewChangerCh, "start delivering in the controller")
 				}
 				if strings.Contains(entry.Message, "Delivering end to app from deliverDecision the last decision proposal") {
 					// 5. [twice] "Viewchanger" delivered the transaction, let's pass the baton on
-					close(deliverControlCh)
+					deliverControlOnce.Do(func() { close(deliverControlCh) })
 				}
 				if strings.Contains(entry.Message, "Delivering end to app from Decide the last decision proposal") {
 					// 5. [twice] "Viewchanger" delivered the transaction, let's pass the baton on
-					close(deliverControlCh)
+					deliverControlOnce.Do(func() { close(deliverControlCh) })
 				}
 				if strings.Contains(entry.Message, "Delivering to app from Controller decide the last decision proposal") {
 					// 1. [twice] Waited by the time the transaction was delivered
-					twiceDeliverBeginCh <- struct{}{}
+					readyToDeliver()
 					// 6. [twice] Started delivery in goroutine "control"
-					<-deliverControlCh
+					waitFor(deliverControlCh, "deliver in the view changer")
 				}
 			}
 			return nil
@@ -3317,7 +3266,7 @@ func TestTryCommittedSequenceTwice(t *testing.T) {
 	nodes[5].Disconnect()
 	nodes[4].Disconnect()
 
-	for i := 0; i < numberOfNodes-3; i++ {
+	for i := range numberOfNodes - 3 {
 		nodes[i].Submit(Request{ID: "1", ClientID: "alice"}) // submit to other nodes
 	}
 
@@ -3381,8 +3330,8 @@ ExternalLoop:
 		}
 	}
 
-	for i := 0; i < numberOfNodes-1; i++ {
-		assert.Equal(t, data[i], data[i+1])
+	for i := range numberOfNodes - 1 {
+		require.Equal(t, data[i], data[i+1])
 	}
 
 	if storeI == -1 {
@@ -3400,8 +3349,8 @@ ExternalLoop:
 		}
 	}
 
-	for i := 0; i < numberOfNodes-1; i++ {
-		assert.Equal(t, data1[i], data1[i+1])
+	for i := range numberOfNodes - 1 {
+		require.Equal(t, data1[i], data1[i+1])
 	}
 }
 
@@ -3415,9 +3364,7 @@ func TestDecideAndAbortViewAtSameTime(t *testing.T) {
 	network := NewNetwork()
 	defer network.Shutdown()
 
-	testDir, err := os.MkdirTemp("", t.Name())
-	assert.NoErrorf(t, err, "generate temporary test dir")
-	defer os.RemoveAll(testDir)
+	testDir := t.TempDir()
 
 	numberOfNodes := 4
 	nodes := make([]*App, 0)
@@ -3471,8 +3418,8 @@ func TestDecideAndAbortViewAtSameTime(t *testing.T) {
 		d := <-nodes[i].Delivered
 		data = append(data, d)
 	}
-	for i := 0; i < numberOfNodes-1; i++ {
-		assert.Equal(t, data[i], data[i+1])
+	for i := range numberOfNodes - 1 {
+		require.Equal(t, data[i], data[i+1])
 	}
 
 	nodes[0].Submit(Request{ID: "2", ClientID: "alice"})
@@ -3500,8 +3447,8 @@ func TestDecideAndAbortViewAtSameTime(t *testing.T) {
 		}
 	}
 
-	for i := 0; i < numberOfNodes-1; i++ {
-		assert.Equal(t, data[i], data[i+1])
+	for i := range numberOfNodes - 1 {
+		require.Equal(t, data[i], data[i+1])
 	}
 }
 

@@ -11,12 +11,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hyperledger-labs/SmartBFT/internal/bft"
-	"github.com/hyperledger-labs/SmartBFT/internal/bft/mocks"
-	"github.com/hyperledger-labs/SmartBFT/pkg/types"
-	"github.com/hyperledger-labs/SmartBFT/smartbftprotos"
-	"github.com/stretchr/testify/assert"
+	"github.com/hyperledger/SmartBFT/internal/bft"
+	"github.com/hyperledger/SmartBFT/internal/bft/mocks"
+	"github.com/hyperledger/SmartBFT/pkg/types"
+	"github.com/hyperledger/SmartBFT/smartbftprotos"
 	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 )
 
@@ -33,7 +33,7 @@ var (
 
 func TestHeartbeatMonitor_New(t *testing.T) {
 	basicLog, err := zap.NewDevelopment()
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	log := basicLog.Sugar()
 
 	comm := &mocks.CommMock{}
@@ -41,13 +41,13 @@ func TestHeartbeatMonitor_New(t *testing.T) {
 
 	scheduler := make(chan time.Time)
 	hm := bft.NewHeartbeatMonitor(scheduler, log, types.DefaultConfig.LeaderHeartbeatTimeout, types.DefaultConfig.LeaderHeartbeatCount, comm, 4, handler, &atomic.Value{}, types.DefaultConfig.NumOfTicksBehindBeforeSyncing)
-	assert.NotNil(t, hm)
+	require.NotNil(t, hm)
 	hm.Close()
 }
 
 func TestHeartbeatMonitorLeader(t *testing.T) {
 	basicLog, err := zap.NewDevelopment()
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	log := basicLog.Sugar()
 
 	comm := &mocks.CommMock{}
@@ -58,8 +58,8 @@ func TestHeartbeatMonitorLeader(t *testing.T) {
 	vs.Store(bft.ViewSequence{ViewActive: true})
 	hm := bft.NewHeartbeatMonitor(scheduler, log, types.DefaultConfig.LeaderHeartbeatTimeout, types.DefaultConfig.LeaderHeartbeatCount, comm, 4, handler, vs, types.DefaultConfig.NumOfTicksBehindBeforeSyncing)
 
-	var heartBeatsSent uint32
-	var heartBeatsSentUntilViewBecomesInactive uint32
+	var heartBeatsSent atomic.Uint32
+	var heartBeatsSentUntilViewBecomesInactive atomic.Uint32
 
 	var toWG1 sync.WaitGroup
 	toWG1.Add(10)
@@ -67,18 +67,18 @@ func TestHeartbeatMonitorLeader(t *testing.T) {
 	toWG2.Add(10)
 	comm.On("BroadcastConsensus", mock.AnythingOfType("*smartbftprotos.Message")).Run(func(args mock.Arguments) {
 		msg := args[0].(*smartbftprotos.Message)
-		view := msg.GetHeartBeat().View
-		atomic.AddUint32(&heartBeatsSent, 1)
+		view := msg.GetHeartBeat().GetView()
+		heartBeatsSent.Add(1)
 		if uint64(10) == view {
 			toWG1.Done()
 		} else if uint64(20) == view {
 			toWG2.Done()
-			totalHBsSent := atomic.LoadUint32(&heartBeatsSent)
+			totalHBsSent := heartBeatsSent.Load()
 			if totalHBsSent == 20 {
 				// View is stopped
-				vs.Store(bft.ViewSequence{ViewActive: false, ProposalSeq: msg.GetHeartBeat().Seq})
+				vs.Store(bft.ViewSequence{ViewActive: false, ProposalSeq: msg.GetHeartBeat().GetSeq()})
 				// Record HB number we sent so far
-				atomic.StoreUint32(&heartBeatsSentUntilViewBecomesInactive, totalHBsSent)
+				heartBeatsSentUntilViewBecomesInactive.Store(totalHBsSent)
 			}
 		}
 	}).Return()
@@ -94,7 +94,7 @@ func TestHeartbeatMonitorLeader(t *testing.T) {
 
 	clock.advanceTime(10, scheduler)
 	// Ensure we don't advance heartbeats any longer when view is inactive
-	assert.Equal(t, atomic.LoadUint32(&heartBeatsSentUntilViewBecomesInactive), atomic.LoadUint32(&heartBeatsSent))
+	require.Equal(t, heartBeatsSentUntilViewBecomesInactive.Load(), heartBeatsSent.Load())
 
 	hm.Close()
 }
@@ -187,7 +187,7 @@ func TestHeartbeatMonitorFollower(t *testing.T) {
 	} {
 		t.Run(testCase.description, func(t *testing.T) {
 			basicLog, err := zap.NewDevelopment()
-			assert.NoError(t, err)
+			require.NoError(t, err)
 			log := basicLog.Sugar()
 
 			scheduler := make(chan time.Time)
@@ -215,8 +215,8 @@ func TestHeartbeatMonitorFollower(t *testing.T) {
 
 			start = start.Add(incrementUnit).Add(time.Second)
 
-			for i := time.Duration(1); i <= heartbeatCount*2; i++ {
-				elapsed := start.Add(incrementUnit*i + time.Millisecond)
+			for i := 1; i <= heartbeatCount*2; i++ {
+				elapsed := start.Add(time.Duration(i)*incrementUnit + time.Millisecond)
 				scheduler <- elapsed
 				hm.ProcessMsg(testCase.sender, testCase.heartbeatMessage)
 			}
@@ -232,7 +232,7 @@ func TestHeartbeatMonitorFollower(t *testing.T) {
 
 func TestHeartbeatMonitorLeaderAndFollower(t *testing.T) {
 	basicLog, err := zap.NewDevelopment()
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	log := basicLog.Sugar()
 
 	scheduler1 := make(chan time.Time)
@@ -296,7 +296,7 @@ func TestHeartbeatMonitorLeaderAndFollower(t *testing.T) {
 
 func TestHeartbeatResponseLeader(t *testing.T) {
 	basicLog, err := zap.NewDevelopment()
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	log := basicLog.Sugar()
 
 	clock := &fakeTime{time: time.Now()}
@@ -311,9 +311,9 @@ func TestHeartbeatResponseLeader(t *testing.T) {
 	comm1.On("BroadcastConsensus", mock.AnythingOfType("*smartbftprotos.Message")).Run(func(args mock.Arguments) {
 		msg := args[0].(*smartbftprotos.Message)
 		hb := msg.GetHeartBeat()
-		assert.NotNil(t, hb)
-		assert.Equal(t, uint64(5), hb.View)
-		assert.Equal(t, uint64(12), hb.Seq)
+		require.NotNil(t, hb)
+		require.Equal(t, uint64(5), hb.GetView())
+		require.Equal(t, uint64(12), hb.GetSeq())
 	})
 
 	hm1.ChangeRole(bft.Leader, 5, 0)
@@ -362,7 +362,7 @@ func TestHeartbeatResponseLeader(t *testing.T) {
 
 func TestHeartbeatResponseFollower(t *testing.T) {
 	basicLog, err := zap.NewDevelopment()
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	log := basicLog.Sugar()
 
 	clock := &fakeTime{time: time.Now()}
@@ -383,11 +383,11 @@ func TestHeartbeatResponseFollower(t *testing.T) {
 	respWG.Add(1)
 	comm1.On("SendConsensus", mock.AnythingOfType("uint64"), mock.AnythingOfType("*smartbftprotos.Message")).Run(func(args mock.Arguments) {
 		target := args[0].(uint64)
-		assert.Equal(t, uint64(2), target)
+		require.Equal(t, uint64(2), target)
 		msg := args[1].(*smartbftprotos.Message)
 		hbr := msg.GetHeartBeatResponse()
-		assert.NotNil(t, hbr)
-		assert.Equal(t, uint64(6), hbr.View)
+		require.NotNil(t, hbr)
+		require.Equal(t, uint64(6), hbr.GetView())
 		respWG.Done()
 	})
 
@@ -418,7 +418,7 @@ func TestHeartbeatResponseFollower(t *testing.T) {
 
 func TestFollowerBehindSync(t *testing.T) {
 	basicLog, err := zap.NewDevelopment()
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	log := basicLog.Sugar()
 
 	scheduler := make(chan time.Time)

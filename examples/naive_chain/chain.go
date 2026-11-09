@@ -8,8 +8,8 @@ package naive
 import (
 	"encoding/asn1"
 
-	smart "github.com/hyperledger-labs/SmartBFT/pkg/api"
-	"github.com/hyperledger-labs/SmartBFT/pkg/wal"
+	smart "github.com/hyperledger/SmartBFT/pkg/api"
+	"github.com/hyperledger/SmartBFT/pkg/wal"
 )
 
 type Block struct {
