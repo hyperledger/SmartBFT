@@ -218,14 +218,14 @@ func TestViewChangeProcess(t *testing.T) {
 
 func TestViewChangeJoinsAtFPlusOne(t *testing.T) {
 	// With 7 nodes f is 2 and the quorum is 5. A node joins the view change once it gets view change messages
-	// from f+1 = 3 nodes, and sends its view data only once it gets them from a quorum, counting its own.
+	// from f+1 = 3 nodes, and not before, and sends its view data once it gets them from Q-1 = 4 nodes, and not before.
 
 	comm := &mocks.CommMock{}
-	broadcastChan := make(chan *protos.Message)
+	broadcastChan := make(chan *protos.Message, 1)
 	comm.On("BroadcastConsensus", mock.Anything).Run(func(args mock.Arguments) {
 		broadcastChan <- args.Get(0).(*protos.Message)
 	}).Once()
-	sendChan := make(chan *protos.Message)
+	sendChan := make(chan *protos.Message, 1)
 	comm.On("SendConsensus", mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
 		sendChan <- args.Get(1).(*protos.Message)
 	}).Once()
@@ -239,50 +239,52 @@ func TestViewChangeJoinsAtFPlusOne(t *testing.T) {
 	expectAbortAndHold(controller)
 	state := &mocks.State{}
 	state.On("Save", mock.Anything, false).Return(nil)
+	ticker := make(chan time.Time)
 
 	vc := &bft.ViewChanger{
-		SelfID:        0,
-		N:             7,
-		NodesList:     []uint64{0, 1, 2, 3, 4, 5, 6},
-		Comm:          comm,
-		Signer:        signer,
-		Logger:        basicLog.Sugar(),
-		RequestsTimer: reqTimer,
-		Ticker:        make(chan time.Time),
-		InFlight:      &bft.InFlightData{},
-		Checkpoint:    &types.Checkpoint{},
-		Controller:    controller,
-		InMsqQSize:    100,
-		State:         state,
+		SelfID:            0,
+		N:                 7,
+		NodesList:         []uint64{0, 1, 2, 3, 4, 5, 6},
+		Comm:              comm,
+		Signer:            signer,
+		Logger:            basicLog.Sugar(),
+		RequestsTimer:     reqTimer,
+		Ticker:            ticker,
+		ResendTimeout:     time.Minute,
+		ViewChangeTimeout: time.Minute,
+		InFlight:          &bft.InFlightData{},
+		Checkpoint:        &types.Checkpoint{},
+		Controller:        controller,
+		InMsqQSize:        0,
+		State:             state,
 	}
 
+	now := time.Now()
 	vc.Start(0)
 	defer vc.Stop()
 
-	for sender := uint64(1); sender <= 3; sender++ {
+	// handle gives the view changer a view change message and returns once it has processed it.
+	// With no queue, the view changer takes the message right away, and it takes the tick only once it is done with it.
+	// The tick changes nothing, since no timeout has passed.
+	handle := func(sender uint64) {
 		vc.HandleMessage(sender, viewChangeMsg)
-	}
-	select {
-	case m := <-broadcastChan:
-		require.NotNil(t, m.GetViewChange(), "the node joined the view change")
-	case <-time.After(time.Minute):
-		t.Fatal("the node did not join the view change after f+1 view change messages")
-	}
-	select {
-	case <-sendChan:
-		t.Fatal("the node sent its view data without a quorum")
-	case <-time.After(100 * time.Millisecond):
+		ticker <- now
 	}
 
-	vc.HandleMessage(4, viewChangeMsg)
-	select {
-	case m := <-sendChan:
-		require.NotNil(t, m.GetViewData())
-	case <-time.After(time.Minute):
-		t.Fatal("the node did not send its view data after a quorum of view change messages")
-	}
+	handle(1)
+	handle(2)
+	require.Empty(t, broadcastChan, "the node joined the view change after f view change messages")
+
+	handle(3)
+	require.Len(t, broadcastChan, 1, "the node did not join the view change after f+1 view change messages")
+	require.NotNil(t, (<-broadcastChan).GetViewChange())
+	controller.AssertCalled(t, "AbortView", uint64(0), mock.Anything)
+	require.Empty(t, sendChan, "the node sent its view data after f+1 view change messages")
+
+	handle(4)
+	require.Len(t, sendChan, 1, "the node did not send its view data after Q-1 view change messages")
+	require.NotNil(t, (<-sendChan).GetViewData())
 	comm.AssertCalled(t, "SendConsensus", uint64(1), mock.Anything)
-	controller.AssertCalled(t, "AbortView", uint64(0), mock.Anything) // when joining
 	state.AssertNumberOfCalls(t, "Save", 1)
 }
 

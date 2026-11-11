@@ -46,8 +46,9 @@ type Configuration struct {
 
 	// ViewChangeResendInterval defined the interval in which the ViewChange message is resent.
 	ViewChangeResendInterval time.Duration
-	// ViewChangeTimeout is started when a node first receives a quorum of ViewChange messages, and defines the
-	// interval after which the node will try to initiate a view change with a higher view number.
+	// ViewChangeTimeout is started when a node starts a view change, or joins one after it receives ViewChange messages
+	// from f+1 nodes, and defines the interval after which the node will try to initiate a view change with a higher
+	// view number.
 	ViewChangeTimeout time.Duration
 
 	// LeaderHeartbeatTimeout is the interval after which, if nodes do not receive a "sign of life" from the leader,
@@ -69,7 +70,8 @@ type Configuration struct {
 	SyncOnStart bool
 
 	// SpeedUpViewChange is ignored. A node always joins a view change once it gets view change messages
-	// from f+1 nodes, since at least one of them is correct, and doesn't wait for a quorum.
+	// from f+1 nodes, since at least one of them is correct. It still sends its view data only once it gets them
+	// from Q-1 nodes, which together with its own make a quorum.
 	//
 	// Deprecated: SpeedUpViewChange has no effect, and will be removed in a later release.
 	SpeedUpViewChange bool

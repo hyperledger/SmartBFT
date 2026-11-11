@@ -433,7 +433,7 @@ func (v *ViewChanger) startViewChange(change *change) {
 func (v *ViewChanger) processViewChangeMsg(restore bool) {
 	// Join the view change once f+1 nodes want it, since at least one of them is correct. Waiting for
 	// a quorum instead can leave a correct node behind in a view that the other correct nodes have left.
-	if uint64(len(v.viewChangeMsgs.voted)) == uint64(v.f+1) || restore { // join view change
+	if len(v.viewChangeMsgs.voted) == v.f+1 || restore {
 		v.Logger.Debugf("Node %d is joining view change, last view is %d", v.SelfID, v.currView)
 		v.startViewChange(&change{v.currView, true})
 	}
