@@ -138,111 +138,152 @@ func TestStartViewChange(t *testing.T) {
 func TestViewChangeProcess(t *testing.T) {
 	// Test the view change messages handling and process until sending a viewData message
 
-	for _, testCase := range []struct {
-		description string
-		speedup     bool
-	}{
-		{
-			description: "without speedup",
-			speedup:     false,
-		},
-		{
-			description: "with speedup",
-			speedup:     true,
-		},
-	} {
-		t.Run(testCase.description, func(t *testing.T) {
-			comm := &mocks.CommMock{}
-			broadcastChan := make(chan *protos.Message)
-			comm.On("BroadcastConsensus", mock.Anything).Run(func(args mock.Arguments) {
-				m := args.Get(0).(*protos.Message)
-				broadcastChan <- m
-			}).Twice()
-			sendChan := make(chan *protos.Message)
-			comm.On("SendConsensus", mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
-				m := args.Get(1).(*protos.Message)
-				sendChan <- m
-			}).Twice()
-			signer := &mocks.SignerMock{}
-			signer.On("Sign", mock.Anything).Return([]byte{1, 2, 3})
-			basicLog, err := zap.NewDevelopment()
-			require.NoError(t, err)
-			log := basicLog.Sugar()
-			reqTimer := &mocks.RequestsTimer{}
-			reqTimer.On("StopTimers")
-			controller := &mocks.ViewController{}
-			expectAbortAndHold(controller)
-			state := &mocks.State{}
-			state.On("Save", mock.Anything, false).Return(nil)
+	comm := &mocks.CommMock{}
+	broadcastChan := make(chan *protos.Message)
+	comm.On("BroadcastConsensus", mock.Anything).Run(func(args mock.Arguments) {
+		m := args.Get(0).(*protos.Message)
+		broadcastChan <- m
+	}).Twice()
+	sendChan := make(chan *protos.Message)
+	comm.On("SendConsensus", mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
+		m := args.Get(1).(*protos.Message)
+		sendChan <- m
+	}).Twice()
+	signer := &mocks.SignerMock{}
+	signer.On("Sign", mock.Anything).Return([]byte{1, 2, 3})
+	basicLog, err := zap.NewDevelopment()
+	require.NoError(t, err)
+	log := basicLog.Sugar()
+	reqTimer := &mocks.RequestsTimer{}
+	reqTimer.On("StopTimers")
+	controller := &mocks.ViewController{}
+	expectAbortAndHold(controller)
+	state := &mocks.State{}
+	state.On("Save", mock.Anything, false).Return(nil)
 
-			vc := &bft.ViewChanger{
-				SelfID:            0,
-				N:                 4,
-				NodesList:         []uint64{0, 1, 2, 3},
-				Comm:              comm,
-				Signer:            signer,
-				Logger:            log,
-				RequestsTimer:     reqTimer,
-				Ticker:            make(chan time.Time),
-				InFlight:          &bft.InFlightData{},
-				Checkpoint:        &types.Checkpoint{},
-				Controller:        controller,
-				InMsqQSize:        100,
-				State:             state,
-				SpeedUpViewChange: testCase.speedup,
-			}
-
-			vc.Start(0)
-
-			vc.HandleMessage(1, viewChangeMsg)
-			vc.HandleMessage(2, viewChangeMsg)
-			if !testCase.speedup {
-				vc.HandleMessage(3, viewChangeMsg)
-			}
-			m := <-broadcastChan
-			require.NotNil(t, m.GetViewChange())
-			m = <-sendChan
-			require.NotNil(t, m.GetViewData())
-			comm.AssertCalled(t, "SendConsensus", uint64(1), mock.Anything)
-			state.AssertNumberOfCalls(t, "Save", 1)
-
-			// sending viewChange messages with same view doesn't make a difference
-			vc.HandleMessage(1, viewChangeMsg)
-			vc.HandleMessage(2, viewChangeMsg)
-			if !testCase.speedup {
-				vc.HandleMessage(3, viewChangeMsg)
-			}
-
-			// sending viewChange messages with bigger view doesn't make a difference
-			msg3 := proto.Clone(viewChangeMsg).(*protos.Message)
-			msg3.GetViewChange().NextView = 3
-			vc.HandleMessage(2, msg3)
-			vc.HandleMessage(1, msg3)
-			if !testCase.speedup {
-				vc.HandleMessage(3, msg3)
-			}
-
-			// sending viewChange messages with the next view
-			msg2 := proto.Clone(viewChangeMsg).(*protos.Message)
-			msg2.GetViewChange().NextView = 2
-			vc.HandleMessage(2, msg2)
-			vc.HandleMessage(1, msg2)
-			if !testCase.speedup {
-				vc.HandleMessage(3, msg2)
-			}
-			m = <-broadcastChan
-			require.NotNil(t, m.GetViewChange())
-			m = <-sendChan
-			require.NotNil(t, m.GetViewData())
-			comm.AssertCalled(t, "SendConsensus", uint64(2), mock.Anything)
-
-			reqTimer.AssertNumberOfCalls(t, "StopTimers", 2)
-			controller.AssertNumberOfCalls(t, "AbortViewAndHold", 2)
-			state.AssertNumberOfCalls(t, "Save", 2)
-
-			vc.Stop()
-		})
+	vc := &bft.ViewChanger{
+		SelfID:        0,
+		N:             4,
+		NodesList:     []uint64{0, 1, 2, 3},
+		Comm:          comm,
+		Signer:        signer,
+		Logger:        log,
+		RequestsTimer: reqTimer,
+		Ticker:        make(chan time.Time),
+		InFlight:      &bft.InFlightData{},
+		Checkpoint:    &types.Checkpoint{},
+		Controller:    controller,
+		InMsqQSize:    100,
+		State:         state,
 	}
+
+	vc.Start(0)
+
+	vc.HandleMessage(1, viewChangeMsg)
+	vc.HandleMessage(2, viewChangeMsg)
+	m := <-broadcastChan
+	require.NotNil(t, m.GetViewChange())
+	m = <-sendChan
+	require.NotNil(t, m.GetViewData())
+	comm.AssertCalled(t, "SendConsensus", uint64(1), mock.Anything)
+	state.AssertNumberOfCalls(t, "Save", 1)
+
+	// sending viewChange messages with same view doesn't make a difference
+	vc.HandleMessage(1, viewChangeMsg)
+	vc.HandleMessage(2, viewChangeMsg)
+
+	// sending viewChange messages with bigger view doesn't make a difference
+	msg3 := proto.Clone(viewChangeMsg).(*protos.Message)
+	msg3.GetViewChange().NextView = 3
+	vc.HandleMessage(2, msg3)
+	vc.HandleMessage(1, msg3)
+
+	// sending viewChange messages with the next view
+	msg2 := proto.Clone(viewChangeMsg).(*protos.Message)
+	msg2.GetViewChange().NextView = 2
+	vc.HandleMessage(2, msg2)
+	vc.HandleMessage(1, msg2)
+	m = <-broadcastChan
+	require.NotNil(t, m.GetViewChange())
+	m = <-sendChan
+	require.NotNil(t, m.GetViewData())
+	comm.AssertCalled(t, "SendConsensus", uint64(2), mock.Anything)
+
+	reqTimer.AssertNumberOfCalls(t, "StopTimers", 2)
+	controller.AssertNumberOfCalls(t, "AbortViewAndHold", 2)
+	state.AssertNumberOfCalls(t, "Save", 2)
+
+	vc.Stop()
+}
+
+func TestViewChangeJoinsAtFPlusOne(t *testing.T) {
+	// With 7 nodes f is 2 and the quorum is 5. A node joins the view change once it gets view change messages
+	// from f+1 = 3 nodes, and sends its view data only once it gets them from a quorum, counting its own.
+
+	comm := &mocks.CommMock{}
+	broadcastChan := make(chan *protos.Message)
+	comm.On("BroadcastConsensus", mock.Anything).Run(func(args mock.Arguments) {
+		broadcastChan <- args.Get(0).(*protos.Message)
+	}).Once()
+	sendChan := make(chan *protos.Message)
+	comm.On("SendConsensus", mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
+		sendChan <- args.Get(1).(*protos.Message)
+	}).Once()
+	signer := &mocks.SignerMock{}
+	signer.On("Sign", mock.Anything).Return([]byte{1, 2, 3})
+	basicLog, err := zap.NewDevelopment()
+	require.NoError(t, err)
+	reqTimer := &mocks.RequestsTimer{}
+	reqTimer.On("StopTimers")
+	controller := &mocks.ViewController{}
+	expectAbortAndHold(controller)
+	state := &mocks.State{}
+	state.On("Save", mock.Anything, false).Return(nil)
+
+	vc := &bft.ViewChanger{
+		SelfID:        0,
+		N:             7,
+		NodesList:     []uint64{0, 1, 2, 3, 4, 5, 6},
+		Comm:          comm,
+		Signer:        signer,
+		Logger:        basicLog.Sugar(),
+		RequestsTimer: reqTimer,
+		Ticker:        make(chan time.Time),
+		InFlight:      &bft.InFlightData{},
+		Checkpoint:    &types.Checkpoint{},
+		Controller:    controller,
+		InMsqQSize:    100,
+		State:         state,
+	}
+
+	vc.Start(0)
+	defer vc.Stop()
+
+	for sender := uint64(1); sender <= 3; sender++ {
+		vc.HandleMessage(sender, viewChangeMsg)
+	}
+	select {
+	case m := <-broadcastChan:
+		require.NotNil(t, m.GetViewChange(), "the node joined the view change")
+	case <-time.After(time.Minute):
+		t.Fatal("the node did not join the view change after f+1 view change messages")
+	}
+	select {
+	case <-sendChan:
+		t.Fatal("the node sent its view data without a quorum")
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	vc.HandleMessage(4, viewChangeMsg)
+	select {
+	case m := <-sendChan:
+		require.NotNil(t, m.GetViewData())
+	case <-time.After(time.Minute):
+		t.Fatal("the node did not send its view data after a quorum of view change messages")
+	}
+	comm.AssertCalled(t, "SendConsensus", uint64(1), mock.Anything)
+	controller.AssertCalled(t, "AbortView", uint64(0), mock.Anything) // when joining
+	state.AssertNumberOfCalls(t, "Save", 1)
 }
 
 func TestViewDataProcess(t *testing.T) {

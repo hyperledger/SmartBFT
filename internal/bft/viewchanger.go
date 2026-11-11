@@ -81,7 +81,6 @@ type ViewChanger struct {
 	N                  uint64
 	f                  int
 	quorum             int
-	SpeedUpViewChange  bool
 	LeaderRotation     bool
 	DecisionsPerLeader uint64
 
@@ -432,7 +431,9 @@ func (v *ViewChanger) startViewChange(change *change) {
 }
 
 func (v *ViewChanger) processViewChangeMsg(restore bool) {
-	if ((uint64(len(v.viewChangeMsgs.voted)) == uint64(v.f+1)) && v.SpeedUpViewChange) || restore { // join view change
+	// Join the view change once f+1 nodes want it, since at least one of them is correct. Waiting for
+	// a quorum instead can leave a correct node behind in a view that the other correct nodes have left.
+	if uint64(len(v.viewChangeMsgs.voted)) == uint64(v.f+1) || restore { // join view change
 		v.Logger.Debugf("Node %d is joining view change, last view is %d", v.SelfID, v.currView)
 		v.startViewChange(&change{v.currView, true})
 	}
@@ -440,10 +441,6 @@ func (v *ViewChanger) processViewChangeMsg(restore bool) {
 		return
 	}
 	// send view data
-	if !v.SpeedUpViewChange {
-		v.Logger.Debugf("Node %d is joining view change, last view is %d", v.SelfID, v.currView)
-		v.startViewChange(&change{v.currView, true})
-	}
 	// Stop the current view before writing the view change record. The view may still
 	// append a commit after that record, which would leave the commit without its
 	// pre-prepare in the WAL. AbortViewAndHold waits for the view to stop, keeps the

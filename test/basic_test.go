@@ -1914,7 +1914,6 @@ func TestNodeInFlightFails(t *testing.T) {
 		n.Consensus.Config.LeaderHeartbeatTimeout = time.Second * 20 // Force view change sooner to speedup test
 		n.Consensus.Config.RequestForwardTimeout = time.Second * 25  // Prevent first node to forward after view change
 		n.Consensus.Config.RequestComplainTimeout = time.Second * 30 // Must be bigger than the forward timeout
-		n.Consensus.Config.SpeedUpViewChange = false
 		nodes = append(nodes, n)
 
 		baseLogger := n.logger.Desugar()

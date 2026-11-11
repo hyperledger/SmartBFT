@@ -68,9 +68,10 @@ type Configuration struct {
 	// SyncOnStart is a flag indicating whether a sync is required on startup.
 	SyncOnStart bool
 
-	// SpeedUpViewChange is a flag indicating whether a node waits for only f+1 view change messages to join
-	// the view change (hence speeds up the view change process), or it waits for a quorum before joining.
-	// Waiting only for f+1 is considered less safe.
+	// SpeedUpViewChange is ignored. A node always joins a view change once it gets view change messages
+	// from f+1 nodes, since at least one of them is correct, and doesn't wait for a quorum.
+	//
+	// Deprecated: SpeedUpViewChange has no effect, and will be removed in a later release.
 	SpeedUpViewChange bool
 
 	// LeaderRotation is a flag indicating whether leader rotation is active.
@@ -106,7 +107,6 @@ var DefaultConfig = Configuration{
 	NumOfTicksBehindBeforeSyncing: 10,
 	CollectTimeout:                time.Second,
 	SyncOnStart:                   false,
-	SpeedUpViewChange:             false,
 	LeaderRotation:                true,
 	DecisionsPerLeader:            3,
 	RequestMaxBytes:               10 * 1024,
