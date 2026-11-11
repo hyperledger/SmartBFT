@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/hyperledger/SmartBFT/internal/bft"
+	"github.com/hyperledger/SmartBFT/pkg/types"
 	"github.com/hyperledger/SmartBFT/smartbftprotos"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
@@ -1078,6 +1079,7 @@ func TestSyncSameHeightPreservesDecisionsInView(t *testing.T) {
 	// handler.Sync() directly, bypassing any view change.
 	// The sender must be the leader (ID 1) to pass the leaderID check.
 	fakeHeartbeat := &smartbftprotos.Message{
+		Version: types.ProtocolVersion,
 		Content: &smartbftprotos.Message_HeartBeat{
 			HeartBeat: &smartbftprotos.HeartBeat{
 				View: 1, // higher than node 4's current view (0)

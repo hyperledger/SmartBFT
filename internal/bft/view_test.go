@@ -51,6 +51,7 @@ var (
 	wrongDigest = wrongProposal.Digest()
 
 	prePrepare = &protos.Message{
+		Version: types.ProtocolVersion,
 		Content: &protos.Message_PrePrepare{
 			PrePrepare: &protos.PrePrepare{
 				View: 1,
@@ -69,6 +70,7 @@ var (
 	}
 
 	prepare = &protos.Message{
+		Version: types.ProtocolVersion,
 		Content: &protos.Message_Prepare{
 			Prepare: &protos.Prepare{
 				View:   1,
@@ -79,6 +81,7 @@ var (
 	}
 
 	commit1 = &protos.Message{
+		Version: types.ProtocolVersion,
 		Content: &protos.Message_Commit{
 			Commit: &protos.Commit{
 				View:   1,
@@ -93,6 +96,7 @@ var (
 	}
 
 	commit2 = &protos.Message{
+		Version: types.ProtocolVersion,
 		Content: &protos.Message_Commit{
 			Commit: &protos.Commit{
 				View:   1,
@@ -107,6 +111,7 @@ var (
 	}
 
 	commit3 = &protos.Message{
+		Version: types.ProtocolVersion,
 		Content: &protos.Message_Commit{
 			Commit: &protos.Commit{
 				View:   1,

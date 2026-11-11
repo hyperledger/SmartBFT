@@ -7,7 +7,6 @@ package test
 
 import (
 	"slices"
-	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -16,6 +15,7 @@ import (
 	"github.com/hyperledger/SmartBFT/pkg/types"
 	"github.com/hyperledger/SmartBFT/smartbftprotos"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/protobuf/proto"
 )
 
 // TestMessagesCarryProtocolVersion makes sure that every consensus message a node sends carries its protocol version,
@@ -97,9 +97,11 @@ func TestMessagesCarryProtocolVersion(t *testing.T) {
 	require.Empty(t, unversioned, "messages were sent without protocol version %d", types.ProtocolVersion)
 }
 
-// TestMixedProtocolVersions makes sure that nodes keep working together with nodes of an earlier release,
-// which send messages without a version, and ignore the messages of a node with a later protocol version.
-// The other nodes are simulated by setting the version of every message they send.
+// TestMixedProtocolVersions makes sure that nodes ignore the messages of nodes of another protocol version,
+// whether of an earlier release, which send messages without a version or with version 1, or of a later one.
+// The other nodes are simulated by setting the version of every message they send. A simulated node of version 1 also
+// ignores the messages of later versions it receives, as v1.0.3 does. A real node without a version would process them
+// with the old protocol, which the harness can't run, so those cases only check that the other nodes ignore it.
 func TestMixedProtocolVersions(t *testing.T) {
 	t.Parallel()
 
@@ -108,14 +110,21 @@ func TestMixedProtocolVersions(t *testing.T) {
 		version     uint64   // the protocol version the other nodes send
 		others      []uint64 // the other nodes
 	}{
-		{description: "a follower of an earlier release", version: 0, others: []uint64{4}},
-		{description: "the leader of an earlier release", version: 0, others: []uint64{1}},
-		{description: "half of the nodes of an earlier release", version: 0, others: []uint64{1, 2}},
+		{description: "a follower without a version", version: 0, others: []uint64{4}},
+		{description: "the leader without a version", version: 0, others: []uint64{1}},
+		{description: "a follower of version 1", version: 1, others: []uint64{4}},
+		{description: "the leader of version 1", version: 1, others: []uint64{1}},
 		{description: "a follower of a later protocol version", version: types.ProtocolVersion + 1, others: []uint64{4}},
 		{description: "the leader of a later protocol version", version: types.ProtocolVersion + 1, others: []uint64{1}},
+		{description: "half of the nodes without a version, with the leader", version: 0, others: []uint64{1, 2}},
+		{description: "half of the nodes without a version, without the leader", version: 0, others: []uint64{3, 4}},
+		{description: "half of the nodes of version 1, with the leader", version: 1, others: []uint64{1, 2}},
+		{description: "half of the nodes of version 1, without the leader", version: 1, others: []uint64{3, 4}},
 	} {
 		t.Run(test.description, func(t *testing.T) {
 			t.Parallel()
+			require.False(t, types.SupportedProtocolVersion(test.version))
+
 			network := NewNetwork()
 			defer network.Shutdown()
 
@@ -132,55 +141,53 @@ func TestMixedProtocolVersions(t *testing.T) {
 						m.Version = test.version
 					})
 				}
+				if test.version == 1 {
+					nodes[id-1].LoseMessages(func(m *smartbftprotos.Message) bool { return m.GetVersion() > 1 })
+				}
 			}
 
 			startNodes(nodes, network)
 
-			if !types.SupportedProtocolVersion(test.version) {
-				// the messages of the other node are ignored, so the remaining nodes decide without it,
-				// after a view change if it is the leader
-				var remaining []*App
-				for _, n := range nodes {
-					if !slices.Contains(test.others, n.ID) {
-						remaining = append(remaining, n)
+			var remaining []*App
+			for _, n := range nodes {
+				if !slices.Contains(test.others, n.ID) {
+					remaining = append(remaining, n)
+				}
+			}
+			for _, n := range nodes {
+				n.Submit(Request{ID: "1", ClientID: "alice"})
+			}
+
+			if len(remaining) < 3 { // fewer than a quorum on either side
+				// neither side decides, through the complaints and the view change attempts that follow
+				timeout := time.After(5 * nodes[0].Consensus.Config.RequestComplainTimeout)
+				for {
+					select {
+					case <-timeout:
+						return
+					case <-nodes[0].Delivered:
+					case <-nodes[1].Delivered:
+					case <-nodes[2].Delivered:
+					case <-nodes[3].Delivered:
 					}
+					t.Fatal("a node delivered a decision without a quorum of its protocol version")
 				}
-				for _, n := range remaining {
-					n.Submit(Request{ID: "1", ClientID: "alice"})
-				}
-				data := make([]*AppRecord, 0, len(remaining))
-				for _, n := range remaining {
-					data = append(data, delivered(t, n))
-				}
-				for i := range len(data) - 1 {
-					require.Equal(t, data[i], data[i+1])
-				}
-				return
 			}
 
-			// requests are decided, and every node delivers the same blocks
-			for i := 1; i <= 3; i++ {
-				nodes[0].Submit(Request{ID: strconv.Itoa(i), ClientID: "alice"})
-			}
-			data := make([]*AppRecord, 0, numberOfNodes)
-			for i := range numberOfNodes {
-				data = append(data, delivered(t, nodes[i]))
-			}
-			for i := range numberOfNodes - 1 {
-				require.Equal(t, data[i], data[i+1])
-			}
-
-			// a view change completes too: the leader goes away, and the others decide a new request
-			nodes[0].Disconnect()
-			for i := 1; i < numberOfNodes; i++ {
-				nodes[i].Submit(Request{ID: "4", ClientID: "bob"})
-			}
-			data = data[:0]
-			for i := 1; i < numberOfNodes; i++ {
-				data = append(data, delivered(t, nodes[i]))
+			// the messages of the other node are ignored, so the remaining nodes decide without it,
+			// after a view change if it is the leader
+			data := make([]*AppRecord, 0, len(remaining))
+			for _, n := range remaining {
+				data = append(data, delivered(t, n))
 			}
 			for i := range len(data) - 1 {
 				require.Equal(t, data[i], data[i+1])
+			}
+			if slices.Contains(test.others, 1) {
+				// the leader of view 0 was ignored, so the decision was made in a later view
+				md := &smartbftprotos.ViewMetadata{}
+				require.NoError(t, proto.Unmarshal(data[0].Metadata, md))
+				require.NotZero(t, md.GetViewId(), "the remaining nodes decided on a proposal of the ignored leader")
 			}
 		})
 	}

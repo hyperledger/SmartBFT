@@ -485,6 +485,7 @@ func makeHeartBeatResponse(view uint64) *smartbftprotos.Message {
 
 func makeHeartBeat(view, seq uint64) *smartbftprotos.Message {
 	hb := &smartbftprotos.Message{
+		Version: types.ProtocolVersion,
 		Content: &smartbftprotos.Message_HeartBeat{
 			HeartBeat: &smartbftprotos.HeartBeat{
 				View: view,
