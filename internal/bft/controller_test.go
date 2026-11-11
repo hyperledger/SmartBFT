@@ -1473,6 +1473,7 @@ func TestDeliverTwiceOnceFromSyncAndOnceFromViewData(t *testing.T) {
 
 var (
 	prePrepareSeq1View0 = &protos.Message{
+		Version: types.ProtocolVersion,
 		Content: &protos.Message_PrePrepare{
 			PrePrepare: &protos.PrePrepare{
 				View: 0,
@@ -1499,6 +1500,7 @@ var (
 		VerificationSequence: 1,
 	}
 	prepareSeq1View0 = &protos.Message{
+		Version: types.ProtocolVersion,
 		Content: &protos.Message_Prepare{
 			Prepare: &protos.Prepare{
 				View:   0,
@@ -1708,6 +1710,7 @@ func TestControllerMessageVersion(t *testing.T) {
 		}
 
 		msg := proto.Clone(heartbeat).(*protos.Message)
+		msg.Version = 0 // as the components build their messages
 		controller.SendConsensus(2, msg)
 		require.Len(t, sent, 1)
 		require.Equal(t, types.ProtocolVersion, sent[0].GetVersion())
@@ -1719,7 +1722,7 @@ func TestControllerMessageVersion(t *testing.T) {
 		require.Len(t, sent, 3)
 		for _, m := range sent {
 			require.Equal(t, types.ProtocolVersion, m.GetVersion())
-			require.Same(t, sent[0], m, "a new message was made for each node")
+			require.Same(t, sent[0], m, "the message should be made once for all the nodes")
 		}
 		require.Zero(t, msg.GetVersion(), "the message passed in was modified")
 
@@ -1733,7 +1736,8 @@ func TestControllerMessageVersion(t *testing.T) {
 		version     uint64
 		processed   bool
 	}{
-		{description: "a message without a version, from a node that predates versions", version: 0, processed: true},
+		{description: "a message without a version, from a node that predates versions", version: 0, processed: false},
+		{description: "a message of an earlier version", version: types.MinSupportedProtocolVersion - 1, processed: false},
 		{description: "a message of the current version", version: types.ProtocolVersion, processed: true},
 		{description: "a message of a later version", version: types.ProtocolVersion + 1, processed: false},
 	} {
@@ -1758,11 +1762,14 @@ func TestControllerMessageVersion(t *testing.T) {
 		})
 	}
 
-	t.Run("a message of an unsupported version is warned about once per sender and version", func(t *testing.T) {
-		var warnings atomic.Int32
+	t.Run("a message of an unsupported version is warned about once per sender", func(t *testing.T) {
+		var warnings, unversioned atomic.Int32
 		logger := basicLog.WithOptions(zap.Hooks(func(entry zapcore.Entry) error {
-			if entry.Level == zapcore.WarnLevel && strings.Contains(entry.Message, "of protocol version") {
+			if entry.Level == zapcore.WarnLevel && strings.Contains(entry.Message, "ignoring its messages") {
 				warnings.Add(1)
+				if strings.Contains(entry.Message, "without a protocol version") {
+					unversioned.Add(1)
+				}
 			}
 			return nil
 		})).Sugar()
@@ -1775,10 +1782,15 @@ func TestControllerMessageVersion(t *testing.T) {
 		}
 		require.Equal(t, int32(1), warnings.Load())
 
-		controller.ProcessMessages(3, msg) // another sender
 		msg = proto.Clone(msg).(*protos.Message)
 		msg.Version = types.ProtocolVersion + 2
-		controller.ProcessMessages(2, msg) // another version
-		require.Equal(t, int32(3), warnings.Load())
+		controller.ProcessMessages(2, msg) // another version, so that a faulty sender can't grow what is kept
+		require.Equal(t, int32(1), warnings.Load())
+
+		msg = proto.Clone(msg).(*protos.Message)
+		msg.Version = 0
+		controller.ProcessMessages(3, msg) // another sender, without a version
+		require.Equal(t, int32(2), warnings.Load())
+		require.Equal(t, int32(1), unversioned.Load(), "a sender without a version gets its own warning")
 	})
 }

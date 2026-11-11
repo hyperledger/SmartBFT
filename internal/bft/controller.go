@@ -140,14 +140,9 @@ type Controller struct {
 	StartedWG *sync.WaitGroup
 	syncLock  sync.Mutex
 
-	// unsupportedVersions holds the senders and versions of messages that were ignored for their protocol version,
-	// so that each is warned about once.
-	unsupportedVersions sync.Map
-}
-
-type senderVersion struct {
-	sender  uint64
-	version uint64
+	// unsupportedVersionSenders holds the senders of messages that were ignored for their protocol version,
+	// so that each is warned about once. It is bounded by the number of nodes.
+	unsupportedVersionSenders sync.Map
 }
 
 func (c *Controller) blacklist() []uint64 {
@@ -329,10 +324,18 @@ func (c *Controller) ProcessMessages(sender uint64, m *protos.Message) {
 	c.Logger.Debugf("%d got message from %d: %s", c.ID, sender, MsgToString(m))
 	if !types.SupportedProtocolVersion(m.GetVersion()) {
 		// another version of the protocol is not compatible with this one, so its messages are not processed
-		if _, warned := c.unsupportedVersions.LoadOrStore(senderVersion{sender: sender, version: m.GetVersion()}, struct{}{}); !warned {
-			c.Logger.Warnf("%d got message from %d of protocol version %d, but supports versions %d to %d, ignoring its messages; "+
-				"nodes of different protocol versions must not run in the same cluster",
-				c.ID, sender, m.GetVersion(), types.MinSupportedProtocolVersion, types.ProtocolVersion)
+		if _, warned := c.unsupportedVersionSenders.LoadOrStore(sender, struct{}{}); !warned {
+			if m.GetVersion() == 0 {
+				// unlike a node of version 1, such a node doesn't ignore this node's messages
+				c.Logger.Warnf("%d got message from %d without a protocol version, ignoring its messages; "+
+					"the sender predates protocol versions and processes this node's messages with the old protocol, "+
+					"which is not safe: it must be upgraded to v1.0.3 first, and the cluster upgraded to version %d with downtime",
+					c.ID, sender, types.ProtocolVersion)
+			} else {
+				c.Logger.Warnf("%d got message from %d of protocol version %d, but supports versions %d to %d, ignoring its messages; "+
+					"nodes of different protocol versions must not run in the same cluster",
+					c.ID, sender, m.GetVersion(), types.MinSupportedProtocolVersion, types.ProtocolVersion)
+			}
 		} else {
 			c.Logger.Debugf("%d ignored message from %d of protocol version %d", c.ID, sender, m.GetVersion())
 		}
@@ -920,6 +923,8 @@ func (c *Controller) Start(startViewNumber uint64, startProposalSequence uint64,
 
 	Q, F := computeQuorum(c.N)
 	c.Logger.Debugf("The number of nodes (N) is %d, F is %d, and the quorum size is %d", c.N, F, Q)
+	c.Logger.Infof("Node %d runs protocol version %d, and accepts messages of versions %d to %d",
+		c.ID, types.ProtocolVersion, types.MinSupportedProtocolVersion, types.ProtocolVersion)
 	c.quorum = Q
 
 	c.verificationSequence.Store(verificationSequence)

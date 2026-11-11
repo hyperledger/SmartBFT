@@ -12,12 +12,19 @@ import (
 )
 
 func TestSupportedProtocolVersion(t *testing.T) {
-	require.True(t, SupportedProtocolVersion(0), "messages without a version are accepted")
-	require.True(t, SupportedProtocolVersion(ProtocolVersion))
+	require.False(t, SupportedProtocolVersion(0), "messages without a version are not accepted")
+	require.False(t, SupportedProtocolVersion(1), "messages of v1.0.3 are not accepted")
+	require.True(t, SupportedProtocolVersion(2))
 	require.False(t, SupportedProtocolVersion(ProtocolVersion+1))
 
-	// once a change raises the minimum, earlier versions are no longer accepted
-	require.False(t, supportedProtocolVersion(1, 2, 2))
-	require.True(t, supportedProtocolVersion(2, 2, 2))
-	require.False(t, supportedProtocolVersion(3, 2, 2))
+	// a range of versions
+	require.False(t, supportedProtocolVersion(1, 2, 3))
+	require.True(t, supportedProtocolVersion(2, 2, 3))
+	require.True(t, supportedProtocolVersion(3, 2, 3))
+	require.False(t, supportedProtocolVersion(4, 2, 3))
+
+	// a single version
+	require.False(t, supportedProtocolVersion(2, 3, 3))
+	require.True(t, supportedProtocolVersion(3, 3, 3))
+	require.False(t, supportedProtocolVersion(4, 3, 3))
 }
