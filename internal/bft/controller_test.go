@@ -1185,14 +1185,15 @@ func TestRotateFromFollowerToLeader(t *testing.T) {
 }
 
 func TestDeliverTwiceOnceFromSyncAndOnceFromViewData(t *testing.T) {
-	// In this scenario a decision is delivered twice.
+	// In this scenario a decision could be delivered twice.
 	// Once by the synchronizer and a second time by the view data received during a view change.
-	// In the beginning there is a view change timeout and there is a view still running concurrently.
-	// Afterwards the view change is successful, but it does not include a decision made during the concurrent view.
+	// In the beginning there is a view change timeout, and the synchronizer is called.
+	// Afterwards the view change is successful, but it does not include a decision the other nodes made meanwhile.
 	// Later there is a second view change timeout and the synchronizer is called and delivers the decision.
 	// The checkpoint should be updated accordingly.
 	// Then the node receives a view data message which include the decision.
 	// If the checkpoint was updated correctly then this decision should not be delivered twice.
+	// The node never starts again a view it left, so it starts no view after a sync.
 
 	basicLog, err := zap.NewDevelopment()
 	require.NoError(t, err)
@@ -1386,7 +1387,6 @@ func TestDeliverTwiceOnceFromSyncAndOnceFromViewData(t *testing.T) {
 
 	synchronizerWG.Add(1)
 	commSendWG.Add(6) // fetch and send state after sync
-	leaderMonWG.Add(1)
 	ticker <- startTime.Add(5 * time.Second)
 	ticker <- startTime.Add(10 * time.Second)
 	ticker <- startTime.Add(9 * time.Second)
@@ -1395,22 +1395,8 @@ func TestDeliverTwiceOnceFromSyncAndOnceFromViewData(t *testing.T) {
 	synchronizerWG.Wait()
 	commSendWG.Wait()
 	synchronizer.AssertNumberOfCalls(t, "Sync", 1)
-	leaderMonWG.Wait()
 
-	// Concurrent view is running and a decision is delivered (by the other nodes)
-
-	commSendWG.Add(6) // send prepares
-	controller.ProcessMessages(1, prePrepareSeq1View0)
-	commSendWG.Wait()
-
-	commSendWG.Add(6) // send commits
-	controller.ProcessMessages(1, prepareSeq1View0)
-	controller.ProcessMessages(2, prepareSeq1View0)
-	controller.ProcessMessages(3, prepareSeq1View0)
-	controller.ProcessMessages(7, prepareSeq1View0)
-	commSendWG.Wait()
-
-	// A view change occurs (the new view message does not include the decision made by the concurrent view)
+	// A view change occurs (the new view message does not include the decision the other nodes made meanwhile)
 
 	verifierSigWG.Add(5)
 	leaderMonWG.Add(1)
@@ -1447,7 +1433,6 @@ func TestDeliverTwiceOnceFromSyncAndOnceFromViewData(t *testing.T) {
 	ticker <- startTime.Add(25 * time.Second) // view change timeout (with backoff)
 	synchronizerWG.Wait()
 	commSendWG.Wait()
-	leaderMonWG.Wait() // change view after sync returns
 	synchronizer.AssertNumberOfCalls(t, "Sync", 2)
 
 	// The view change continues
@@ -1472,43 +1457,6 @@ func TestDeliverTwiceOnceFromSyncAndOnceFromViewData(t *testing.T) {
 }
 
 var (
-	prePrepareSeq1View0 = &protos.Message{
-		Version: types.ProtocolVersion,
-		Content: &protos.Message_PrePrepare{
-			PrePrepare: &protos.PrePrepare{
-				View: 0,
-				Seq:  1,
-				Proposal: &protos.Proposal{
-					Header:  []byte{0},
-					Payload: []byte{1},
-					Metadata: bft.MarshalOrPanic(&protos.ViewMetadata{
-						LatestSequence: 1,
-						ViewId:         0,
-					}),
-					VerificationSequence: 1,
-				},
-			},
-		},
-	}
-	proposalSeq1View0 = &types.Proposal{
-		Header:  []byte{0},
-		Payload: []byte{1},
-		Metadata: bft.MarshalOrPanic(&protos.ViewMetadata{
-			LatestSequence: 1,
-			ViewId:         0,
-		}),
-		VerificationSequence: 1,
-	}
-	prepareSeq1View0 = &protos.Message{
-		Version: types.ProtocolVersion,
-		Content: &protos.Message_Prepare{
-			Prepare: &protos.Prepare{
-				View:   0,
-				Seq:    1,
-				Digest: proposalSeq1View0.Digest(),
-			},
-		},
-	}
 	viewDataSeq1View3    = createViewDataForDeliverTwiceTest(3, 1)
 	viewDataMsgSeq1View3 = &protos.Message{
 		Content: &protos.Message_ViewData{

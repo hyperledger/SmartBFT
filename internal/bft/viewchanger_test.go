@@ -7,6 +7,7 @@ package bft_test
 
 import (
 	"errors"
+	"fmt"
 	"slices"
 	"strings"
 	"sync"
@@ -94,6 +95,7 @@ func expectAbortAndHold(controller *mocks.ViewController) {
 	controller.On("AbortView", mock.Anything, mock.Anything)
 	controller.On("AbortViewAndHold", mock.Anything, mock.Anything).Return(true)
 	controller.On("ReleaseViewWrite")
+	controller.On("LeaveView", mock.Anything)
 }
 
 func TestStartViewChange(t *testing.T) {
@@ -146,6 +148,24 @@ type viewChangeTest struct {
 	sendChan      chan *protos.Message
 	ticker        chan time.Time
 	now           time.Time
+
+	lock   sync.Mutex
+	events []string // what the view changer did, in order
+}
+
+func (vt *viewChangeTest) record(event string) {
+	vt.lock.Lock()
+	defer vt.lock.Unlock()
+	vt.events = append(vt.events, event)
+}
+
+// takeEvents returns what the view changer did since the last call.
+func (vt *viewChangeTest) takeEvents() []string {
+	vt.lock.Lock()
+	defer vt.lock.Unlock()
+	events := vt.events
+	vt.events = nil
+	return events
 }
 
 // newViewChangeTest starts a view changer that expects the given number of view changes.
@@ -161,9 +181,11 @@ func newViewChangeTest(t *testing.T, n uint64, viewChanges int) *viewChangeTest 
 		now:           time.Now(),
 	}
 	vt.comm.On("BroadcastConsensus", mock.Anything).Run(func(args mock.Arguments) {
+		vt.record("broadcast view change")
 		vt.broadcastChan <- args.Get(0).(*protos.Message)
 	}).Times(viewChanges)
 	vt.comm.On("SendConsensus", mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
+		vt.record("send view data")
 		vt.sendChan <- args.Get(1).(*protos.Message)
 	}).Times(viewChanges)
 	signer := &mocks.SignerMock{}
@@ -171,8 +193,21 @@ func newViewChangeTest(t *testing.T, n uint64, viewChanges int) *viewChangeTest 
 	basicLog, err := zap.NewDevelopment()
 	require.NoError(t, err)
 	vt.reqTimer.On("StopTimers")
-	expectAbortAndHold(vt.controller)
-	vt.state.On("Save", mock.Anything, false).Return(nil)
+	vt.controller.On("AbortView", mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
+		vt.record(fmt.Sprintf("abort %d", args.Get(0)))
+	})
+	vt.controller.On("AbortViewAndHold", mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
+		vt.record(fmt.Sprintf("abort and hold %d", args.Get(0)))
+	}).Return(true)
+	vt.controller.On("LeaveView", mock.Anything).Run(func(args mock.Arguments) {
+		vt.record(fmt.Sprintf("leave %d", args.Get(0)))
+	})
+	vt.controller.On("ReleaseViewWrite").Run(func(mock.Arguments) {
+		vt.record("release")
+	})
+	vt.state.On("Save", mock.Anything, false).Run(func(mock.Arguments) {
+		vt.record("save")
+	}).Return(nil)
 
 	nodes := make([]uint64, 0, n)
 	for id := range n {
@@ -225,6 +260,11 @@ func TestViewChangeProcess(t *testing.T) {
 	require.NotNil(t, sent(t, vt.sendChan).GetViewData())
 	vt.comm.AssertCalled(t, "SendConsensus", uint64(1), mock.Anything)
 	vt.state.AssertNumberOfCalls(t, "Save", 1)
+	// the node leaves view 0, so that it is never started again, after it saved the view change and before
+	// it sends its view data, while it still holds the view
+	require.Equal(t, []string{
+		"broadcast view change", "abort 0", "abort and hold 0", "save", "leave 0", "release", "send view data",
+	}, vt.takeEvents())
 
 	// sending viewChange messages with same view doesn't make a difference
 	vt.handle(1, viewChangeMsg)
@@ -246,6 +286,9 @@ func TestViewChangeProcess(t *testing.T) {
 	require.NotNil(t, sent(t, vt.broadcastChan).GetViewChange())
 	require.NotNil(t, sent(t, vt.sendChan).GetViewData())
 	vt.comm.AssertCalled(t, "SendConsensus", uint64(2), mock.Anything)
+	require.Equal(t, []string{
+		"broadcast view change", "abort 1", "abort and hold 1", "save", "leave 1", "release", "send view data",
+	}, vt.takeEvents())
 
 	vt.reqTimer.AssertNumberOfCalls(t, "StopTimers", 2)
 	vt.controller.AssertNumberOfCalls(t, "AbortViewAndHold", 2)

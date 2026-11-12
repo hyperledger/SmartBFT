@@ -143,6 +143,10 @@ type Controller struct {
 	// unsupportedVersionSenders holds the senders of messages that were ignored for their protocol version,
 	// so that each is warned about once. It is bounded by the number of nodes.
 	unsupportedVersionSenders sync.Map
+
+	// minStartView is the lowest view the controller may start: the node left the views below it,
+	// by sending its view data for a later view. It is kept in memory only, and guarded by viewTransitionLock.
+	minStartView uint64
 }
 
 func (c *Controller) blacklist() []uint64 {
@@ -426,6 +430,13 @@ func (c *Controller) changeView(newViewNumber uint64, newProposalSequence uint64
 		return
 	}
 
+	// The view data the node sent for a later view stays valid, and the new leader may use it, so acting in a view
+	// the node left could contradict it. So a left view is not started again, even when a sync finds nothing newer.
+	if newViewNumber < c.minStartView {
+		c.Logger.Debugf("Got view change to %d but views before %d were left", newViewNumber, c.minStartView)
+		return
+	}
+
 	leader := c.currentViewLeader()
 	stopped := c.currentViewStopped()
 
@@ -541,6 +552,14 @@ func (c *Controller) AbortViewAndHold(view uint64, cancel <-chan struct{}) bool 
 	}
 
 	return true
+}
+
+// LeaveView makes sure the given view, and any view before it, is never started again.
+// The view changer calls it while it holds the view, right before it sends its view data for the next view,
+// so that no view can be started in between. It never lowers the views that were already left.
+// The caller must hold viewTransitionLock, as it does after a successful AbortViewAndHold.
+func (c *Controller) LeaveView(view uint64) {
+	c.minStartView = max(c.minStartView, view+1)
 }
 
 // ReleaseViewWrite lets the controller start or stop views again, once the view
