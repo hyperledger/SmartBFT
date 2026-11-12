@@ -407,7 +407,6 @@ func (c *Consensus) createComponents() {
 		NodesList:          c.nodes,
 		LeaderRotation:     c.Config.LeaderRotation,
 		DecisionsPerLeader: c.Config.DecisionsPerLeader,
-		SpeedUpViewChange:  c.Config.SpeedUpViewChange,
 		Logger:             c.Logger,
 		Signer:             c.Signer,
 		Verifier:           c.Verifier,

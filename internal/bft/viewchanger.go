@@ -81,7 +81,6 @@ type ViewChanger struct {
 	N                  uint64
 	f                  int
 	quorum             int
-	SpeedUpViewChange  bool
 	LeaderRotation     bool
 	DecisionsPerLeader uint64
 
@@ -432,17 +431,16 @@ func (v *ViewChanger) startViewChange(change *change) {
 }
 
 func (v *ViewChanger) processViewChangeMsg(restore bool) {
-	if ((uint64(len(v.viewChangeMsgs.voted)) == uint64(v.f+1)) && v.SpeedUpViewChange) || restore { // join view change
+	// Join the view change once f+1 nodes want it, since at least one of them is correct. Waiting for
+	// a quorum instead can leave a correct node behind in a view that the other correct nodes have left.
+	// Joining again only makes sure the timeout is checked, and it makes sure the node broadcast its own
+	// view change message and aborted the view before it sends its view data below.
+	if len(v.viewChangeMsgs.voted) >= v.f+1 || restore {
 		v.Logger.Debugf("Node %d is joining view change, last view is %d", v.SelfID, v.currView)
 		v.startViewChange(&change{v.currView, true})
 	}
 	if (len(v.viewChangeMsgs.voted) < v.quorum-1) && !restore {
 		return
-	}
-	// send view data
-	if !v.SpeedUpViewChange {
-		v.Logger.Debugf("Node %d is joining view change, last view is %d", v.SelfID, v.currView)
-		v.startViewChange(&change{v.currView, true})
 	}
 	// Stop the current view before writing the view change record. The view may still
 	// append a commit after that record, which would leave the commit without its

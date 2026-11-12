@@ -23,7 +23,6 @@ type Configuration struct {
 	NumOfTicksBehindBeforeSyncing int64
 	CollectTimeout                time.Duration
 	SyncOnStart                   bool
-	SpeedUpViewChange             bool
 	LeaderRotation                bool
 	DecisionsPerLeader            int64
 	RequestMaxBytes               int64
@@ -57,7 +56,6 @@ func (r Reconfig) recconfigToUint(id uint64) types.Reconfig {
 			NumOfTicksBehindBeforeSyncing: uint64(r.CurrentConfig.NumOfTicksBehindBeforeSyncing),
 			CollectTimeout:                r.CurrentConfig.CollectTimeout,
 			SyncOnStart:                   r.CurrentConfig.SyncOnStart,
-			SpeedUpViewChange:             r.CurrentConfig.SpeedUpViewChange,
 			LeaderRotation:                r.CurrentConfig.LeaderRotation,
 			DecisionsPerLeader:            uint64(r.CurrentConfig.DecisionsPerLeader),
 			RequestMaxBytes:               uint64(r.CurrentConfig.RequestMaxBytes),
@@ -86,7 +84,6 @@ func recconfigToInt(reconfig types.Reconfig) Reconfig {
 			NumOfTicksBehindBeforeSyncing: int64(reconfig.CurrentConfig.NumOfTicksBehindBeforeSyncing),
 			CollectTimeout:                reconfig.CurrentConfig.CollectTimeout,
 			SyncOnStart:                   reconfig.CurrentConfig.SyncOnStart,
-			SpeedUpViewChange:             reconfig.CurrentConfig.SpeedUpViewChange,
 			LeaderRotation:                reconfig.CurrentConfig.LeaderRotation,
 			DecisionsPerLeader:            int64(reconfig.CurrentConfig.DecisionsPerLeader),
 			RequestMaxBytes:               int64(reconfig.CurrentConfig.RequestMaxBytes),
