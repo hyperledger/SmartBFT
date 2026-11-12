@@ -33,6 +33,9 @@ type ViewController interface {
 	// ReleaseViewWrite lets other views start and write again after a
 	// successful AbortViewAndHold.
 	ReleaseViewWrite()
+	// LeaveView makes sure the given view is never started again. It is called after a successful
+	// AbortViewAndHold, before ReleaseViewWrite, once the node is about to send its view data for the next view.
+	LeaveView(view uint64)
 }
 
 // Pruner prunes revoked requests
@@ -478,6 +481,8 @@ func (v *ViewChanger) processViewChangeMsg(restore bool) {
 		}
 	}
 	if aborted {
+		// The view data below commits the node to the next view, so the current view must never run again.
+		v.Controller.LeaveView(v.currView)
 		v.Controller.ReleaseViewWrite()
 	}
 	v.currView = v.nextView
