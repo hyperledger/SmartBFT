@@ -6,6 +6,7 @@
 package bft
 
 import (
+	"slices"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -303,4 +304,74 @@ func TestAbortViewAndHoldBlocksViewChangesUntilReleased(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("changeView did not continue after the view changer released the write")
 	}
+}
+
+// recordingProposerBuilder returns a new view each time, and records the number of each view it was asked for.
+type recordingProposerBuilder struct {
+	lock  sync.Mutex
+	views []uint64
+}
+
+func (b *recordingProposerBuilder) NewProposer(_, _, viewNum, _ uint64, _ int) (Proposer, Phase) {
+	b.lock.Lock()
+	defer b.lock.Unlock()
+	b.views = append(b.views, viewNum)
+
+	return &View{
+		N:             4,
+		Number:        viewNum,
+		Logger:        newQuietLogger(),
+		InMsgQSize:    10,
+		MetricsView:   api.NewMetricsView(&disabled.Provider{}),
+		ViewSequences: &atomic.Value{},
+	}, COMMITTED
+}
+
+func (b *recordingProposerBuilder) started() []uint64 {
+	b.lock.Lock()
+	defer b.lock.Unlock()
+
+	return slices.Clone(b.views)
+}
+
+func TestControllerDoesNotStartALeftView(t *testing.T) {
+	view, endView := newAbortTestView(0)
+	builder := &recordingProposerBuilder{}
+
+	controller := &Controller{
+		Checkpoint:      &types.Checkpoint{},
+		Batcher:         abortTestBatcher{},
+		LeaderMonitor:   abortTestLeaderMonitor{},
+		ProposerBuilder: builder,
+		ID:              0,
+		N:               4,
+		NodesList:       []uint64{0, 1, 2, 3},
+		Logger:          newQuietLogger(),
+		currView:        view,
+		currViewNumber:  0,
+		leaderToken:     make(chan struct{}, 1),
+	}
+
+	// the view changer aborts view 0 and leaves it, before it sends its view data for view 1
+	endView()
+	require.True(t, controller.AbortViewAndHold(0, nil))
+	controller.LeaveView(0)
+	controller.ReleaseViewWrite()
+
+	// a sync that finds nothing newer restarts the current view, and a leader rotation does the same
+	controller.changeView(0, 2, 1)
+	require.Empty(t, builder.started(), "a left view was started again")
+
+	// a new view message for view 1 starts it
+	controller.changeView(1, 2, 0)
+	require.Equal(t, []uint64{1}, builder.started())
+
+	controller.AbortView(1, nil)
+
+	// leaving an earlier view doesn't let a later left view start again
+	controller.viewTransitionLock.Lock()
+	controller.LeaveView(3)
+	controller.LeaveView(1)
+	require.Equal(t, uint64(4), controller.minStartView)
+	controller.viewTransitionLock.Unlock()
 }
