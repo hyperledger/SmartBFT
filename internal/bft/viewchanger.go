@@ -119,9 +119,13 @@ type ViewChanger struct {
 	acceptedNewView     bool // whether the node already acted on a new view message for currView
 
 	// Runtime
-	MetricsViewChange         *api.MetricsViewChange
-	MetricsBlacklist          *api.MetricsBlacklist
-	MetricsView               *api.MetricsView
+	MetricsViewChange *api.MetricsViewChange
+	MetricsBlacklist  *api.MetricsBlacklist
+	MetricsView       *api.MetricsView
+	// Restore, when it holds a token, makes the view changer restore a view change once it starts.
+	// Consensus sets it when the write ahead log ends with a view change record: the node may have sent its
+	// view data for the next view before it stopped, so it moves to that view again and sends its view data,
+	// instead of acting in the view it starts in. When Restore is nil, the node starts in a view it entered.
 	Restore                   chan struct{}
 	InMsqQSize                int
 	incMsgs                   chan *incMsg
