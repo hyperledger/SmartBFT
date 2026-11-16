@@ -116,7 +116,7 @@ type ViewChanger struct {
 	checkTimeout        bool
 	backOffFactor       uint64
 	syncedForNewView    bool
-	acceptedNewView     bool // whether a new view message was already accepted for currView
+	acceptedNewView     bool // whether the node already acted on a new view message for currView
 
 	// Runtime
 	MetricsViewChange         *api.MetricsViewChange
@@ -344,7 +344,7 @@ func (v *ViewChanger) processMsg(sender uint64, m *protos.Message) {
 			return
 		}
 		if v.acceptedNewView {
-			v.Logger.Debugf("Node %d got newView message %v from %d, but it is already in view %d, ignoring it", v.SelfID, MsgToString(m), sender, v.currView)
+			v.Logger.Debugf("Node %d got newView message %v from %d, but it already acted on a new view message for view %d, ignoring it", v.SelfID, MsgToString(m), sender, v.currView)
 			return
 		}
 		v.processNewViewMsg(nv)
@@ -1233,6 +1233,10 @@ func (v *ViewChanger) processNewViewMsg(msg *protos.NewView) {
 		return
 	}
 
+	// From here the node acts on this new view message, so it must not act on another one for this view,
+	// even if committing the in flight proposal fails. A view change timeout moves it to the next view instead.
+	v.acceptedNewView = true
+
 	if !noInFlight && !v.commitInFlightProposal(inFlightProposal) {
 		v.Logger.Warnf("Node %d was unable to commit the in flight proposal, not changing the view", v.SelfID)
 		return
@@ -1271,7 +1275,6 @@ func (v *ViewChanger) processNewViewMsg(msg *protos.NewView) {
 	default:
 	}
 
-	v.acceptedNewView = true
 	v.realView = v.currView
 	v.MetricsViewChange.RealView.Set(float64(v.realView))
 	v.nvs.clear()

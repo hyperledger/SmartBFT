@@ -2924,6 +2924,65 @@ func TestNewViewWithoutQuorumSyncs(t *testing.T) {
 	}
 }
 
+// TestNoOtherNewViewAfterTheInFlightCommitFails makes sure that a node that acts on a new view message,
+// by committing the in flight proposal, doesn't act on another new view message for the same view,
+// even when the commit fails.
+func TestNoOtherNewViewAfterTheInFlightCommitFails(t *testing.T) {
+	verifier := &mocks.VerifierMock{}
+	verifier.On("VerifySignature", mock.Anything).Return(nil)
+	verifier.On("VerifyConsenterSig", mock.Anything, mock.Anything).Return(nil, nil)
+
+	vc, app, viewChangedChan := newViewChangerWithInFlight(t, verifier)
+	ticker := make(chan time.Time)
+	vc.Ticker = ticker
+	var commitFailed atomic.Bool
+	baseLogger := vc.Logger.(*zap.SugaredLogger).Desugar()
+	vc.Logger = baseLogger.WithOptions(zap.Hooks(func(entry zapcore.Entry) error {
+		if strings.Contains(entry.Message, "was unable to commit the in flight proposal") {
+			commitFailed.Store(true)
+		}
+		return nil
+	})).Sugar()
+	// the node already decided another proposal at the sequence of the in flight proposal, so the commit fails
+	vc.Checkpoint.Set(types.Proposal{
+		Payload:              []byte{9},
+		Header:               []byte{2},
+		Metadata:             bft.MarshalOrPanic(&protos.ViewMetadata{LatestSequence: 2, ViewId: 0}),
+		VerificationSequence: 1,
+	}, lastDecisionSignatures)
+
+	vc.Start(1)
+	defer vc.Stop()
+
+	newView := func(viewData *protos.ViewData) *protos.Message {
+		raw := bft.MarshalOrPanic(viewData)
+		return &protos.Message{
+			Content: &protos.Message_NewView{
+				NewView: &protos.NewView{
+					SignedViewData: []*protos.SignedViewData{
+						{RawViewData: raw, Signer: 0},
+						{RawViewData: raw, Signer: 1},
+						{RawViewData: raw, Signer: 2},
+					},
+				},
+			},
+		}
+	}
+	// The view changer has no queue, so it takes a message right away, and it takes the tick only once it is done
+	// with it. The tick changes nothing, since no view change is in progress.
+	handle := func(m *protos.Message) {
+		vc.HandleMessage(1, m)
+		ticker <- time.Now()
+	}
+
+	handle(newView(preparedInFlightViewData())) // the in flight proposal is to be committed
+	require.True(t, commitFailed.Load(), "the node did not try to commit the in flight proposal")
+
+	handle(newView(proto.Clone(vd).(*protos.ViewData))) // nothing is in flight, so the leader would propose anew
+	require.Empty(t, viewChangedChan, "the node acted on a second new view message for the view")
+	app.AssertNotCalled(t, "Deliver")
+}
+
 // TestNewViewOfCurrentViewIsIgnored makes sure that once a node accepted a new view message,
 // another new view message for the same view does not install the view again.
 func TestNewViewOfCurrentViewIsIgnored(t *testing.T) {
