@@ -126,7 +126,11 @@ type ViewChanger struct {
 	// Consensus sets it when the write ahead log ends with a view change record: the node may have sent its
 	// view data for the next view before it stopped, so it moves to that view again and sends its view data,
 	// instead of acting in the view it starts in. When Restore is nil, the node starts in a view it entered.
-	Restore                   chan struct{}
+	Restore chan struct{}
+	// StartViewEntered says that the node already entered the view the view changer starts in, so it acts on no
+	// new view message for it. Consensus sets it unless it restores a view change. It takes effect in Start, before
+	// any message is processed.
+	StartViewEntered          bool
 	InMsqQSize                int
 	incMsgs                   chan *incMsg
 	viewChangeMsgs            *voteSet
@@ -173,6 +177,7 @@ func (v *ViewChanger) Start(startViewNumber uint64) {
 	v.MetricsViewChange.CurrentView.Set(float64(v.currView))
 	v.MetricsViewChange.RealView.Set(float64(v.realView))
 	v.MetricsViewChange.NextView.Set(float64(v.nextView))
+	v.acceptedNewView = v.StartViewEntered
 
 	v.lastTick = time.Now()
 	v.lastResend = v.lastTick
