@@ -82,7 +82,7 @@ func TestViewChangerBasic(*testing.T) {
 		InMsqQSize: 100,
 	}
 
-	vc.Start(0)
+	vc.Start(0, false)
 
 	vc.Stop()
 	vc.Stop()
@@ -125,7 +125,7 @@ func TestStartViewChange(t *testing.T) {
 		InMsqQSize:    100,
 	}
 
-	vc.Start(0)
+	vc.Start(0, false)
 
 	vc.StartViewChange(0, true)
 	msg := <-msgChan
@@ -230,7 +230,7 @@ func newViewChangeTest(t *testing.T, n uint64, viewChanges int) *viewChangeTest 
 		InMsqQSize:        0,
 		State:             vt.state,
 	}
-	vt.vc.Start(0)
+	vt.vc.Start(0, false)
 	t.Cleanup(vt.vc.Stop)
 	return vt
 }
@@ -368,7 +368,7 @@ func TestViewDataProcess(t *testing.T) {
 		State:         state,
 	}
 
-	vc.Start(1)
+	vc.Start(1, false)
 
 	verifierSigWG.Add(1)
 	vc.HandleMessage(0, viewDataMsg1)
@@ -441,7 +441,7 @@ func TestNewViewProcess(t *testing.T) {
 		State:         state,
 	}
 
-	vc.Start(2)
+	vc.Start(2, false)
 
 	// create a valid viewData message
 	vd2 := proto.Clone(vd).(*protos.ViewData)
@@ -534,7 +534,7 @@ func TestNormalProcess(t *testing.T) {
 		State:         state,
 	}
 
-	vc.Start(0)
+	vc.Start(0, false)
 
 	vc.HandleMessage(2, viewChangeMsg)
 	vc.HandleMessage(3, viewChangeMsg)
@@ -765,7 +765,7 @@ func TestBadViewDataMessage(t *testing.T) {
 				InMsqQSize:  100,
 			}
 
-			vc.Start(1)
+			vc.Start(1, false)
 
 			msg := proto.Clone(viewDataMsg1).(*protos.Message)
 			test.mutateViewData(msg)
@@ -988,7 +988,7 @@ func TestBadNewViewMessage(t *testing.T) {
 				InMsqQSize:   100,
 			}
 
-			vc.Start(1)
+			vc.Start(1, false)
 
 			vdBytes := bft.MarshalOrPanic(vd)
 			signed := make([]*protos.SignedViewData, 0)
@@ -1062,7 +1062,7 @@ func TestResendViewChangeMessage(t *testing.T) {
 		InMsqQSize:        100,
 	}
 
-	vc.Start(0)
+	vc.Start(0, false)
 	startTime := time.Now()
 
 	vc.StartViewChange(0, true)
@@ -1126,7 +1126,7 @@ func TestViewChangerTimeout(t *testing.T) {
 		InMsqQSize:        100,
 	}
 
-	vc.Start(0)
+	vc.Start(0, false)
 	startTime := time.Now()
 
 	controllerWG.Add(1)
@@ -1186,7 +1186,7 @@ func TestBackOff(t *testing.T) {
 		InMsqQSize:        100,
 	}
 
-	vc.Start(0)
+	vc.Start(0, false)
 	startTime := time.Now()
 
 	controllerWG.Add(1)
@@ -1276,7 +1276,7 @@ func TestCommitLastDecision(t *testing.T) {
 		Pruner:        pruner,
 	}
 
-	vc.Start(0)
+	vc.Start(0, false)
 
 	vc.HandleMessage(2, viewChangeMsg)
 	vc.HandleMessage(3, viewChangeMsg)
@@ -1381,7 +1381,7 @@ func TestFarBehindLastDecisionAndSync(t *testing.T) {
 		},
 	}
 
-	vc.Start(1)
+	vc.Start(1, false)
 
 	synchronizerWG.Add(1)
 	vc.HandleMessage(1, msg)
@@ -1469,7 +1469,7 @@ func TestInFlightProposalInViewData(t *testing.T) {
 				State:         state,
 			}
 
-			vc.Start(0)
+			vc.Start(0, false)
 			vc.HandleMessage(1, viewChangeMsg)
 			vc.HandleMessage(2, viewChangeMsg)
 			m := <-broadcastChan
@@ -1680,7 +1680,7 @@ func TestInformViewChanger(t *testing.T) {
 		InMsqQSize:    100,
 	}
 
-	vc.Start(0)
+	vc.Start(0, false)
 
 	info := uint64(2)
 	vc.InformNewView(info) // increase the view number
@@ -1729,7 +1729,7 @@ func TestInformNewViewDoesNotBlock(t *testing.T) {
 	}
 	// the view changer does not run until the controller started, so it processes none of the views it is informed of
 	vc.ControllerStartedWG.Add(1)
-	vc.Start(0)
+	vc.Start(0, false)
 
 	returned := make(chan struct{})
 	go func() {
@@ -1805,7 +1805,7 @@ func TestRestoreViewChangeWithControllerAhead(t *testing.T) {
 	restoreChan <- struct{}{}
 	vc.Restore = restoreChan
 
-	vc.Start(5)
+	vc.Start(5, false)
 
 	select {
 	case m := <-broadcastChan:
@@ -1865,7 +1865,7 @@ func TestRestoreViewChange(t *testing.T) {
 	restoreChan <- struct{}{}
 	vc.Restore = restoreChan
 
-	vc.Start(5)
+	vc.Start(5, false)
 	m := <-broadcastChan
 	require.NotNil(t, m.GetViewChange())
 	require.Equal(t, uint64(6), m.GetViewChange().GetNextView())
@@ -2201,7 +2201,7 @@ func TestCommitInFlight(t *testing.T) {
 		MetricsView:      api.NewMetricsView(histograms),
 	}
 
-	vc.Start(0)
+	vc.Start(0, false)
 
 	vc.HandleMessage(2, viewChangeMsg)
 	vc.HandleMessage(3, viewChangeMsg)
@@ -2401,7 +2401,7 @@ func TestInFlightViewMessageFromItselfWithWrongView(t *testing.T) {
 		MetricsView:      api.NewMetricsView(&disabled.Provider{}),
 	}
 
-	vc.Start(0)
+	vc.Start(0, false)
 
 	vc.HandleMessage(2, viewChangeMsg)
 	vc.HandleMessage(3, viewChangeMsg)
@@ -2555,7 +2555,7 @@ func TestCommitWhileHavingInFlight(t *testing.T) {
 	})
 
 	defer vc.Stop()
-	vc.Start(0)
+	vc.Start(0, false)
 
 	vc.HandleMessage(2, viewChangeMsg)
 	vc.HandleMessage(3, viewChangeMsg)
@@ -2671,7 +2671,7 @@ func TestDontCommitInFlight(t *testing.T) {
 	checkpoint.Set(inFlightProposal, lastDecisionSignatures)
 	vc.Checkpoint = &checkpoint
 
-	vc.Start(1)
+	vc.Start(1, false)
 
 	vc.HandleMessage(1, msg)
 
@@ -2810,7 +2810,7 @@ func TestNewViewWithForgedQuorum(t *testing.T) {
 				return nil
 			})).Sugar()
 
-			vc.Start(1)
+			vc.Start(1, false)
 
 			vc.HandleMessage(1, &protos.Message{
 				Content: &protos.Message_NewView{
@@ -2891,7 +2891,7 @@ func TestNewViewWithoutQuorumSyncs(t *testing.T) {
 			}).Return()
 			vc.Synchronizer = synchronizer
 
-			vc.Start(1)
+			vc.Start(1, false)
 
 			msg := &protos.Message{
 				Content: &protos.Message_NewView{
@@ -2951,7 +2951,7 @@ func TestNoOtherNewViewAfterTheInFlightCommitFails(t *testing.T) {
 		VerificationSequence: 1,
 	}, lastDecisionSignatures)
 
-	vc.Start(1)
+	vc.Start(1, false)
 	defer vc.Stop()
 
 	newView := func(viewData *protos.ViewData) *protos.Message {
@@ -3021,7 +3021,7 @@ func TestNewViewOfCurrentViewIsIgnored(t *testing.T) {
 				return nil
 			})).Sugar()
 
-			vc.Start(1)
+			vc.Start(1, false)
 
 			raw := bft.MarshalOrPanic(test.viewData())
 			msg := &protos.Message{
@@ -3224,7 +3224,7 @@ func TestNewViewWithoutLeaderViewData(t *testing.T) {
 				},
 			}
 
-			vc.Start(1)
+			vc.Start(1, false)
 			vc.HandleMessage(1, msg)
 
 			if test.accepted {
@@ -3374,7 +3374,7 @@ func TestViewChangerKeepsRunningAfterInFlightWaiterLeft(t *testing.T) {
 				MetricsView:       api.NewMetricsView(&disabled.Provider{}),
 			}
 
-			vc.Start(0)
+			vc.Start(0, false)
 
 			vc.HandleMessage(2, viewChangeMsg)
 			vc.HandleMessage(3, viewChangeMsg)

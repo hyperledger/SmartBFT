@@ -830,7 +830,7 @@ func TestSyncInform(t *testing.T) {
 
 	controller.Checkpoint.Set(proposal, []types.Signature{{ID: 1}, {ID: 2}, {ID: 3}})
 
-	vc.Start(1)
+	vc.Start(1, false)
 
 	synchronizerWG.Add(1)
 	commWG.Add(9)
@@ -1362,7 +1362,7 @@ func TestDeliverTwiceOnceFromSyncAndOnceFromViewData(t *testing.T) {
 	vc.Controller = controller
 	vc.Synchronizer = controller
 	vc.Checkpoint = controller.Checkpoint
-	vc.Start(0)
+	vc.Start(0, false)
 
 	vs := configureProposerBuilder(controller)
 	controller.ViewSequences = vs

@@ -542,10 +542,9 @@ func (c *Consensus) startComponents(view, seq, dec, verificationSeq uint64, conf
 	// If we delivered to the application proposal with sequence i,
 	// then we are expecting to be proposed a proposal with sequence i+1.
 	c.collector.Start()
-	// The node starts in a view it already entered, so it must not act on a new view message for it again.
-	// A restored view change instead moves to the next view, and waits for a new view message for it.
-	c.viewChanger.StartViewEntered = c.viewChanger.Restore == nil
-	c.viewChanger.Start(view)
+	// Unless the node restores a view change, it starts in a view it already entered,
+	// so it must not act on a new view message for it again.
+	c.viewChanger.Start(view, c.viewChanger.Restore == nil)
 	if configSync {
 		c.controller.Start(view, seq+1, dec, verificationSeq, c.Config.SyncOnStart)
 	} else {
