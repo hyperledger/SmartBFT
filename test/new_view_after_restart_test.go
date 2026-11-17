@@ -64,12 +64,12 @@ func TestNewViewIgnoredAfterRestart(t *testing.T) {
 			var startsBefore, starts, viewChanges, ignored atomic.Int32
 			restarted.logger = restarted.logger.Desugar().WithOptions(zap.Hooks(func(entry zapcore.Entry) error {
 				if !afterRestart.Load() {
-					if strings.Contains(entry.Message, "Starting view with number 1") {
+					if strings.Contains(entry.Message, "Starting view with number 1,") {
 						startsBefore.Add(1)
 					}
 					return nil
 				}
-				if strings.Contains(entry.Message, "Starting view with number 1") {
+				if strings.Contains(entry.Message, "Starting view with number 1,") {
 					starts.Add(1)
 				}
 				if strings.Contains(entry.Message, "ViewChanged, the new view is 1") {
@@ -103,13 +103,14 @@ func TestNewViewIgnoredAfterRestart(t *testing.T) {
 					return restarted.Consensus.GetLeaderID() == 2
 				}, time.Minute, 100*time.Millisecond, "the node did not restart in the new view")
 			}
+			startsBeforeTheMessage := starts.Load()
 			restarted.Consensus.HandleMessage(2, again)
 
 			require.Eventually(t, func() bool {
 				return ignored.Load() > 0
 			}, 10*time.Second, 100*time.Millisecond, "the node did not ignore the new view message for the view it restarted in")
 			require.Zero(t, viewChanges.Load(), "the node acted on the new view message after it restarted in the view")
-			require.Equal(t, int32(1), starts.Load(), "the node started the view again after it restarted in it")
+			require.Equal(t, startsBeforeTheMessage, starts.Load(), "the node started the view again for the new view message")
 			require.Equal(t, uint64(2), restarted.Consensus.GetLeaderID(), "the node did not restart in the new view")
 		})
 	}

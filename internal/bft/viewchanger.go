@@ -123,9 +123,9 @@ type ViewChanger struct {
 	MetricsBlacklist  *api.MetricsBlacklist
 	MetricsView       *api.MetricsView
 	// Restore, when it holds a token, makes the view changer restore a view change once it starts.
-	// Consensus sets it when the write ahead log ends with a view change record: the node may have sent its
-	// view data for the next view before it stopped, so it moves to that view again and sends its view data,
-	// instead of acting in the view it starts in. When Restore is nil, the node starts in a view it entered.
+	// Consensus sets it when the write ahead log ends with a view change record for a view that is not older
+	// than the view the node starts in: the node may have sent its view data for the next view before it stopped,
+	// so it moves to that view again and sends its view data, instead of acting in the view it starts in.
 	Restore                   chan struct{}
 	InMsqQSize                int
 	incMsgs                   chan *incMsg
@@ -146,11 +146,11 @@ type ViewChanger struct {
 	ControllerStartedWG sync.WaitGroup
 }
 
-// Start starts the view changer in the given view. startViewEntered says whether the node already entered that view,
-// so that it acts on no new view message for it. It is set before any message is processed. A node that restores
-// a view change didn't enter the view it starts in: the restore moves it to the next view, to wait for a new view
-// message for it.
-func (v *ViewChanger) Start(startViewNumber uint64, startViewEntered bool) {
+// Start starts the view changer in the given view. The node already entered that view: it either is still in it,
+// or it left it for the next view, and then Restore moves it to the next view again. So the view changer acts on
+// no new view message for the start view, from before it processes any message. A restored view change moves to
+// the next view, and waits for a new view message for it.
+func (v *ViewChanger) Start(startViewNumber uint64) {
 	v.incMsgs = make(chan *incMsg, v.InMsqQSize)
 	v.startChangeChan = make(chan *change, 2)
 	v.informChan = make(chan uint64, 1)
@@ -176,7 +176,7 @@ func (v *ViewChanger) Start(startViewNumber uint64, startViewEntered bool) {
 	v.MetricsViewChange.CurrentView.Set(float64(v.currView))
 	v.MetricsViewChange.RealView.Set(float64(v.realView))
 	v.MetricsViewChange.NextView.Set(float64(v.nextView))
-	v.acceptedNewView = startViewEntered
+	v.acceptedNewView = true
 
 	v.lastTick = time.Now()
 	v.lastResend = v.lastTick

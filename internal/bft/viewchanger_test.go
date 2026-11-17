@@ -82,7 +82,7 @@ func TestViewChangerBasic(*testing.T) {
 		InMsqQSize: 100,
 	}
 
-	vc.Start(0, false)
+	vc.Start(0)
 
 	vc.Stop()
 	vc.Stop()
@@ -125,7 +125,7 @@ func TestStartViewChange(t *testing.T) {
 		InMsqQSize:    100,
 	}
 
-	vc.Start(0, false)
+	vc.Start(0)
 
 	vc.StartViewChange(0, true)
 	msg := <-msgChan
@@ -230,7 +230,7 @@ func newViewChangeTest(t *testing.T, n uint64, viewChanges int) *viewChangeTest 
 		InMsqQSize:        0,
 		State:             vt.state,
 	}
-	vt.vc.Start(0, false)
+	vt.vc.Start(0)
 	t.Cleanup(vt.vc.Stop)
 	return vt
 }
@@ -321,9 +321,10 @@ func TestViewDataProcess(t *testing.T) {
 	comm := &mocks.CommMock{}
 	broadcastChan := make(chan *protos.Message)
 	comm.On("BroadcastConsensus", mock.Anything).Run(func(args mock.Arguments) {
-		m := args.Get(0).(*protos.Message)
-		broadcastChan <- m
-	}).Once()
+		if m := args.Get(0).(*protos.Message); m.GetNewView() != nil { // not the view change of the restore
+			broadcastChan <- m
+		}
+	}).Twice()
 	basicLog, err := zap.NewDevelopment()
 	require.NoError(t, err)
 	log := basicLog.Sugar()
@@ -368,7 +369,7 @@ func TestViewDataProcess(t *testing.T) {
 		State:         state,
 	}
 
-	vc.Start(1, false)
+	restoreViewChange(t, vc, 1)
 
 	verifierSigWG.Add(1)
 	vc.HandleMessage(0, viewDataMsg1)
@@ -441,7 +442,7 @@ func TestNewViewProcess(t *testing.T) {
 		State:         state,
 	}
 
-	vc.Start(2, false)
+	restoreViewChange(t, vc, 2)
 
 	// create a valid viewData message
 	vd2 := proto.Clone(vd).(*protos.ViewData)
@@ -534,7 +535,7 @@ func TestNormalProcess(t *testing.T) {
 		State:         state,
 	}
 
-	vc.Start(0, false)
+	vc.Start(0)
 
 	vc.HandleMessage(2, viewChangeMsg)
 	vc.HandleMessage(3, viewChangeMsg)
@@ -765,7 +766,7 @@ func TestBadViewDataMessage(t *testing.T) {
 				InMsqQSize:  100,
 			}
 
-			vc.Start(1, false)
+			vc.Start(1)
 
 			msg := proto.Clone(viewDataMsg1).(*protos.Message)
 			test.mutateViewData(msg)
@@ -887,7 +888,7 @@ func TestBadNewViewMessage(t *testing.T) {
 		},
 		{
 			description:           "last decision not set",
-			expectedMessageLogged: "is not set",
+			expectedMessageLogged: "but the last decision of",
 			mutateVerifySig: func(verifierMock *mocks.VerifierMock) {
 			},
 			mutateNewView: func(m *protos.Message) {
@@ -988,7 +989,7 @@ func TestBadNewViewMessage(t *testing.T) {
 				InMsqQSize:   100,
 			}
 
-			vc.Start(1, false)
+			restoreViewChange(t, vc, 1)
 
 			vdBytes := bft.MarshalOrPanic(vd)
 			signed := make([]*protos.SignedViewData, 0)
@@ -1062,7 +1063,7 @@ func TestResendViewChangeMessage(t *testing.T) {
 		InMsqQSize:        100,
 	}
 
-	vc.Start(0, false)
+	vc.Start(0)
 	startTime := time.Now()
 
 	vc.StartViewChange(0, true)
@@ -1126,7 +1127,7 @@ func TestViewChangerTimeout(t *testing.T) {
 		InMsqQSize:        100,
 	}
 
-	vc.Start(0, false)
+	vc.Start(0)
 	startTime := time.Now()
 
 	controllerWG.Add(1)
@@ -1186,7 +1187,7 @@ func TestBackOff(t *testing.T) {
 		InMsqQSize:        100,
 	}
 
-	vc.Start(0, false)
+	vc.Start(0)
 	startTime := time.Now()
 
 	controllerWG.Add(1)
@@ -1276,7 +1277,7 @@ func TestCommitLastDecision(t *testing.T) {
 		Pruner:        pruner,
 	}
 
-	vc.Start(0, false)
+	vc.Start(0)
 
 	vc.HandleMessage(2, viewChangeMsg)
 	vc.HandleMessage(3, viewChangeMsg)
@@ -1381,7 +1382,7 @@ func TestFarBehindLastDecisionAndSync(t *testing.T) {
 		},
 	}
 
-	vc.Start(1, false)
+	restoreViewChange(t, vc, 1)
 
 	synchronizerWG.Add(1)
 	vc.HandleMessage(1, msg)
@@ -1469,7 +1470,7 @@ func TestInFlightProposalInViewData(t *testing.T) {
 				State:         state,
 			}
 
-			vc.Start(0, false)
+			vc.Start(0)
 			vc.HandleMessage(1, viewChangeMsg)
 			vc.HandleMessage(2, viewChangeMsg)
 			m := <-broadcastChan
@@ -1680,7 +1681,7 @@ func TestInformViewChanger(t *testing.T) {
 		InMsqQSize:    100,
 	}
 
-	vc.Start(0, false)
+	vc.Start(0)
 
 	info := uint64(2)
 	vc.InformNewView(info) // increase the view number
@@ -1729,7 +1730,7 @@ func TestInformNewViewDoesNotBlock(t *testing.T) {
 	}
 	// the view changer does not run until the controller started, so it processes none of the views it is informed of
 	vc.ControllerStartedWG.Add(1)
-	vc.Start(0, false)
+	vc.Start(0)
 
 	returned := make(chan struct{})
 	go func() {
@@ -1805,7 +1806,7 @@ func TestRestoreViewChangeWithControllerAhead(t *testing.T) {
 	restoreChan <- struct{}{}
 	vc.Restore = restoreChan
 
-	vc.Start(5, false)
+	vc.Start(5)
 
 	select {
 	case m := <-broadcastChan:
@@ -1865,7 +1866,7 @@ func TestRestoreViewChange(t *testing.T) {
 	restoreChan <- struct{}{}
 	vc.Restore = restoreChan
 
-	vc.Start(5, false)
+	vc.Start(5)
 	m := <-broadcastChan
 	require.NotNil(t, m.GetViewChange())
 	require.Equal(t, uint64(6), m.GetViewChange().GetNextView())
@@ -2201,7 +2202,7 @@ func TestCommitInFlight(t *testing.T) {
 		MetricsView:      api.NewMetricsView(histograms),
 	}
 
-	vc.Start(0, false)
+	vc.Start(0)
 
 	vc.HandleMessage(2, viewChangeMsg)
 	vc.HandleMessage(3, viewChangeMsg)
@@ -2401,7 +2402,7 @@ func TestInFlightViewMessageFromItselfWithWrongView(t *testing.T) {
 		MetricsView:      api.NewMetricsView(&disabled.Provider{}),
 	}
 
-	vc.Start(0, false)
+	vc.Start(0)
 
 	vc.HandleMessage(2, viewChangeMsg)
 	vc.HandleMessage(3, viewChangeMsg)
@@ -2555,7 +2556,7 @@ func TestCommitWhileHavingInFlight(t *testing.T) {
 	})
 
 	defer vc.Stop()
-	vc.Start(0, false)
+	vc.Start(0)
 
 	vc.HandleMessage(2, viewChangeMsg)
 	vc.HandleMessage(3, viewChangeMsg)
@@ -2671,7 +2672,7 @@ func TestDontCommitInFlight(t *testing.T) {
 	checkpoint.Set(inFlightProposal, lastDecisionSignatures)
 	vc.Checkpoint = &checkpoint
 
-	vc.Start(1, false)
+	restoreViewChange(t, vc, 1)
 
 	vc.HandleMessage(1, msg)
 
@@ -2810,7 +2811,7 @@ func TestNewViewWithForgedQuorum(t *testing.T) {
 				return nil
 			})).Sugar()
 
-			vc.Start(1, false)
+			restoreViewChange(t, vc, 1)
 
 			vc.HandleMessage(1, &protos.Message{
 				Content: &protos.Message_NewView{
@@ -2891,7 +2892,7 @@ func TestNewViewWithoutQuorumSyncs(t *testing.T) {
 			}).Return()
 			vc.Synchronizer = synchronizer
 
-			vc.Start(1, false)
+			restoreViewChange(t, vc, 1)
 
 			msg := &protos.Message{
 				Content: &protos.Message_NewView{
@@ -2935,6 +2936,8 @@ func TestNoOtherNewViewAfterTheInFlightCommitFails(t *testing.T) {
 	vc, app, viewChangedChan := newViewChangerWithInFlight(t, verifier)
 	ticker := make(chan time.Time)
 	vc.Ticker = ticker
+	vc.ResendTimeout = time.Minute
+	vc.ViewChangeTimeout = time.Minute
 	var commitFailed atomic.Bool
 	baseLogger := vc.Logger.(*zap.SugaredLogger).Desugar()
 	vc.Logger = baseLogger.WithOptions(zap.Hooks(func(entry zapcore.Entry) error {
@@ -2951,7 +2954,7 @@ func TestNoOtherNewViewAfterTheInFlightCommitFails(t *testing.T) {
 		VerificationSequence: 1,
 	}, lastDecisionSignatures)
 
-	vc.Start(1, false)
+	restoreViewChange(t, vc, 1)
 	defer vc.Stop()
 
 	newView := func(viewData *protos.ViewData) *protos.Message {
@@ -2981,6 +2984,147 @@ func TestNoOtherNewViewAfterTheInFlightCommitFails(t *testing.T) {
 	handle(newView(proto.Clone(vd).(*protos.ViewData))) // nothing is in flight, so the leader would propose anew
 	require.Empty(t, viewChangedChan, "the node acted on a second new view message for the view")
 	app.AssertNotCalled(t, "Deliver")
+}
+
+// restoreViewChange starts the view changer the way a node that restarts in the middle of a view change does:
+// it starts in the view before the given one, and restores the view change to the given view, where it sends its
+// view data again and waits for a new view message. It returns once the view data was sent.
+func restoreViewChange(t *testing.T, vc *bft.ViewChanger, view uint64) {
+	t.Helper()
+
+	// the restore ends with sending the view data, or keeping it if the node is the new leader
+	sent := make(chan struct{})
+	var once sync.Once
+	baseLogger := vc.Logger.(*zap.SugaredLogger).Desugar()
+	vc.Logger = baseLogger.WithOptions(zap.Hooks(func(entry zapcore.Entry) error {
+		if strings.Contains(entry.Message, fmt.Sprintf("sent view data msg, with next view %d,", view)) {
+			once.Do(func() { close(sent) })
+		}
+		return nil
+	})).Sugar()
+
+	// what the restore uses, in case the test doesn't set it up
+	if vc.Comm == nil {
+		comm := &mocks.CommMock{}
+		comm.On("BroadcastConsensus", mock.Anything)
+		comm.On("SendConsensus", mock.Anything, mock.Anything)
+		vc.Comm = comm
+	}
+	if vc.Signer == nil {
+		signer := &mocks.SignerMock{}
+		signer.On("Sign", mock.Anything).Return([]byte{1, 2, 3})
+		vc.Signer = signer
+	}
+	if vc.InFlight == nil {
+		vc.InFlight = &bft.InFlightData{}
+	}
+	if vc.RequestsTimer == nil {
+		vc.RequestsTimer = &mocks.RequestsTimer{}
+	}
+	if timer, ok := vc.RequestsTimer.(*mocks.RequestsTimer); ok {
+		timer.On("StopTimers")
+	}
+	if vc.Controller == nil {
+		vc.Controller = &mocks.ViewController{}
+	}
+	if controller, ok := vc.Controller.(*mocks.ViewController); ok {
+		expectAbortAndHold(controller)
+	}
+
+	vc.Restore = make(chan struct{}, 1)
+	vc.Restore <- struct{}{}
+	vc.Start(view - 1)
+
+	select {
+	case <-sent:
+	case <-time.After(time.Minute):
+		require.Fail(t, "the view changer did not restore the view change")
+	}
+}
+
+// newViewMsgFor returns a new view message with the given view data from a quorum of the 4 nodes.
+func newViewMsgFor(viewData *protos.ViewData) *protos.Message {
+	raw := bft.MarshalOrPanic(viewData)
+	return &protos.Message{
+		Content: &protos.Message_NewView{
+			NewView: &protos.NewView{
+				SignedViewData: []*protos.SignedViewData{
+					{RawViewData: raw, Signer: 0},
+					{RawViewData: raw, Signer: 1},
+					{RawViewData: raw, Signer: 2},
+				},
+			},
+		},
+	}
+}
+
+// TestStartViewIsEntered makes sure that a node acts on no new view message for the view it starts in,
+// since it already entered that view, and that a node that restores a view change still acts on the new view
+// message for the next view.
+func TestStartViewIsEntered(t *testing.T) {
+	for _, test := range []struct {
+		description string
+		restore     bool
+	}{
+		{description: "a new view message for the start view is ignored", restore: false},
+		{description: "a restored view change acts on the new view message for the next view", restore: true},
+	} {
+		t.Run(test.description, func(t *testing.T) {
+			verifier := &mocks.VerifierMock{}
+			verifier.On("VerifySignature", mock.Anything).Return(nil)
+			verifier.On("VerifyConsenterSig", mock.Anything, mock.Anything).Return(nil, nil)
+
+			vc, app, viewChangedChan := newViewChangerWithInFlight(t, verifier)
+			ticker := make(chan time.Time)
+			vc.Ticker = ticker
+			vc.ResendTimeout = time.Minute
+			vc.ViewChangeTimeout = time.Minute
+
+			startView := uint64(1)
+			sentViewData := make(chan struct{}, 1)
+			if test.restore {
+				// the node restores the view change from view 0 to view 1, so it sends its view data again
+				startView = 0
+				vc.Restore = make(chan struct{}, 1)
+				vc.Restore <- struct{}{}
+				comm := &mocks.CommMock{}
+				comm.On("BroadcastConsensus", mock.Anything)
+				comm.On("SendConsensus", uint64(1), mock.Anything).Run(func(mock.Arguments) {
+					sentViewData <- struct{}{}
+				})
+				vc.Comm = comm
+				signer := &mocks.SignerMock{}
+				signer.On("Sign", mock.Anything).Return([]byte{1, 2, 3})
+				vc.Signer = signer
+				vc.InFlight = &bft.InFlightData{}
+				vc.RequestsTimer.(*mocks.RequestsTimer).On("StopTimers")
+			}
+
+			vc.Start(startView)
+			defer vc.Stop()
+
+			if test.restore {
+				select {
+				case <-sentViewData:
+				case <-time.After(time.Minute):
+					require.Fail(t, "the node did not restore the view change")
+				}
+			}
+
+			// The view changer has no queue, so it takes the message right away, and it takes the tick only once
+			// it is done with it. The tick changes nothing, since no timeout has passed.
+			vc.HandleMessage(1, newViewMsgFor(proto.Clone(vd).(*protos.ViewData)))
+			ticker <- time.Now()
+
+			if test.restore {
+				require.Len(t, viewChangedChan, 1, "the node did not act on the new view message for the next view")
+				require.Equal(t, uint64(1), <-viewChangedChan)
+			} else {
+				require.Empty(t, viewChangedChan, "the node acted on a new view message for the view it started in")
+			}
+			app.AssertNotCalled(t, "Deliver")
+		})
+	}
 }
 
 // TestNewViewOfCurrentViewIsIgnored makes sure that once a node accepted a new view message,
@@ -3021,7 +3165,7 @@ func TestNewViewOfCurrentViewIsIgnored(t *testing.T) {
 				return nil
 			})).Sugar()
 
-			vc.Start(1, false)
+			restoreViewChange(t, vc, 1)
 
 			raw := bft.MarshalOrPanic(test.viewData())
 			msg := &protos.Message{
@@ -3224,7 +3368,7 @@ func TestNewViewWithoutLeaderViewData(t *testing.T) {
 				},
 			}
 
-			vc.Start(1, false)
+			restoreViewChange(t, vc, 1)
 			vc.HandleMessage(1, msg)
 
 			if test.accepted {
@@ -3374,7 +3518,7 @@ func TestViewChangerKeepsRunningAfterInFlightWaiterLeft(t *testing.T) {
 				MetricsView:       api.NewMetricsView(&disabled.Provider{}),
 			}
 
-			vc.Start(0, false)
+			vc.Start(0)
 
 			vc.HandleMessage(2, viewChangeMsg)
 			vc.HandleMessage(3, viewChangeMsg)
