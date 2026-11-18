@@ -119,9 +119,13 @@ type ViewChanger struct {
 	acceptedNewView     bool // whether the node already acted on a new view message for currView
 
 	// Runtime
-	MetricsViewChange         *api.MetricsViewChange
-	MetricsBlacklist          *api.MetricsBlacklist
-	MetricsView               *api.MetricsView
+	MetricsViewChange *api.MetricsViewChange
+	MetricsBlacklist  *api.MetricsBlacklist
+	MetricsView       *api.MetricsView
+	// Restore, when it holds a token, makes the view changer restore a view change once it starts.
+	// Consensus sets it when the write ahead log ends with a view change record for a view that is not older
+	// than the view the node starts in: the node may have sent its view data for the next view before it stopped,
+	// so it moves to that view again and sends its view data, instead of acting in the view it starts in.
 	Restore                   chan struct{}
 	InMsqQSize                int
 	incMsgs                   chan *incMsg
@@ -142,7 +146,10 @@ type ViewChanger struct {
 	ControllerStartedWG sync.WaitGroup
 }
 
-// Start the view changer
+// Start starts the view changer in the given view. The node already entered that view: it either is still in it,
+// or it left it for the next view, and then Restore moves it to the next view again. So the view changer acts on
+// no new view message for the start view, from before it processes any message. A restored view change moves to
+// the next view, and waits for a new view message for it.
 func (v *ViewChanger) Start(startViewNumber uint64) {
 	v.incMsgs = make(chan *incMsg, v.InMsqQSize)
 	v.startChangeChan = make(chan *change, 2)
@@ -169,6 +176,7 @@ func (v *ViewChanger) Start(startViewNumber uint64) {
 	v.MetricsViewChange.CurrentView.Set(float64(v.currView))
 	v.MetricsViewChange.RealView.Set(float64(v.realView))
 	v.MetricsViewChange.NextView.Set(float64(v.nextView))
+	v.acceptedNewView = true
 
 	v.lastTick = time.Now()
 	v.lastResend = v.lastTick
