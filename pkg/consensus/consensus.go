@@ -498,6 +498,8 @@ func (c *Consensus) setViewAndSeq(view, seq, dec uint64) (newView, newSeq, newDe
 		// Check if the view change has a newer view
 		c.Logger.Debugf("Restoring from view change with view %d", viewChange.GetNextView())
 		newView = viewChange.GetNextView()
+		// The node may have sent its view data for the next view, so it must not run this view again.
+		c.controller.LeaveView(newView)
 		restoreChan := make(chan struct{}, 1)
 		restoreChan <- struct{}{}
 		c.viewChanger.Restore = restoreChan

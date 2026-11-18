@@ -98,3 +98,29 @@ func TestSetViewAndSeqUsesTheTrailingProposalView(t *testing.T) {
 		})
 	}
 }
+
+// TestSetViewAndSeqDoesNotStartALeftView makes sure that a node whose write ahead log ends with a view change record
+// starts in the view it left, and restores the view change. The controller then doesn't run that view, which
+// TestRestartInTheMiddleOfAViewChange checks.
+func TestSetViewAndSeqDoesNotStartALeftView(t *testing.T) {
+	logger := zap.NewNop().Sugar()
+
+	viewChange := &smartbftprotos.SavedMessage{
+		Content: &smartbftprotos.SavedMessage_ViewChange{
+			ViewChange: &smartbftprotos.ViewChange{NextView: 3}, // the view the node left
+		},
+	}
+	consensus := &Consensus{
+		Logger:      logger,
+		viewChanger: &algorithm.ViewChanger{},
+		controller:  &algorithm.Controller{},
+		state: &algorithm.PersistedState{
+			Entries: [][]byte{algorithm.MarshalOrPanic(viewChange)},
+			Logger:  logger,
+		},
+	}
+
+	view, _, _ := consensus.setViewAndSeq(2, 10, 2)
+	require.Equal(t, uint64(3), view)
+	require.NotNil(t, consensus.viewChanger.Restore, "the view change is not restored")
+}

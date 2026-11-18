@@ -6,7 +6,6 @@
 package bft
 
 import (
-	"slices"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -306,32 +305,46 @@ func TestAbortViewAndHoldBlocksViewChangesUntilReleased(t *testing.T) {
 	}
 }
 
-// recordingProposerBuilder returns a new view each time, and records the number of each view it was asked for.
+// recordingProposerBuilder returns a new view each time, and records the views it built.
 type recordingProposerBuilder struct {
 	lock  sync.Mutex
-	views []uint64
+	views []*View
 }
 
 func (b *recordingProposerBuilder) NewProposer(_, _, viewNum, _ uint64, _ int) (Proposer, Phase) {
 	b.lock.Lock()
 	defer b.lock.Unlock()
-	b.views = append(b.views, viewNum)
-
-	return &View{
+	view := &View{
 		N:             4,
 		Number:        viewNum,
 		Logger:        newQuietLogger(),
 		InMsgQSize:    10,
 		MetricsView:   api.NewMetricsView(&disabled.Provider{}),
 		ViewSequences: &atomic.Value{},
-	}, COMMITTED
+	}
+	b.views = append(b.views, view)
+
+	return view, COMMITTED
 }
 
-func (b *recordingProposerBuilder) started() []uint64 {
+// started returns the numbers of the views that were started.
+func (b *recordingProposerBuilder) started() []uint64 { return b.numbers(true) }
+
+// built returns the numbers of the views that were built.
+func (b *recordingProposerBuilder) built() []uint64 { return b.numbers(false) }
+
+func (b *recordingProposerBuilder) numbers(onlyStarted bool) []uint64 {
 	b.lock.Lock()
 	defer b.lock.Unlock()
 
-	return slices.Clone(b.views)
+	var numbers []uint64
+	for _, view := range b.views {
+		if !onlyStarted || view.abortChan != nil { // Start makes the abort channel
+			numbers = append(numbers, view.Number)
+		}
+	}
+
+	return numbers
 }
 
 func TestControllerDoesNotStartALeftView(t *testing.T) {
@@ -374,4 +387,48 @@ func TestControllerDoesNotStartALeftView(t *testing.T) {
 	controller.LeaveView(1)
 	require.Equal(t, uint64(4), controller.minStartView)
 	controller.viewTransitionLock.Unlock()
+}
+
+// TestControllerDoesNotRunALeftStartView makes sure that a controller that starts in a view the node left, as after
+// a restart in the middle of a view change, doesn't run that view, and starts the next view when it gets to it.
+func TestControllerDoesNotRunALeftStartView(t *testing.T) {
+	builder := &recordingProposerBuilder{}
+	var started sync.WaitGroup
+	started.Add(1)
+
+	controller := &Controller{
+		Checkpoint:      &types.Checkpoint{},
+		Batcher:         abortTestBatcher{},
+		LeaderMonitor:   abortTestLeaderMonitor{},
+		ProposerBuilder: builder,
+		ID:              0,
+		N:               4,
+		NodesList:       []uint64{0, 1, 2, 3},
+		Logger:          newQuietLogger(),
+		StartedWG:       &started,
+		ViewSequences:   &atomic.Value{},
+	}
+
+	// the node restarts in view 0, which it left for view 1
+	controller.LeaveView(0)
+	controller.Start(0, 1, 0, 1, false)
+	defer func() {
+		controller.close()
+		controller.controllerDone.Wait()
+	}()
+	require.Equal(t, []uint64{0}, builder.built(), "the view the node left was not built, to restore the state")
+	require.Empty(t, builder.started(), "the view the node left was started")
+	require.True(t, controller.currentViewStopped())
+	require.Equal(t, ViewSequence{ViewActive: false, ProposalSeq: 1}, controller.ViewSequences.Load())
+
+	// the view changer restores the view change, which aborts and leaves the view that doesn't run
+	require.True(t, controller.AbortViewAndHold(0, nil))
+	controller.LeaveView(0)
+	controller.ReleaseViewWrite()
+	require.Empty(t, builder.started())
+
+	// a new view message for view 1 starts it
+	controller.changeView(1, 1, 0)
+	require.Equal(t, []uint64{1}, builder.started())
+	controller.AbortView(1, nil)
 }
