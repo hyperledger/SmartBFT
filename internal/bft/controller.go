@@ -145,7 +145,8 @@ type Controller struct {
 	unsupportedVersionSenders sync.Map
 
 	// minStartView is the lowest view the controller may start: the node left the views below it,
-	// by sending its view data for a later view. It is kept in memory only, and guarded by viewTransitionLock.
+	// by sending its view data for a later view. It is kept in memory only. It is written and read either before
+	// Start, when no other goroutine of the controller runs, or under viewTransitionLock.
 	minStartView uint64
 }
 
@@ -400,6 +401,11 @@ func (c *Controller) convertViewMessageToHeartbeat(m *protos.Message) *protos.Me
 func (c *Controller) startView(proposalSequence uint64) {
 	view, initPhase := c.ProposerBuilder.NewProposer(c.leaderID(), proposalSequence, c.currViewNumber, c.currDecisionsInView, c.quorum)
 
+	if c.currViewNumber < c.minStartView {
+		c.startLeftView(proposalSequence)
+		return
+	}
+
 	c.currViewLock.Lock()
 	c.currView = view
 	c.currView.Start()
@@ -418,6 +424,22 @@ func (c *Controller) startView(proposalSequence uint64) {
 	}
 	c.LeaderMonitor.ChangeRole(role, c.currViewNumber, c.leaderID())
 	c.Logger.Infof("Starting view with number %d, sequence %d, and decisions %d", c.currViewNumber, proposalSequence, c.currDecisionsInView)
+}
+
+// startLeftView puts in place of the current view one that the controller does not run, since the node left it.
+// The node takes no part in it, not even as its leader, and waits for a later view. Only Start gets here, since
+// changeView doesn't start a left view. The view was still built, since building the first view restores the state
+// of the node from the write ahead log, such as the in flight proposal it reports in its view data.
+func (c *Controller) startLeftView(proposalSequence uint64) {
+	leader := c.leaderID()
+	c.ViewSequences.Store(ViewSequence{ViewActive: false, ProposalSeq: proposalSequence})
+
+	c.currViewLock.Lock()
+	c.currView = newLeftView(leader)
+	c.currViewLock.Unlock()
+
+	c.LeaderMonitor.ChangeRole(Follower, c.currViewNumber, leader)
+	c.Logger.Infof("Not starting view %d, which the node left, waiting for a later view", c.currViewNumber)
 }
 
 func (c *Controller) changeView(newViewNumber uint64, newProposalSequence uint64, newDecisionsInView uint64) {
@@ -557,7 +579,8 @@ func (c *Controller) AbortViewAndHold(view uint64, cancel <-chan struct{}) bool 
 // LeaveView makes sure the given view, and any view before it, is never started again.
 // The view changer calls it while it holds the view, right before it sends its view data for the next view,
 // so that no view can be started in between. It never lowers the views that were already left.
-// The caller must hold viewTransitionLock, as it does after a successful AbortViewAndHold.
+// The caller must hold viewTransitionLock, as it does after a successful AbortViewAndHold, or call it before Start,
+// as Consensus does for a node that restarts in the middle of a view change.
 func (c *Controller) LeaveView(view uint64) {
 	c.minStartView = max(c.minStartView, view+1)
 }
@@ -930,6 +953,7 @@ func (c *Controller) syncOnStart(startViewNumber uint64, startProposalSequence u
 // Start the controller.
 // The verificationSequence is the one the requests in the pool were last pruned against,
 // so that a later change of the Verifier's sequence prunes the pool again.
+// If the node left the view it starts in, by LeaveView before Start, the controller doesn't run it.
 func (c *Controller) Start(startViewNumber uint64, startProposalSequence uint64, startDecisionsInView uint64, verificationSequence uint64, syncOnStart bool) {
 	c.Logger.Debugf("Starting controller with view %d, sequence %d, and decisions %d", startViewNumber, startProposalSequence, startDecisionsInView)
 	c.controllerDone.Add(1)
@@ -1158,3 +1182,26 @@ func (med *MutuallyExclusiveDeliver) Deliver(proposal types.Proposal, signature 
 
 	return result
 }
+
+// leftView stands for a view the node left. The controller does not run it: it is stopped, and drops its messages.
+type leftView struct {
+	leader    uint64
+	abortChan chan struct{}
+}
+
+func newLeftView(leader uint64) *leftView {
+	abortChan := make(chan struct{})
+	close(abortChan)
+
+	return &leftView{leader: leader, abortChan: abortChan}
+}
+
+func (*leftView) Propose(types.Proposal)                {}
+func (*leftView) Start()                                {}
+func (*leftView) Abort()                                {}
+func (*leftView) AbortWithCancel(<-chan struct{})       {}
+func (*leftView) Stopped() bool                         { return true }
+func (v *leftView) AbortChan() <-chan struct{}          { return v.abortChan }
+func (v *leftView) GetLeaderID() uint64                 { return v.leader }
+func (*leftView) GetMetadata() []byte                   { return nil }
+func (*leftView) HandleMessage(uint64, *protos.Message) {}

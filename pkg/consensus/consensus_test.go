@@ -6,11 +6,16 @@
 package consensus
 
 import (
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	algorithm "github.com/hyperledger/SmartBFT/internal/bft"
+	"github.com/hyperledger/SmartBFT/internal/bft/mocks"
+	"github.com/hyperledger/SmartBFT/pkg/types"
 	"github.com/hyperledger/SmartBFT/smartbftprotos"
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 )
@@ -97,4 +102,63 @@ func TestSetViewAndSeqUsesTheTrailingProposalView(t *testing.T) {
 			require.Equal(t, testCase.expectedDecisions, dec)
 		})
 	}
+}
+
+// TestSetViewAndSeqDoesNotStartALeftView makes sure that a node whose write ahead log ends with a view change record
+// starts in the view it left, restores the view change, and that the controller then doesn't run that view.
+func TestSetViewAndSeqDoesNotStartALeftView(t *testing.T) {
+	logger := zap.NewNop().Sugar()
+
+	viewChange := &smartbftprotos.SavedMessage{
+		Content: &smartbftprotos.SavedMessage_ViewChange{
+			ViewChange: &smartbftprotos.ViewChange{NextView: 3}, // the view the node left
+		},
+	}
+	// the view is built, but not started
+	proposer := &mocks.Proposer{}
+	proposer.On("Start").Maybe()
+	proposer.On("Abort").Maybe() // if it was started, the controller aborts it when it stops
+	builder := &mocks.ProposerBuilder{}
+	builder.On("NewProposer", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).
+		Return(proposer, algorithm.Phase(algorithm.COMMITTED))
+	leaderMonitor := &mocks.LeaderMonitor{}
+	leaderMonitor.On("ChangeRole", mock.Anything, mock.Anything, mock.Anything)
+	leaderMonitor.On("Close")
+	batcher := &mocks.Batcher{}
+	batcher.On("Close")
+	pool := &mocks.RequestPool{}
+	pool.On("Close")
+	var started sync.WaitGroup
+	started.Add(1)
+
+	consensus := &Consensus{
+		Logger:      logger,
+		viewChanger: &algorithm.ViewChanger{},
+		controller: &algorithm.Controller{
+			Logger:          logger,
+			N:               4,
+			NodesList:       []uint64{1, 2, 3, 4},
+			Checkpoint:      &types.Checkpoint{},
+			ProposerBuilder: builder,
+			LeaderMonitor:   leaderMonitor,
+			Batcher:         batcher,
+			RequestPool:     pool,
+			ViewSequences:   &atomic.Value{},
+			StartedWG:       &started,
+		},
+		state: &algorithm.PersistedState{
+			Entries: [][]byte{algorithm.MarshalOrPanic(viewChange)},
+			Logger:  logger,
+		},
+	}
+
+	view, seq, dec := consensus.setViewAndSeq(2, 10, 2)
+	require.Equal(t, uint64(3), view)
+	require.NotNil(t, consensus.viewChanger.Restore, "the view change is not restored")
+
+	consensus.controller.Start(view, seq+1, dec, 1, false)
+	defer consensus.controller.Stop()
+	builder.AssertNumberOfCalls(t, "NewProposer", 1)
+	proposer.AssertNotCalled(t, "Start")
+	leaderMonitor.AssertCalled(t, "ChangeRole", algorithm.Follower, uint64(3), mock.Anything)
 }

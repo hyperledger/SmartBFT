@@ -18,6 +18,7 @@ packages:
       HeartbeatEventHandler:
       LeaderMonitor:
       MembershipNotifierMock:
+      Proposer:
       ProposerBuilder:
       Pruner:
       RequestPool:
