@@ -578,16 +578,19 @@ func (c *Controller) AbortViewAndHold(view uint64, cancel <-chan struct{}) bool 
 
 // LeaveView makes sure the given view, and any view before it, is never started again.
 // The view changer calls it while it holds the view, right before it sends its view data for the next view,
-// so that no view can be started in between. It never lowers the views that were already left.
-// The caller must hold viewTransitionLock, as it does after a successful AbortViewAndHold, or call it before Start,
-// as Consensus does for a node that restarts in the middle of a view change.
+// so that no view can be started in between. See minStartView for when it may be called.
 func (c *Controller) LeaveView(view uint64) {
-	c.minStartView = max(c.minStartView, view+1)
+	c.LeaveViewsBelow(view + 1)
 }
 
-// MinStartView returns the lowest view the controller may start, so that a controller that replaces it after a
-// reconfiguration doesn't start the views the node left either. Call it only while the controller doesn't run,
-// after Stop, as a reconfiguration does.
+// LeaveViewsBelow makes sure no view below the given one is ever started again.
+// It never lowers the views that were already left. See minStartView for when it may be called.
+func (c *Controller) LeaveViewsBelow(minStartView uint64) {
+	c.minStartView = max(c.minStartView, minStartView)
+}
+
+// MinStartView returns the lowest view the controller may start, for the controller that replaces it after a
+// reconfiguration. Call it after Stop.
 func (c *Controller) MinStartView() uint64 {
 	return c.minStartView
 }
