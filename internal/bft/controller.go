@@ -145,8 +145,8 @@ type Controller struct {
 	unsupportedVersionSenders sync.Map
 
 	// minStartView is the lowest view the controller may start: the node left the views below it,
-	// by sending its view data for a later view. It is kept in memory only. It is written and read either before
-	// Start, when no other goroutine of the controller runs, or under viewTransitionLock.
+	// by sending its view data for a later view. It is kept in memory only. It is written and read either while no
+	// goroutine of the controller runs, before Start or after Stop, or under viewTransitionLock.
 	minStartView uint64
 }
 
@@ -583,6 +583,13 @@ func (c *Controller) AbortViewAndHold(view uint64, cancel <-chan struct{}) bool 
 // as Consensus does for a node that restarts in the middle of a view change.
 func (c *Controller) LeaveView(view uint64) {
 	c.minStartView = max(c.minStartView, view+1)
+}
+
+// MinStartView returns the lowest view the controller may start, so that a controller that replaces it after a
+// reconfiguration doesn't start the views the node left either. Call it only while the controller doesn't run,
+// after Stop, as a reconfiguration does.
+func (c *Controller) MinStartView() uint64 {
+	return c.minStartView
 }
 
 // ReleaseViewWrite lets the controller start or stop views again, once the view

@@ -225,7 +225,16 @@ func (c *Consensus) reconfig(reconfig types.Reconfig) {
 	c.setNodes(reconfig.CurrentNodes)
 	c.initMetricsBlacklistReconfigure(old)
 
+	// The new controller must not start the views the old one left. Neither of them runs now.
+	minStartView := c.controller.MinStartView()
+	// What the write ahead log held at startup is stale by now: the node goes on from its checkpoint, and from the
+	// in flight proposal it holds in memory.
+	c.state.Entries = nil
+
 	c.createComponents()
+	if minStartView > 0 {
+		c.controller.LeaveView(minStartView - 1)
+	}
 	opts := algorithm.PoolOptions{
 		ForwardTimeout:    c.Config.RequestForwardTimeout,
 		ComplainTimeout:   c.Config.RequestComplainTimeout,
