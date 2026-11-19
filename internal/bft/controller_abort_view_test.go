@@ -455,3 +455,20 @@ func TestControllerDoesNotRunALeftStartView(t *testing.T) {
 	require.Equal(t, []uint64{1}, builder.started())
 	controller.AbortView(1, nil)
 }
+
+func TestLeaveViewsBelow(t *testing.T) {
+	for _, minStartView := range []uint64{0, 1, 2} {
+		controller := &Controller{}
+		controller.LeaveViewsBelow(minStartView)
+		require.Equal(t, minStartView, controller.MinStartView())
+
+		// it never lowers the views that were already left
+		controller.LeaveViewsBelow(0)
+		require.Equal(t, minStartView, controller.MinStartView())
+	}
+
+	// leaving a view leaves the views below the next one
+	controller := &Controller{}
+	controller.LeaveView(0)
+	require.Equal(t, uint64(1), controller.MinStartView())
+}

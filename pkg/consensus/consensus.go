@@ -225,7 +225,11 @@ func (c *Consensus) reconfig(reconfig types.Reconfig) {
 	c.setNodes(reconfig.CurrentNodes)
 	c.initMetricsBlacklistReconfigure(old)
 
+	// The new controller must not start the views the old one left. Neither of them runs now.
+	minStartView := c.controller.MinStartView()
+
 	c.createComponents()
+	c.controller.LeaveViewsBelow(minStartView)
 	opts := algorithm.PoolOptions{
 		ForwardTimeout:    c.Config.RequestForwardTimeout,
 		ComplainTimeout:   c.Config.RequestComplainTimeout,
@@ -258,6 +262,15 @@ func (c *Consensus) reconfig(reconfig types.Reconfig) {
 	c.Logger.Debugf("Checkpoint with view %d and seq %d", md.GetViewId(), md.GetLatestSequence())
 
 	view, seq, dec := c.setViewAndSeq(md.GetViewId(), md.GetLatestSequence(), md.GetDecisionsInView())
+	if view < minStartView {
+		// The node left the view of its checkpoint, so it restores its view change, as after a restart in the middle
+		// of one: it starts in the view it left last, and the view changer moves on to the next view and sends its
+		// view data again. So neither the controller nor the view changer acts in a view the node left.
+		view = minStartView - 1
+		restoreChan := make(chan struct{}, 1)
+		restoreChan <- struct{}{}
+		c.viewChanger.Restore = restoreChan
+	}
 
 	c.waitForEachOther()
 
