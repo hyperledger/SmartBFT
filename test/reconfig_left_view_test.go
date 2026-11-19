@@ -92,7 +92,9 @@ func testReconfigKeepsTheLeftViews(t *testing.T, leftViews uint64) {
 
 	startNodes(nodes, network)
 
-	// node 4 alone leaves the views
+	// Node 4 alone leaves the views. The view change messages from nodes 2 and 3 are forged: they never sent them,
+	// and stay in view 0. A correct node never leaves a view alone, but this is how the test gets a reconfiguration
+	// decided in a view the node left.
 	for view := uint64(1); view <= leftViews; view++ {
 		viewChange := &smartbftprotos.Message{
 			Version: types.ProtocolVersion,
@@ -121,9 +123,9 @@ func testReconfigKeepsTheLeftViews(t *testing.T, leftViews uint64) {
 			CurrentConfig:    recconfigToInt(types.Reconfig{CurrentConfig: newConfig}).CurrentConfig,
 		},
 	})
-	var reconfiguration *AppRecord
-	for _, n := range nodes[:3] {
-		reconfiguration = delivered(t, n)
+	reconfiguration := delivered(t, nodes[0])
+	for _, n := range nodes[1:3] {
+		require.Equal(t, reconfiguration, delivered(t, n))
 	}
 
 	keptTheLeftViews := func(when string) {
@@ -139,6 +141,17 @@ func testReconfigKeepsTheLeftViews(t *testing.T, leftViews uint64) {
 			return notStarted.Load() >= starts || startsOfALeftView.Load() > 0
 		}, time.Minute, 100*time.Millisecond, "the node did not start %s", when)
 		keptTheLeftViews(when)
+	}
+	// keepsTheLeftViews checks that the node keeps the views it left for a while
+	keepsTheLeftViews := func(when string) {
+		t.Helper()
+		require.Never(t, func() bool {
+			left := startsOfALeftView.Load() > 0
+			for view := range leftViews {
+				left = left || sentViewData[view].Load() > 0
+			}
+			return left
+		}, 2*time.Second, 100*time.Millisecond, "the node ran or changed to a view it left %s", when)
 	}
 
 	// node 4's view change times out, and it syncs the reconfiguration
@@ -175,7 +188,7 @@ func testReconfigKeepsTheLeftViews(t *testing.T, leftViews uint64) {
 		require.Eventually(t, func() bool {
 			return leaver.Consensus.GetLeaderID() == nodes[1].Consensus.GetLeaderID()
 		}, time.Minute, 100*time.Millisecond, "the node is not in the view of the others after the restart")
-		keptTheLeftViews("after the restart")
+		keepsTheLeftViews("after the restart")
 		return
 	}
 
@@ -191,4 +204,5 @@ func testReconfigKeepsTheLeftViews(t *testing.T, leftViews uint64) {
 	// it keeps the views it left across a restart
 	leaver.RestartSync(false)
 	waitForTheLeftView(2, "after the restart")
+	keepsTheLeftViews("after the restart")
 }
