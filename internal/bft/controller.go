@@ -145,7 +145,8 @@ type Controller struct {
 	unsupportedVersionSenders sync.Map
 
 	// minStartView is the lowest view the controller may start: the node left the views below it,
-	// by sending its view data for a later view. It is kept in memory only, and guarded by viewTransitionLock.
+	// by sending its view data for a later view. It is kept in memory only. It is written and read either before
+	// Start, when no other goroutine of the controller runs, or under viewTransitionLock.
 	minStartView uint64
 }
 

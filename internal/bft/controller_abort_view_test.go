@@ -305,6 +305,26 @@ func TestAbortViewAndHoldBlocksViewChangesUntilReleased(t *testing.T) {
 	}
 }
 
+// recordingLeaderMonitor records the roles it was given.
+type recordingLeaderMonitor struct {
+	abortTestLeaderMonitor
+	lock  sync.Mutex
+	roles []Role
+}
+
+func (m *recordingLeaderMonitor) ChangeRole(role Role, _, _ uint64) {
+	m.lock.Lock()
+	defer m.lock.Unlock()
+	m.roles = append(m.roles, role)
+}
+
+func (m *recordingLeaderMonitor) given() []Role {
+	m.lock.Lock()
+	defer m.lock.Unlock()
+
+	return append([]Role(nil), m.roles...)
+}
+
 // recordingProposerBuilder returns a new view each time, and records the views it built.
 type recordingProposerBuilder struct {
 	lock  sync.Mutex
@@ -393,13 +413,14 @@ func TestControllerDoesNotStartALeftView(t *testing.T) {
 // a restart in the middle of a view change, doesn't run that view, and starts the next view when it gets to it.
 func TestControllerDoesNotRunALeftStartView(t *testing.T) {
 	builder := &recordingProposerBuilder{}
+	leaderMonitor := &recordingLeaderMonitor{}
 	var started sync.WaitGroup
 	started.Add(1)
 
 	controller := &Controller{
 		Checkpoint:      &types.Checkpoint{},
 		Batcher:         abortTestBatcher{},
-		LeaderMonitor:   abortTestLeaderMonitor{},
+		LeaderMonitor:   leaderMonitor,
 		ProposerBuilder: builder,
 		ID:              0,
 		N:               4,
@@ -420,6 +441,8 @@ func TestControllerDoesNotRunALeftStartView(t *testing.T) {
 	require.Empty(t, builder.started(), "the view the node left was started")
 	require.True(t, controller.currentViewStopped())
 	require.Equal(t, ViewSequence{ViewActive: false, ProposalSeq: 1}, controller.ViewSequences.Load())
+	// node 0 is the leader of view 0, but it doesn't act as the leader of a view it left
+	require.Equal(t, []Role{Follower}, leaderMonitor.given())
 
 	// the view changer restores the view change, which aborts and leaves the view that doesn't run
 	require.True(t, controller.AbortViewAndHold(0, nil))

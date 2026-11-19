@@ -20,7 +20,8 @@ import (
 // TestRestartInTheMiddleOfAViewChange makes sure that a node that restarts after it sent its view data for the next
 // view doesn't run the view it left, and gets to the next view.
 // The leader goes away, and the others change the view. Node 4 never gets the new view message, so its write ahead
-// log still ends with its view change record when it restarts.
+// log still ends with its view change record when it restarts. Nobody sends it the new view message again, so it
+// gets to the next view by a sync, once its restored view change times out.
 func TestRestartInTheMiddleOfAViewChange(t *testing.T) {
 	t.Parallel()
 	network := NewNetwork()
