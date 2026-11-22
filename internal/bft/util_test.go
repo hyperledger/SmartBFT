@@ -134,6 +134,68 @@ func TestInFlightProposalLatest(t *testing.T) {
 	require.Equal(t, prop, *ifp.InFlightProposal())
 }
 
+func TestInFlightProposalStaysPreparedWhenStoredAgain(t *testing.T) {
+	proposal := func() types.Proposal {
+		return types.Proposal{
+			VerificationSequence: 1,
+			Metadata:             MarshalOrPanic(&protos.ViewMetadata{LatestSequence: 1}),
+			Payload:              []byte{2},
+			Header:               []byte{},
+		}
+	}
+
+	for _, test := range []struct {
+		description string
+		change      func(*types.Proposal)
+		prepared    bool
+	}{
+		{description: "the same proposal", change: func(*types.Proposal) {}, prepared: true},
+		{description: "a nil header instead of an empty one, which has the same digest", change: func(p *types.Proposal) {
+			p.Header = nil
+		}, prepared: true},
+		{description: "another verification sequence", change: func(p *types.Proposal) { p.VerificationSequence = 2 }},
+		{description: "other metadata", change: func(p *types.Proposal) {
+			p.Metadata = MarshalOrPanic(&protos.ViewMetadata{LatestSequence: 1, DecisionsInView: 1})
+		}},
+		{description: "another header", change: func(p *types.Proposal) { p.Header = []byte{4} }},
+		{description: "another payload", change: func(p *types.Proposal) { p.Payload = []byte{4} }},
+	} {
+		t.Run(test.description, func(t *testing.T) {
+			checkpoint := &types.Checkpoint{}
+			checkpoint.Set(types.Proposal{}, nil) // the genesis proposal, so any in flight proposal is reported
+			vc := &ViewChanger{
+				SelfID:     1,
+				Logger:     zap.NewNop().Sugar(),
+				Signer:     noopSigner{},
+				Checkpoint: checkpoint,
+				InFlight:   &InFlightData{},
+			}
+
+			vc.InFlight.StoreProposal(proposal())
+			vc.InFlight.StorePrepares(0, 0)
+			again := proposal()
+			test.change(&again)
+			vc.InFlight.StoreProposal(again)
+
+			require.Equal(t, test.prepared, vc.InFlight.IsInFlightPrepared())
+			viewData := &protos.ViewData{}
+			require.NoError(t, proto.Unmarshal(vc.prepareViewDataMsg().GetViewData().GetRawViewData(), viewData))
+			require.Equal(t, test.prepared, viewData.GetInFlightPrepared(), "the view data reports the prepared flag wrong")
+			require.Equal(t, again.Payload, viewData.GetInFlightProposal().GetPayload())
+		})
+	}
+
+	// the first proposal isn't prepared either once it is stored after another one
+	ifp := &InFlightData{}
+	ifp.StoreProposal(proposal())
+	ifp.StorePrepares(0, 0)
+	other := proposal()
+	other.Payload = []byte{4}
+	ifp.StoreProposal(other)
+	ifp.StoreProposal(proposal())
+	require.False(t, ifp.IsInFlightPrepared())
+}
+
 type noopSigner struct{}
 
 func (noopSigner) Sign([]byte) []byte { return nil }

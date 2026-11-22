@@ -228,14 +228,23 @@ func (ifp *InFlightData) InFlightProposalAndPrepared() (*types.Proposal, bool) {
 	return ifp.v.proposal, ifp.v.prepared
 }
 
-// StoreProposal stores an in-flight proposal.
+// StoreProposal stores an in-flight proposal. If the proposal is the one already in flight, its prepared flag is
+// kept: storing the same proposal again, as when its view restarts, doesn't undo its prepares.
 func (ifp *InFlightData) StoreProposal(prop types.Proposal) {
 	p := prop
 
 	ifp.lock.Lock()
 	defer ifp.lock.Unlock()
 
-	ifp.v = &inFlightProposalData{proposal: &p}
+	prepared := ifp.v != nil && ifp.v.prepared && ifp.v.proposal != nil && sameProposal(*ifp.v.proposal, p)
+	ifp.v = &inFlightProposalData{proposal: &p, prepared: prepared}
+}
+
+// sameProposal returns whether the two proposals have the same digest, which is what prepares are for. It compares
+// the metadata first, which is small and differs between proposals of different sequences, so that it rarely
+// computes the digests.
+func sameProposal(a, b types.Proposal) bool {
+	return bytes.Equal(a.Metadata, b.Metadata) && a.Digest() == b.Digest()
 }
 
 // StorePrepares stores alongside the already stored in-flight proposal that it is prepared.
