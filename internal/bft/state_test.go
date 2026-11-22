@@ -427,9 +427,16 @@ func TestLoadLastProposalView(t *testing.T) {
 			WALContent:  [][]byte{bft.MarshalOrPanic(commit)},
 		},
 		{
-			description:      "proposal carried into a later view",
-			WALContent:       [][]byte{bft.MarshalOrPanic(newProposalRecord(11, 6, proposalMetadata))},
-			expectedMetadata: &protos.ViewMetadata{ViewId: 6, LatestSequence: 10, DecisionsInView: 0},
+			description: "proposal carried into a later view",
+			WALContent: [][]byte{bft.MarshalOrPanic(newProposalRecord(11, 6,
+				&protos.ViewMetadata{ViewId: 5, LatestSequence: 11, DecisionsInView: 3}))},
+			expectedMetadata: &protos.ViewMetadata{ViewId: 6, LatestSequence: 11, DecisionsInView: 0},
+		},
+		{
+			description: "malformed pre-prepare of an earlier view than its metadata",
+			WALContent: [][]byte{bft.MarshalOrPanic(newProposalRecord(11, 4,
+				&protos.ViewMetadata{ViewId: 5, LatestSequence: 11, DecisionsInView: 3}))},
+			expectedMetadata: &protos.ViewMetadata{ViewId: 5, LatestSequence: 11, DecisionsInView: 3},
 		},
 		{
 			description:      "new view followed by a proposal",
@@ -483,6 +490,7 @@ func TestLoadLastProposalView(t *testing.T) {
 			require.NotNil(t, metadata)
 			require.Equal(t, testCase.expectedMetadata.GetViewId(), metadata.GetViewId())
 			require.Equal(t, testCase.expectedMetadata.GetDecisionsInView(), metadata.GetDecisionsInView())
+			require.Equal(t, testCase.expectedMetadata.GetLatestSequence(), metadata.GetLatestSequence())
 		})
 	}
 }
@@ -669,4 +677,45 @@ func TestSaveCommitUsesTheGivenTruncationFlag(t *testing.T) {
 
 	require.Equal(t, []bool{false}, writeAheadLog.truncateTo, "a commit must never be a truncation point")
 	require.True(t, inFlight.IsInFlightPrepared(), "saving a commit must not clear the proposal in flight")
+}
+
+// TestRestoreDecisionsOfACarriedProposal makes sure that a proposal carried into a later view is restored as the first
+// decision in that view, although its metadata has the decisions of the view it was proposed in.
+func TestRestoreDecisionsOfACarriedProposal(t *testing.T) {
+	carried := newProposalRecord(11, 6, &protos.ViewMetadata{ViewId: 5, LatestSequence: 11, DecisionsInView: 5})
+	notCarried := newProposalRecord(11, 5, &protos.ViewMetadata{ViewId: 5, LatestSequence: 11, DecisionsInView: 5})
+
+	for _, test := range []struct {
+		description       string
+		WALContent        []*protos.SavedMessage
+		expectedView      uint64
+		expectedDecisions uint64
+	}{
+		{description: "carried, proposed", WALContent: []*protos.SavedMessage{carried}, expectedView: 6, expectedDecisions: 0},
+		{description: "carried, prepared", WALContent: []*protos.SavedMessage{carried, newCommitRecord(11, 6)}, expectedView: 6, expectedDecisions: 0},
+		{description: "not carried", WALContent: []*protos.SavedMessage{notCarried}, expectedView: 5, expectedDecisions: 5},
+	} {
+		t.Run(test.description, func(t *testing.T) {
+			entries := make([][]byte, 0, len(test.WALContent))
+			for _, record := range test.WALContent {
+				entries = append(entries, bft.MarshalOrPanic(record))
+			}
+			state := &bft.PersistedState{
+				Entries:          entries,
+				Logger:           zap.NewNop().Sugar(),
+				InFlightProposal: &bft.InFlightData{},
+			}
+			verifier := &mocks.VerifierMock{}
+			verifier.On("RequestsFromProposal", mock.Anything).Return(nil)
+			view := &bft.View{
+				Number:           6,
+				ProposalSequence: 11,
+				MetricsView:      api.NewMetricsView(&disabled.Provider{}),
+				Verifier:         verifier,
+			}
+			require.NoError(t, state.Restore(view))
+			require.Equal(t, test.expectedView, view.Number)
+			require.Equal(t, test.expectedDecisions, view.DecisionsInView)
+		})
+	}
 }
