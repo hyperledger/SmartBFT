@@ -1579,3 +1579,84 @@ func newView(t *testing.T, selfID uint64, network map[uint64]*testedView) *teste
 
 	return tv
 }
+
+// TestViewKeepsTheCommitOfAPreparedProposal makes sure that a view that gets the pre-prepare of the proposal already
+// in flight and prepared saves it without truncating the write ahead log, so that the commit record that proves it
+// prepared stays, and that it truncates for any other proposal.
+func TestViewKeepsTheCommitOfAPreparedProposal(t *testing.T) {
+	prop := prePrepare.GetPrePrepare().GetProposal()
+	proposal := types.Proposal{
+		VerificationSequence: int64(prop.GetVerificationSequence()),
+		Metadata:             prop.GetMetadata(),
+		Payload:              prop.GetPayload(),
+		Header:               prop.GetHeader(),
+	}
+	other := proposal
+	other.Payload = []byte{9}
+
+	inFlight := func(p types.Proposal, prepared bool) *bft.InFlightData {
+		ifp := &bft.InFlightData{}
+		ifp.StoreProposal(p)
+		if prepared {
+			ifp.StorePrepares(0, 0)
+		}
+		return ifp
+	}
+
+	for _, test := range []struct {
+		description string
+		inFlight    *bft.InFlightData
+		truncated   bool
+	}{
+		{description: "the proposal in flight, prepared", inFlight: inFlight(proposal, true), truncated: false},
+		{description: "the proposal in flight, not prepared", inFlight: inFlight(proposal, false), truncated: true},
+		{description: "another proposal in flight, prepared", inFlight: inFlight(other, true), truncated: true},
+		{description: "no in flight data", inFlight: nil, truncated: true},
+	} {
+		t.Run(test.description, func(t *testing.T) {
+			verifier := &mocks.VerifierMock{}
+			verifier.On("VerificationSequence").Return(uint64(1))
+			verifier.On("VerifyProposal", mock.Anything).Return(nil, nil)
+			comm := &mocks.CommMock{}
+			comm.On("BroadcastConsensus", mock.Anything)
+			saved := make(chan bool, 1)
+			state := &mocks.State{}
+			state.On("Save", mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
+				if args.Get(0).(*protos.SavedMessage).GetProposedRecord() != nil {
+					saved <- args.Get(1).(bool)
+				}
+			}).Return(nil)
+			basicLog, err := zap.NewDevelopment()
+			require.NoError(t, err)
+
+			view := &bft.View{
+				RetrieveCheckpoint: (&types.Checkpoint{}).Get,
+				Comm:               comm,
+				Verifier:           verifier,
+				SelfID:             2,
+				State:              state,
+				InFlight:           test.inFlight,
+				Logger:             basicLog.Sugar(),
+				N:                  4,
+				NodesList:          []uint64{1, 2, 3, 4},
+				LeaderID:           1,
+				Quorum:             3,
+				Number:             1,
+				ProposalSequence:   0,
+				ViewSequences:      &atomic.Value{},
+				InMsgQSize:         40,
+				MetricsView:        api.NewMetricsView(&disabled.Provider{}),
+			}
+			view.Start()
+			defer view.Abort()
+
+			view.HandleMessage(1, prePrepare)
+			select {
+			case truncated := <-saved:
+				require.Equal(t, test.truncated, truncated)
+			case <-time.After(time.Minute):
+				require.Fail(t, "the pre-prepare was not saved")
+			}
+		})
+	}
+}

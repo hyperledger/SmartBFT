@@ -243,7 +243,11 @@ func (ps *PersistedState) restoreInFlightBeforeViewRecord(v *View) error {
 		}
 
 		if proposed := record.GetProposedRecord(); proposed != nil {
-			return ps.restoreInFlightProposal(proposed, nil, v)
+			commitMsg, err := ps.earlierCommit(i, proposed)
+			if err != nil {
+				return err
+			}
+			return ps.restoreInFlightProposal(proposed, commitMsg, v)
 		}
 
 		// NewView and ViewChange records can sit between the proposal pair and the
@@ -276,6 +280,33 @@ func (ps *PersistedState) restoreInFlightProposal(proposed *protos.ProposedRecor
 	return nil
 }
 
+// earlierCommit returns the commit record before entry i of the write ahead log for the same sequence and proposal as
+// the given proposal record, or nil if there is none. The pre-prepare of a proposal that is already prepared doesn't
+// truncate the write ahead log, so the commit that proved it prepared stays before it.
+func (ps *PersistedState) earlierCommit(i int, proposed *protos.ProposedRecord) (*protos.Message, error) {
+	prePrepare := proposed.GetPrePrepare()
+	prop := prePrepare.GetProposal()
+	digest := types.Proposal{
+		VerificationSequence: int64(prop.GetVerificationSequence()),
+		Metadata:             prop.GetMetadata(),
+		Payload:              prop.GetPayload(),
+		Header:               prop.GetHeader(),
+	}.Digest()
+
+	for j := i - 1; j >= 0; j-- {
+		record := &protos.SavedMessage{}
+		if err := proto.Unmarshal(ps.Entries[j], record); err != nil {
+			return nil, fmt.Errorf("failed unmarshaling record %d from WAL: %w", j, err)
+		}
+		commitMsg := record.GetCommit()
+		if commit := commitMsg.GetCommit(); commit.GetSeq() == prePrepare.GetSeq() && commit.GetDigest() == digest {
+			return commitMsg, nil
+		}
+	}
+
+	return nil, nil
+}
+
 func (ps *PersistedState) recoverProposed(lastPersistedMessage *protos.ProposedRecord, v *View) error {
 	// A sync can deliver the proposal without writing to the WAL, so the record
 	// may be older than the sequence the view starts at.
@@ -293,6 +324,13 @@ func (ps *PersistedState) recoverProposed(lastPersistedMessage *protos.ProposedR
 	}
 	restoreInFlightRequests(v)
 	ps.storeProposal(lastPersistedMessage)
+	commitMsg, err := ps.earlierCommit(len(ps.Entries)-1, lastPersistedMessage)
+	if err != nil {
+		return err
+	}
+	if commitMsg != nil {
+		ps.storePrepared(commitMsg)
+	}
 	// Reconstruct the prepare message we shall next broadcast
 	// after the recovery.
 	prp := lastPersistedMessage.GetPrePrepare()

@@ -240,6 +240,18 @@ func (ifp *InFlightData) StoreProposal(prop types.Proposal) {
 	ifp.v = &inFlightProposalData{proposal: &p, prepared: prepared}
 }
 
+// IsPreparedProposal returns whether the given proposal is the one in flight, and is prepared.
+func (ifp *InFlightData) IsPreparedProposal(prop types.Proposal) bool {
+	if ifp == nil {
+		return false
+	}
+
+	ifp.lock.RLock()
+	defer ifp.lock.RUnlock()
+
+	return ifp.v != nil && ifp.v.prepared && ifp.v.proposal != nil && sameProposal(*ifp.v.proposal, prop)
+}
+
 // sameProposal returns whether the two proposals have the same digest, which is what prepares are for. It compares
 // the metadata first, which is small and differs between proposals of different sequences, so that it rarely
 // computes the digests.
@@ -285,6 +297,7 @@ type ProposalMaker struct {
 	Signer             api.Signer
 	MembershipNotifier api.MembershipNotifier
 	State              State
+	InFlight           *InFlightData
 	InMsqQSize         int
 	ViewSequences      *atomic.Value
 	restoreOnceFromWAL sync.Once
@@ -313,6 +326,7 @@ func (pm *ProposalMaker) NewProposer(leader, proposalSequence, viewNum, decision
 		ProposalSequence:   proposalSequence,
 		DecisionsInView:    decisionsInView,
 		State:              pm.State,
+		InFlight:           pm.InFlight,
 		InMsgQSize:         pm.InMsqQSize,
 		ViewSequences:      pm.ViewSequences,
 		MetricsBlacklist:   pm.MetricsBlacklist,
