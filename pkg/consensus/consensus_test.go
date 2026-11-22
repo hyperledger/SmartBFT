@@ -49,6 +49,7 @@ func TestSetViewAndSeqUsesTheTrailingProposalView(t *testing.T) {
 		description       string
 		proposalView      uint64
 		proposalDecisions uint64
+		carriedTo         uint64 // the view the proposal was carried into, if not 0
 		expectedView      uint64
 		expectedDecisions uint64
 	}{
@@ -66,18 +67,30 @@ func TestSetViewAndSeqUsesTheTrailingProposalView(t *testing.T) {
 			expectedView:      0,
 			expectedDecisions: 3,
 		},
+		{
+			description:       "proposal carried into a later view",
+			proposalView:      1,
+			proposalDecisions: 5,
+			carriedTo:         2,
+			expectedView:      2,
+			expectedDecisions: 0,
+		},
 	} {
 		t.Run(testCase.description, func(t *testing.T) {
+			prePrepareView := testCase.proposalView
+			if testCase.carriedTo != 0 {
+				prePrepareView = testCase.carriedTo
+			}
 			proposal := &smartbftprotos.SavedMessage{
 				Content: &smartbftprotos.SavedMessage_ProposedRecord{
 					ProposedRecord: &smartbftprotos.ProposedRecord{
 						PrePrepare: &smartbftprotos.PrePrepare{
 							Seq:  11,
-							View: testCase.proposalView,
+							View: prePrepareView,
 							Proposal: &smartbftprotos.Proposal{
 								Metadata: algorithm.MarshalOrPanic(&smartbftprotos.ViewMetadata{
 									ViewId:          testCase.proposalView,
-									LatestSequence:  10,
+									LatestSequence:  11,
 									DecisionsInView: testCase.proposalDecisions,
 								}),
 							},
@@ -100,6 +113,87 @@ func TestSetViewAndSeqUsesTheTrailingProposalView(t *testing.T) {
 			require.Equal(t, testCase.expectedView, view)
 			require.Equal(t, uint64(10), seq)
 			require.Equal(t, testCase.expectedDecisions, dec)
+		})
+	}
+}
+
+// TestSetViewAndSeqWithACarriedProposal makes sure that a node restarts in the view a proposal was carried into, which
+// keeps the metadata of the view it was proposed in, whether the proposal is still in flight or already decided.
+func TestSetViewAndSeqWithACarriedProposal(t *testing.T) {
+	logger := zap.NewNop().Sugar()
+	// proposed at sequence 11 in view 5, after 5 decisions in it, and carried into view 6
+	carried := &smartbftprotos.SavedMessage{
+		Content: &smartbftprotos.SavedMessage_ProposedRecord{
+			ProposedRecord: &smartbftprotos.ProposedRecord{
+				PrePrepare: &smartbftprotos.PrePrepare{
+					Seq:  11,
+					View: 6,
+					Proposal: &smartbftprotos.Proposal{
+						Metadata: algorithm.MarshalOrPanic(&smartbftprotos.ViewMetadata{
+							ViewId:          5,
+							LatestSequence:  11,
+							DecisionsInView: 5,
+						}),
+					},
+				},
+			},
+		},
+	}
+	commit := &smartbftprotos.SavedMessage{
+		Content: &smartbftprotos.SavedMessage_Commit{
+			Commit: &smartbftprotos.Message{
+				Content: &smartbftprotos.Message_Commit{Commit: &smartbftprotos.Commit{Seq: 11, View: 6}},
+			},
+		},
+	}
+	newView := &smartbftprotos.SavedMessage{
+		Content: &smartbftprotos.SavedMessage_NewView{
+			NewView: &smartbftprotos.ViewMetadata{ViewId: 6, LatestSequence: 10},
+		},
+	}
+
+	for _, test := range []struct {
+		description       string
+		WALContent        []*smartbftprotos.SavedMessage
+		seq, decisions    uint64 // of the last decision of the application, in view 5
+		expectedDecisions uint64
+	}{
+		{
+			description:       "in flight",
+			WALContent:        []*smartbftprotos.SavedMessage{carried},
+			seq:               10,
+			decisions:         4,
+			expectedDecisions: 0,
+		},
+		{
+			description:       "decided",
+			WALContent:        []*smartbftprotos.SavedMessage{carried, commit},
+			seq:               11,
+			decisions:         5,
+			expectedDecisions: 1,
+		},
+		{
+			description:       "decided, after a new view record that the write ahead log kept",
+			WALContent:        []*smartbftprotos.SavedMessage{newView, carried, commit},
+			seq:               11,
+			decisions:         5,
+			expectedDecisions: 1,
+		},
+	} {
+		t.Run(test.description, func(t *testing.T) {
+			entries := make([][]byte, 0, len(test.WALContent))
+			for _, record := range test.WALContent {
+				entries = append(entries, algorithm.MarshalOrPanic(record))
+			}
+			consensus := &Consensus{
+				Logger: logger,
+				state:  &algorithm.PersistedState{Entries: entries, Logger: logger},
+			}
+
+			view, seq, dec := consensus.setViewAndSeq(5, test.seq, test.decisions)
+			require.Equal(t, uint64(6), view)
+			require.Equal(t, test.seq, seq)
+			require.Equal(t, test.expectedDecisions, dec)
 		})
 	}
 }

@@ -524,25 +524,30 @@ func (c *Consensus) setViewAndSeq(view, seq, dec uint64) (newView, newSeq, newDe
 	}
 	if viewSeq == nil {
 		c.Logger.Debugf("No new view to restore")
-
-		// The built-in WAL truncates a NewView record when the next pre-prepare
-		// is saved. In that case the trailing proposal still defines the view
-		// and the decision count the node was in before the restart.
-		lastProposal, err := c.state.LoadLastProposalView()
-		if err != nil {
-			c.Logger.Panicf("Failed loading the last proposal view, error: %v", err)
-		}
-		if lastProposal != nil && lastProposal.GetViewId() > newView {
-			c.Logger.Debugf("Restoring start view %d from the last proposal record", lastProposal.GetViewId())
-			newView = lastProposal.GetViewId()
-			newDec = lastProposal.GetDecisionsInView()
-		}
 	} else if viewSeq.Seq >= seq {
 		// Check if metadata should be taken from the restored new view
 		c.Logger.Debugf("Restoring from new view with view %d and seq %d", viewSeq.View, viewSeq.Seq)
 		newView = viewSeq.View
 		newSeq = viewSeq.Seq
 		newDec = 0
+	}
+
+	// The built-in WAL truncates a NewView record when the next pre-prepare
+	// is saved. In that case the trailing proposal still defines the view
+	// and the decision count the node was in before the restart. So does a
+	// proposal carried into a later view, which keeps the metadata of the
+	// view it was proposed in, also once it is decided.
+	lastProposal, err := c.state.LoadLastProposalView()
+	if err != nil {
+		c.Logger.Panicf("Failed loading the last proposal view, error: %v", err)
+	}
+	if lastProposal != nil && lastProposal.GetViewId() > newView {
+		c.Logger.Debugf("Restoring start view %d from the last proposal record", lastProposal.GetViewId())
+		newView = lastProposal.GetViewId()
+		newDec = lastProposal.GetDecisionsInView()
+		if lastProposal.GetLatestSequence() == seq {
+			newDec++ // the application already decided it
+		}
 	}
 	return newView, newSeq, newDec
 }

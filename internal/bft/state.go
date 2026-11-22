@@ -103,12 +103,25 @@ func (ps *PersistedState) LoadNewViewIfApplicable() (*types.ViewAndSeq, error) {
 	return nil, nil
 }
 
-// LoadLastProposalView returns the metadata of the latest proposal record.
+// decisionsInView returns the decisions in view before the proposal of the given pre-prepare. A proposal carried into
+// a later view keeps the metadata of the view it was proposed in, and is the first decision in the view it was carried
+// into. A carry-over only moves a proposal to a later view, so a pre-prepare of an earlier view than its metadata
+// doesn't change the metadata.
+func decisionsInView(prePrepare *protos.PrePrepare, metadata *protos.ViewMetadata) uint64 {
+	if prePrepare.GetView() > metadata.GetViewId() {
+		return 0
+	}
+	return metadata.GetDecisionsInView()
+}
+
+// LoadLastProposalView returns the metadata of the latest proposal record, with the view of its pre-prepare.
 // The built-in WAL drops a NewView record when the next pre-prepare is saved
 // with truncateTo=true, so after a restart the proposal can be the only record
 // that defines the view. A later NewView or ViewChange record takes precedence
 // and makes this method return nil: LoadNewViewIfApplicable and
 // LoadViewChangeIfApplicable handle those records.
+// A proposal carried into a later view by a view change keeps the metadata of the view it was proposed in, so the
+// view comes from the pre-prepare, and the proposal is the first decision in that view.
 func (ps *PersistedState) LoadLastProposalView() (*protos.ViewMetadata, error) {
 	for i := range slices.Backward(ps.Entries) {
 		persistedMessage := &protos.SavedMessage{}
@@ -134,6 +147,8 @@ func (ps *PersistedState) LoadLastProposalView() (*protos.ViewMetadata, error) {
 		if err := proto.Unmarshal(prePrepare.GetProposal().GetMetadata(), metadata); err != nil {
 			return nil, fmt.Errorf("failed unmarshaling proposal metadata: %w", err)
 		}
+		metadata.DecisionsInView = decisionsInView(prePrepare, metadata)
+		metadata.ViewId = max(metadata.GetViewId(), prePrepare.GetView())
 		return metadata, nil
 	}
 	return nil, nil
@@ -293,7 +308,7 @@ func (ps *PersistedState) recoverProposed(lastPersistedMessage *protos.ProposedR
 	if err := proto.Unmarshal(prop.GetMetadata(), md); err != nil {
 		ps.Logger.Panicf("Failed to unmarshal proposal metadata, error: %v", err)
 	}
-	v.DecisionsInView = md.GetDecisionsInView()
+	v.DecisionsInView = decisionsInView(prp, md)
 	ps.Logger.Infof("Restored proposal with sequence %d", lastPersistedMessage.GetPrePrepare().GetSeq())
 	return nil
 }
@@ -350,7 +365,7 @@ func (ps *PersistedState) recoverPrepared(lastPersistedMessage *protos.Message, 
 	if err := proto.Unmarshal(prop.GetMetadata(), md); err != nil {
 		ps.Logger.Panicf("Failed to unmarshal proposal metadata, error: %v", err)
 	}
-	v.DecisionsInView = md.GetDecisionsInView()
+	v.DecisionsInView = decisionsInView(prePrepareFromWAL, md)
 
 	// Restore signature
 	signatureInLastSentCommit := v.lastBroadcastSent.GetCommit().GetSignature()
