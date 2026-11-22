@@ -228,14 +228,25 @@ func (ifp *InFlightData) InFlightProposalAndPrepared() (*types.Proposal, bool) {
 	return ifp.v.proposal, ifp.v.prepared
 }
 
-// StoreProposal stores an in-flight proposal.
+// StoreProposal stores an in-flight proposal. If it is the proposal already in flight, it stays prepared if it was:
+// storing the same proposal again, as when it goes through a pre-prepare again, doesn't undo its prepares.
 func (ifp *InFlightData) StoreProposal(prop types.Proposal) {
 	p := prop
 
 	ifp.lock.Lock()
 	defer ifp.lock.Unlock()
 
-	ifp.v = &inFlightProposalData{proposal: &p}
+	prepared := ifp.v != nil && ifp.v.prepared && sameProposal(*ifp.v.proposal, p)
+	ifp.v = &inFlightProposalData{proposal: &p, prepared: prepared}
+}
+
+// sameProposal returns whether the two proposals have the same bytes. It compares the metadata first, which is
+// small and differs between proposals of different sequences, so that it rarely compares the payloads.
+func sameProposal(a, b types.Proposal) bool {
+	return a.VerificationSequence == b.VerificationSequence &&
+		bytes.Equal(a.Metadata, b.Metadata) &&
+		bytes.Equal(a.Header, b.Header) &&
+		bytes.Equal(a.Payload, b.Payload)
 }
 
 // StorePrepares stores alongside the already stored in-flight proposal that it is prepared.

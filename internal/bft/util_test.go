@@ -134,6 +134,38 @@ func TestInFlightProposalLatest(t *testing.T) {
 	require.Equal(t, prop, *ifp.InFlightProposal())
 }
 
+func TestInFlightProposalStaysPreparedWhenStoredAgain(t *testing.T) {
+	prop := types.Proposal{
+		VerificationSequence: 1,
+		Metadata:             []byte{1},
+		Payload:              []byte{2},
+		Header:               []byte{3},
+	}
+	other := prop
+	other.Metadata = []byte{4}
+
+	ifp := &InFlightData{}
+	ifp.StoreProposal(prop)
+	require.False(t, ifp.IsInFlightPrepared())
+	ifp.StorePrepares(0, 0)
+	require.True(t, ifp.IsInFlightPrepared())
+
+	// the same proposal, stored again, stays prepared
+	ifp.StoreProposal(types.Proposal{
+		VerificationSequence: 1,
+		Metadata:             []byte{1},
+		Payload:              []byte{2},
+		Header:               []byte{3},
+	})
+	require.True(t, ifp.IsInFlightPrepared())
+
+	// another proposal isn't prepared, and neither is the first one once it is stored after it
+	ifp.StoreProposal(other)
+	require.False(t, ifp.IsInFlightPrepared())
+	ifp.StoreProposal(prop)
+	require.False(t, ifp.IsInFlightPrepared())
+}
+
 type noopSigner struct{}
 
 func (noopSigner) Sign([]byte) []byte { return nil }
