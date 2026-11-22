@@ -49,6 +49,7 @@ func TestSetViewAndSeqUsesTheTrailingProposalView(t *testing.T) {
 		description       string
 		proposalView      uint64
 		proposalDecisions uint64
+		carriedTo         uint64 // the view the proposal was carried into, if not 0
 		expectedView      uint64
 		expectedDecisions uint64
 	}{
@@ -66,14 +67,26 @@ func TestSetViewAndSeqUsesTheTrailingProposalView(t *testing.T) {
 			expectedView:      0,
 			expectedDecisions: 3,
 		},
+		{
+			description:       "proposal carried into a later view",
+			proposalView:      1,
+			proposalDecisions: 5,
+			carriedTo:         2,
+			expectedView:      2,
+			expectedDecisions: 0,
+		},
 	} {
 		t.Run(testCase.description, func(t *testing.T) {
+			prePrepareView := testCase.proposalView
+			if testCase.carriedTo != 0 {
+				prePrepareView = testCase.carriedTo
+			}
 			proposal := &smartbftprotos.SavedMessage{
 				Content: &smartbftprotos.SavedMessage_ProposedRecord{
 					ProposedRecord: &smartbftprotos.ProposedRecord{
 						PrePrepare: &smartbftprotos.PrePrepare{
 							Seq:  11,
-							View: testCase.proposalView,
+							View: prePrepareView,
 							Proposal: &smartbftprotos.Proposal{
 								Metadata: algorithm.MarshalOrPanic(&smartbftprotos.ViewMetadata{
 									ViewId:          testCase.proposalView,

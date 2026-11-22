@@ -427,6 +427,11 @@ func TestLoadLastProposalView(t *testing.T) {
 			WALContent:  [][]byte{bft.MarshalOrPanic(commit)},
 		},
 		{
+			description:      "proposal carried into a later view",
+			WALContent:       [][]byte{bft.MarshalOrPanic(newProposalRecord(11, 6, proposalMetadata))},
+			expectedMetadata: &protos.ViewMetadata{ViewId: 6, LatestSequence: 10, DecisionsInView: 0},
+		},
+		{
 			description:      "new view followed by a proposal",
 			WALContent:       [][]byte{bft.MarshalOrPanic(newView), bft.MarshalOrPanic(proposal)},
 			expectedMetadata: proposalMetadata,

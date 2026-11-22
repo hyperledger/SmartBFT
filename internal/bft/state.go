@@ -103,12 +103,14 @@ func (ps *PersistedState) LoadNewViewIfApplicable() (*types.ViewAndSeq, error) {
 	return nil, nil
 }
 
-// LoadLastProposalView returns the metadata of the latest proposal record.
+// LoadLastProposalView returns the metadata of the latest proposal record, with the view of its pre-prepare.
 // The built-in WAL drops a NewView record when the next pre-prepare is saved
 // with truncateTo=true, so after a restart the proposal can be the only record
 // that defines the view. A later NewView or ViewChange record takes precedence
 // and makes this method return nil: LoadNewViewIfApplicable and
 // LoadViewChangeIfApplicable handle those records.
+// A proposal carried into a later view by a view change keeps the metadata of the view it was proposed in, so the
+// view comes from the pre-prepare, and the proposal is the first decision in that view.
 func (ps *PersistedState) LoadLastProposalView() (*protos.ViewMetadata, error) {
 	for i := range slices.Backward(ps.Entries) {
 		persistedMessage := &protos.SavedMessage{}
@@ -133,6 +135,10 @@ func (ps *PersistedState) LoadLastProposalView() (*protos.ViewMetadata, error) {
 		metadata := &protos.ViewMetadata{}
 		if err := proto.Unmarshal(prePrepare.GetProposal().GetMetadata(), metadata); err != nil {
 			return nil, fmt.Errorf("failed unmarshaling proposal metadata: %w", err)
+		}
+		if prePrepare.GetView() != metadata.GetViewId() {
+			metadata.ViewId = prePrepare.GetView()
+			metadata.DecisionsInView = 0
 		}
 		return metadata, nil
 	}
