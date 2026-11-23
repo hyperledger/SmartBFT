@@ -38,6 +38,25 @@ func TestControllerDecideViewBookkeeping(t *testing.T) {
 		require.Empty(t, controller.leaderToken)
 	})
 
+	t.Run("proposal carried from an earlier view", func(t *testing.T) {
+		// The decision doesn't count in the view, so the leader doesn't rotate, and it proposes next.
+		view := &View{abortChan: make(chan struct{})}
+		controller := newDecidingController(t, view)
+		controller.LeaderRotation = true
+		controller.DecisionsPerLeader = 1
+		controller.currViewNumber = 2
+		controller.ID = 3 // the leader of view 2 before any decision in it
+		metadata, err := proto.Marshal(&protos.ViewMetadata{ViewId: 1, LatestSequence: 5})
+		require.NoError(t, err)
+		carried := newDecision(t, view)
+		carried.proposal.Metadata = metadata
+
+		controller.decide(carried)
+		require.Equal(t, uint64(0), controller.getCurrentDecisionsInView())
+		require.Equal(t, uint64(3), controller.leaderID())
+		require.Len(t, controller.leaderToken, 1)
+	})
+
 	t.Run("view replaced", func(t *testing.T) {
 		view := &View{abortChan: make(chan struct{})}
 		view.stop()

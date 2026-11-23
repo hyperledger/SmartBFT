@@ -690,7 +690,17 @@ func (c *Controller) decide(d decision) {
 		c.MaybePruneRevokedRequests()
 		return
 	}
-	c.incrementCurrentDecisionsInView()
+	md := &protos.ViewMetadata{}
+	if err := proto.Unmarshal(d.proposal.Metadata, md); err != nil {
+		c.Logger.Panicf("Failed to unmarshal proposal metadata, error: %v", err)
+	}
+
+	// A decision counts in the view only if it was proposed in it: a proposal carried from an earlier view keeps the
+	// metadata of that view. Then the leader doesn't change either.
+	countsInView := md.GetViewId() >= c.getCurrentViewNumber()
+	if countsInView {
+		c.incrementCurrentDecisionsInView()
+	}
 
 	if d.view.Stopped() {
 		// The view that decided was aborted but not replaced, so the decision still counts in this view,
@@ -703,12 +713,7 @@ func (c *Controller) decide(d decision) {
 		return
 	}
 
-	md := &protos.ViewMetadata{}
-	if err := proto.Unmarshal(d.proposal.Metadata, md); err != nil {
-		c.Logger.Panicf("Failed to unmarshal proposal metadata, error: %v", err)
-	}
-
-	if c.checkIfRotate(md.GetBlackList()) {
+	if countsInView && c.checkIfRotate(md.GetBlackList()) {
 		c.Logger.Debugf("Restarting view to rotate the leader")
 		c.changeView(c.getCurrentViewNumber(), md.GetLatestSequence()+1, c.getCurrentDecisionsInView())
 		c.Logger.Debugf("Restarting timers in request pool due to leader rotation")

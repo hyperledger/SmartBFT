@@ -1736,7 +1736,7 @@ func savedRecord(t *testing.T, entry []byte) *protos.SavedMessage {
 // it at its first sequence, as if the leader had proposed it: the view saves it as a pre-prepare of this view, sends a
 // prepare for it, and decides it with its bytes unchanged. The metadata of the earlier view doesn't make the view
 // reject it, and the leader doesn't send a pre-prepare for it. The proposal was prepared in the earlier view, so the
-// commit record that proves it stays in the write ahead log.
+// commit record that proves it stays in the write ahead log. Its decision doesn't count as a decision in the view.
 func TestViewStartsWithACarriedProposal(t *testing.T) {
 	digest := carriedProposal.Digest()
 	prepareFrom := &protos.Message{
@@ -1822,6 +1822,8 @@ func TestViewStartsWithACarriedProposal(t *testing.T) {
 				require.Fail(t, "the view did not decide")
 			}
 			view.Abort()
+			require.Equal(t, uint64(6), view.ProposalSequence)
+			require.Zero(t, view.DecisionsInView)
 			require.NoError(t, writeAheadLog.Close())
 
 			writeAheadLog, entries, err := wal.InitializeAndReadAll(logger, dir, nil)

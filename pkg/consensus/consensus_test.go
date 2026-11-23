@@ -120,7 +120,8 @@ func TestSetViewAndSeqUsesTheTrailingProposalView(t *testing.T) {
 }
 
 // TestSetViewAndSeqWithACarriedProposal makes sure that a node restarts in the view a proposal was carried into, which
-// keeps the metadata of the view it was proposed in, whether the proposal is still in flight or already decided.
+// keeps the metadata of the view it was proposed in, whether the proposal is still in flight or already decided. The
+// proposal doesn't count as a decision in that view, so the node restarts with none.
 func TestSetViewAndSeqWithACarriedProposal(t *testing.T) {
 	logger := zap.NewNop().Sugar()
 	// proposed at sequence 11 in view 5, after 5 decisions in it, and carried into view 6
@@ -172,14 +173,14 @@ func TestSetViewAndSeqWithACarriedProposal(t *testing.T) {
 			WALContent:        []*smartbftprotos.SavedMessage{carried, commit},
 			seq:               11,
 			decisions:         5,
-			expectedDecisions: 1,
+			expectedDecisions: 0,
 		},
 		{
 			description:       "decided, after a new view record that the write ahead log kept",
 			WALContent:        []*smartbftprotos.SavedMessage{newView, carried, commit},
 			seq:               11,
 			decisions:         5,
-			expectedDecisions: 1,
+			expectedDecisions: 0,
 		},
 	} {
 		t.Run(test.description, func(t *testing.T) {
