@@ -71,8 +71,8 @@ type Proposer interface {
 
 // ProposerBuilder builds a new Proposer
 type ProposerBuilder interface {
-	// NewProposer builds a view. If carried isn't nil, the view starts with it at its first sequence instead of a
-	// proposal from the leader.
+	// NewProposer builds a view. carried is the proposal that a new view carries from this or an earlier view, for the
+	// view's first sequence, or nil. The view uses it in place of a pre-prepare from the leader.
 	NewProposer(leader, proposalSequence, viewNum, decisionsInView uint64, quorumSize int, carried *types.Proposal) (Proposer, Phase)
 }
 
