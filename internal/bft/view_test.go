@@ -1677,3 +1677,172 @@ func TestViewKeepsTheCommitOfAPreparedProposal(t *testing.T) {
 		})
 	}
 }
+
+// carriedProposal was proposed at sequence 5 in view 1, after 2 decisions in it, with the commit signatures of the
+// decision before it. The tests carry it into view 2.
+var carriedProposal = types.Proposal{
+	Header:  []byte{0},
+	Payload: []byte{1},
+	Metadata: bft.MarshalOrPanic(&protos.ViewMetadata{
+		ViewId: 1, LatestSequence: 5, DecisionsInView: 2, PrevCommitSignatureDigest: []byte{7},
+	}),
+	VerificationSequence: 1,
+}
+
+func newCarryingView(selfID uint64, carried types.Proposal, comm bft.Comm, verifier *mocks.VerifierMock) *bft.View {
+	signer := &mocks.SignerMock{}
+	signer.On("SignProposal", mock.Anything, mock.Anything).Return(&types.Signature{ID: selfID, Value: []byte{4}})
+	return &bft.View{
+		RetrieveCheckpoint: (&types.Checkpoint{}).Get,
+		DecisionsPerLeader: 100,
+		State:              &bft.StateRecorder{},
+		Logger:             zap.NewNop().Sugar(),
+		N:                  4,
+		NodesList:          []uint64{1, 2, 3, 4},
+		LeaderID:           1,
+		SelfID:             selfID,
+		Quorum:             3,
+		Number:             2,
+		ProposalSequence:   5,
+		Comm:               comm,
+		Verifier:           verifier,
+		Signer:             signer,
+		ViewSequences:      &atomic.Value{},
+		InMsgQSize:         40,
+		MetricsView:        api.NewMetricsView(&disabled.Provider{}),
+		Carried:            &carried,
+	}
+}
+
+// TestViewStartsWithACarriedProposal makes sure that a view with a proposal carried from an earlier view starts with
+// it at its first sequence, as if the leader had proposed it: the view saves it as a pre-prepare of this view, sends a
+// prepare for it, and decides it with its bytes unchanged. The metadata of the earlier view doesn't make the view
+// reject it, and the leader doesn't send a pre-prepare for it.
+func TestViewStartsWithACarriedProposal(t *testing.T) {
+	digest := carriedProposal.Digest()
+	prepareFrom := &protos.Message{
+		Version: types.ProtocolVersion,
+		Content: &protos.Message_Prepare{Prepare: &protos.Prepare{View: 2, Seq: 5, Digest: digest}},
+	}
+	commitFrom := func(signer uint64) *protos.Message {
+		return &protos.Message{
+			Version: types.ProtocolVersion,
+			Content: &protos.Message_Commit{Commit: &protos.Commit{
+				View: 2, Seq: 5, Digest: digest, Signature: &protos.Signature{Signer: signer, Value: []byte{4}},
+			}},
+		}
+	}
+	next := func(t *testing.T, messages <-chan *protos.Message) *protos.Message {
+		t.Helper()
+		select {
+		case m := <-messages:
+			return m
+		case <-time.After(time.Minute):
+			require.Fail(t, "the view sent nothing")
+			return nil
+		}
+	}
+
+	for _, test := range []struct {
+		description string
+		selfID      uint64
+	}{
+		{description: "the leader", selfID: 1},
+		{description: "a follower", selfID: 4},
+	} {
+		t.Run(test.description, func(t *testing.T) {
+			sent := make(chan *protos.Message, 100)
+			comm := &mocks.CommMock{}
+			comm.On("BroadcastConsensus", mock.Anything).Run(func(args mock.Arguments) {
+				sent <- args.Get(0).(*protos.Message)
+			})
+			decided := make(chan types.Proposal, 1)
+			decider := &mocks.Decider{}
+			decider.On("Decide", mock.Anything, mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
+				decided <- args.Get(0).(types.Proposal)
+			})
+			verifier := &mocks.VerifierMock{}
+			verifier.On("VerificationSequence").Return(uint64(1))
+			verifier.On("VerifyProposal", mock.Anything).Return(nil, nil)
+			verifier.On("VerifyConsenterSig", mock.Anything, mock.Anything).Return(nil, nil)
+			view := newCarryingView(test.selfID, carriedProposal, comm, verifier)
+			view.Decider = decider
+			view.Start()
+
+			prepare := next(t, sent).GetPrepare()
+			require.NotNil(t, prepare, "the view must send a prepare first, and no pre-prepare")
+			require.True(t, proto.Equal(&protos.Prepare{View: 2, Seq: 5, Digest: digest}, prepare), "got %v", prepare)
+
+			view.HandleMessage(2, prepareFrom)
+			view.HandleMessage(3, prepareFrom)
+			commit := next(t, sent).GetCommit()
+			require.NotNil(t, commit)
+			require.Equal(t, uint64(2), commit.GetView())
+
+			view.HandleMessage(2, commitFrom(2))
+			view.HandleMessage(3, commitFrom(3))
+			select {
+			case proposal := <-decided:
+				require.Equal(t, carriedProposal, proposal)
+			case <-time.After(time.Minute):
+				require.Fail(t, "the view did not decide")
+			}
+			view.Abort()
+
+			record := view.State.(*bft.StateRecorder).SavedMessages[0].GetProposedRecord().GetPrePrepare()
+			require.Equal(t, uint64(2), record.GetView())
+			require.Equal(t, uint64(5), record.GetSeq())
+			require.Equal(t, carriedProposal.Metadata, record.GetProposal().GetMetadata())
+			require.Equal(t, carriedProposal.Payload, record.GetProposal().GetPayload())
+		})
+	}
+}
+
+// TestViewComplainsAboutABadCarriedProposal makes sure that a view still checks the requests and the sequences of a
+// carried proposal, and complains and syncs instead of preparing it if they are wrong.
+func TestViewComplainsAboutABadCarriedProposal(t *testing.T) {
+	otherSequence := carriedProposal
+	otherSequence.Metadata = bft.MarshalOrPanic(&protos.ViewMetadata{
+		ViewId: 1, LatestSequence: 6, DecisionsInView: 2, PrevCommitSignatureDigest: []byte{7},
+	})
+	otherVerificationSequence := carriedProposal
+	otherVerificationSequence.VerificationSequence = 2
+
+	for _, test := range []struct {
+		description string
+		carried     types.Proposal
+		verifyErr   error
+	}{
+		{description: "rejected by the application", carried: carriedProposal, verifyErr: errors.New("bad requests")},
+		{description: "another sequence", carried: otherSequence},
+		{description: "another verification sequence", carried: otherVerificationSequence},
+	} {
+		t.Run(test.description, func(t *testing.T) {
+			complained := make(chan uint64, 1)
+			fd := &mocks.FailureDetector{}
+			fd.On("Complain", mock.Anything, false).Run(func(args mock.Arguments) {
+				complained <- args.Get(0).(uint64)
+			})
+			synced := make(chan struct{}, 1)
+			synchronizer := &mocks.Synchronizer{}
+			synchronizer.On("Sync").Run(func(mock.Arguments) { synced <- struct{}{} })
+			verifier := &mocks.VerifierMock{}
+			verifier.On("VerificationSequence").Return(uint64(1))
+			verifier.On("VerifyProposal", mock.Anything).Return(nil, test.verifyErr)
+			view := newCarryingView(4, test.carried, &mocks.CommMock{}, verifier)
+			view.FailureDetector = fd
+			view.Sync = synchronizer
+			view.Start()
+
+			select {
+			case viewNumber := <-complained:
+				require.Equal(t, uint64(2), viewNumber)
+			case <-time.After(time.Minute):
+				require.Fail(t, "the view did not complain")
+			}
+			<-synced
+			view.Abort()
+			require.Empty(t, view.State.(*bft.StateRecorder).SavedMessages)
+		})
+	}
+}

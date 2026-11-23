@@ -156,7 +156,7 @@ type blockingProposerBuilder struct {
 	once    sync.Once
 }
 
-func (b *blockingProposerBuilder) NewProposer(uint64, uint64, uint64, uint64, int) (Proposer, Phase) {
+func (b *blockingProposerBuilder) NewProposer(uint64, uint64, uint64, uint64, int, *types.Proposal) (Proposer, Phase) {
 	b.once.Do(func() {
 		close(b.entered)
 	})
@@ -331,7 +331,7 @@ type recordingProposerBuilder struct {
 	views []*View
 }
 
-func (b *recordingProposerBuilder) NewProposer(_, _, viewNum, _ uint64, _ int) (Proposer, Phase) {
+func (b *recordingProposerBuilder) NewProposer(_, _, viewNum, _ uint64, _ int, _ *types.Proposal) (Proposer, Phase) {
 	b.lock.Lock()
 	defer b.lock.Unlock()
 	view := &View{
