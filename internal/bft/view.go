@@ -93,6 +93,10 @@ type View struct {
 	InFlight           *InFlightData // shared with the view changer; if nil, every pre-prepare truncates the WAL
 	Phase              Phase
 	InMsgQSize         int
+	// Carried is the proposal that a new view carries from this or an earlier view, for the view's first sequence. The
+	// view uses it once, in place of a pre-prepare from the leader, and only if it is at that sequence when it waits
+	// for its next proposal. Set it before Start.
+	Carried *types.Proposal
 	// Runtime
 	lastVotedProposalByID map[uint64]*protos.Commit
 	incMsgs               chan *incMsg
@@ -365,7 +369,25 @@ func (v *View) processProposal() Phase {
 	var receivedProposal *protos.Message
 	var prevCommits []*protos.Signature
 
+	// A carried proposal takes the place of the leader's pre-prepare at its sequence. Every node starts with it, so
+	// the leader doesn't send it. A restore or a sync may have moved the view past that sequence.
+	carried := v.Carried
+	v.Carried = nil
+	carriedMetadata := &protos.ViewMetadata{}
+	if carried != nil && (proto.Unmarshal(carried.Metadata, carriedMetadata) != nil || carriedMetadata.GetLatestSequence() != v.ProposalSequence) {
+		v.Logger.Infof("Ignoring the proposal carried into view %d, which is not for sequence %d", v.Number, v.ProposalSequence)
+		carried = nil
+	}
 	var gotPrePrepare bool
+	if carried != nil {
+		gotPrePrepare = true
+		proposal = *carried
+		receivedProposal = &protos.Message{
+			Content: &protos.Message_PrePrepare{
+				PrePrepare: &protos.PrePrepare{View: v.Number, Seq: v.ProposalSequence, Proposal: proposalToProto(proposal)},
+			},
+		}
+	}
 	for !gotPrePrepare {
 		select {
 		case <-v.abortChan:
@@ -387,9 +409,16 @@ func (v *View) processProposal() Phase {
 		}
 	}
 
-	requests, err := v.verifyProposal(proposal, prevCommits)
-	if err != nil {
+	var requests []types.RequestInfo
+	var err error
+	if carried != nil {
+		if requests, err = v.verifyCarriedProposal(proposal, carriedMetadata); err != nil {
+			v.Logger.Warnf("%d failed to verify the carried proposal: %v", v.SelfID, err)
+		}
+	} else if requests, err = v.verifyProposal(proposal, prevCommits); err != nil {
 		v.Logger.Warnf("%d received bad proposal from %d: %v", v.SelfID, v.LeaderID, err)
+	}
+	if err != nil {
 		v.FailureDetector.Complain(v.Number, false)
 		v.Sync.Sync()
 		v.stop()
@@ -426,7 +455,7 @@ func (v *View) processProposal() Phase {
 	v.inFlightProposal = &proposal
 	v.inFlightRequests = requests
 
-	if v.SelfID == v.LeaderID {
+	if v.SelfID == v.LeaderID && carried == nil {
 		v.Comm.BroadcastConsensus(receivedProposal)
 	}
 
@@ -607,6 +636,26 @@ func (v *View) verifyProposal(proposal types.Proposal, prevCommits []*protos.Sig
 	prevCommitDigest := CommitSignaturesDigest(prevCommits)
 	if !bytes.Equal(prevCommitDigest, md.GetPrevCommitSignatureDigest()) && v.DecisionsPerLeader > 0 {
 		return nil, errors.New("prev commit signatures received from leader mismatches the metadata digest")
+	}
+
+	return requests, nil
+}
+
+// verifyCarriedProposal verifies a carried proposal, whose sequence is already checked, and returns its requests. The
+// proposal keeps the metadata of the view it was proposed in, which can't be a later one, and has no previous commit
+// signatures, so the checks of verifyProposal that depend on them don't apply.
+func (v *View) verifyCarriedProposal(proposal types.Proposal, md *protos.ViewMetadata) ([]types.RequestInfo, error) {
+	requests, err := v.Verifier.VerifyProposal(proposal)
+	if err != nil {
+		return nil, err
+	}
+
+	if md.GetViewId() > v.Number {
+		return nil, fmt.Errorf("proposed in view %d, which is after view %d", md.GetViewId(), v.Number)
+	}
+
+	if expectedSeq := v.Verifier.VerificationSequence(); uint64(proposal.VerificationSequence) != expectedSeq {
+		return nil, fmt.Errorf("verification sequence %d, expected %d", proposal.VerificationSequence, expectedSeq)
 	}
 
 	return requests, nil

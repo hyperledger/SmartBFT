@@ -6,6 +6,7 @@ package mocks
 
 import (
 	"github.com/hyperledger/SmartBFT/internal/bft"
+	"github.com/hyperledger/SmartBFT/pkg/types"
 	mock "github.com/stretchr/testify/mock"
 )
 
@@ -46,8 +47,8 @@ func (_m *ProposerBuilder) EXPECT() *ProposerBuilder_Expecter {
 }
 
 // NewProposer provides a mock function for the type ProposerBuilder
-func (_mock *ProposerBuilder) NewProposer(leader uint64, proposalSequence uint64, viewNum uint64, decisionsInView uint64, quorumSize int) (bft.Proposer, bft.Phase) {
-	ret := _mock.Called(leader, proposalSequence, viewNum, decisionsInView, quorumSize)
+func (_mock *ProposerBuilder) NewProposer(leader uint64, proposalSequence uint64, viewNum uint64, decisionsInView uint64, quorumSize int, carried *types.Proposal) (bft.Proposer, bft.Phase) {
+	ret := _mock.Called(leader, proposalSequence, viewNum, decisionsInView, quorumSize, carried)
 
 	if len(ret) == 0 {
 		panic("no return value specified for NewProposer")
@@ -55,18 +56,18 @@ func (_mock *ProposerBuilder) NewProposer(leader uint64, proposalSequence uint64
 
 	var r0 bft.Proposer
 	var r1 bft.Phase
-	if returnFunc, ok := ret.Get(0).(func(uint64, uint64, uint64, uint64, int) (bft.Proposer, bft.Phase)); ok {
-		return returnFunc(leader, proposalSequence, viewNum, decisionsInView, quorumSize)
+	if returnFunc, ok := ret.Get(0).(func(uint64, uint64, uint64, uint64, int, *types.Proposal) (bft.Proposer, bft.Phase)); ok {
+		return returnFunc(leader, proposalSequence, viewNum, decisionsInView, quorumSize, carried)
 	}
-	if returnFunc, ok := ret.Get(0).(func(uint64, uint64, uint64, uint64, int) bft.Proposer); ok {
-		r0 = returnFunc(leader, proposalSequence, viewNum, decisionsInView, quorumSize)
+	if returnFunc, ok := ret.Get(0).(func(uint64, uint64, uint64, uint64, int, *types.Proposal) bft.Proposer); ok {
+		r0 = returnFunc(leader, proposalSequence, viewNum, decisionsInView, quorumSize, carried)
 	} else {
 		if ret.Get(0) != nil {
 			r0 = ret.Get(0).(bft.Proposer)
 		}
 	}
-	if returnFunc, ok := ret.Get(1).(func(uint64, uint64, uint64, uint64, int) bft.Phase); ok {
-		r1 = returnFunc(leader, proposalSequence, viewNum, decisionsInView, quorumSize)
+	if returnFunc, ok := ret.Get(1).(func(uint64, uint64, uint64, uint64, int, *types.Proposal) bft.Phase); ok {
+		r1 = returnFunc(leader, proposalSequence, viewNum, decisionsInView, quorumSize, carried)
 	} else {
 		r1 = ret.Get(1).(bft.Phase)
 	}
@@ -84,11 +85,12 @@ type ProposerBuilder_NewProposer_Call struct {
 //   - viewNum uint64
 //   - decisionsInView uint64
 //   - quorumSize int
-func (_e *ProposerBuilder_Expecter) NewProposer(leader any, proposalSequence any, viewNum any, decisionsInView any, quorumSize any) *ProposerBuilder_NewProposer_Call {
-	return &ProposerBuilder_NewProposer_Call{Call: _e.mock.On("NewProposer", leader, proposalSequence, viewNum, decisionsInView, quorumSize)}
+//   - carried *types.Proposal
+func (_e *ProposerBuilder_Expecter) NewProposer(leader any, proposalSequence any, viewNum any, decisionsInView any, quorumSize any, carried any) *ProposerBuilder_NewProposer_Call {
+	return &ProposerBuilder_NewProposer_Call{Call: _e.mock.On("NewProposer", leader, proposalSequence, viewNum, decisionsInView, quorumSize, carried)}
 }
 
-func (_c *ProposerBuilder_NewProposer_Call) Run(run func(leader uint64, proposalSequence uint64, viewNum uint64, decisionsInView uint64, quorumSize int)) *ProposerBuilder_NewProposer_Call {
+func (_c *ProposerBuilder_NewProposer_Call) Run(run func(leader uint64, proposalSequence uint64, viewNum uint64, decisionsInView uint64, quorumSize int, carried *types.Proposal)) *ProposerBuilder_NewProposer_Call {
 	_c.Call.Run(func(args mock.Arguments) {
 		var arg0 uint64
 		if args[0] != nil {
@@ -110,12 +112,17 @@ func (_c *ProposerBuilder_NewProposer_Call) Run(run func(leader uint64, proposal
 		if args[4] != nil {
 			arg4 = args[4].(int)
 		}
+		var arg5 *types.Proposal
+		if args[5] != nil {
+			arg5 = args[5].(*types.Proposal)
+		}
 		run(
 			arg0,
 			arg1,
 			arg2,
 			arg3,
 			arg4,
+			arg5,
 		)
 	})
 	return _c
@@ -126,7 +133,7 @@ func (_c *ProposerBuilder_NewProposer_Call) Return(proposer bft.Proposer, phase 
 	return _c
 }
 
-func (_c *ProposerBuilder_NewProposer_Call) RunAndReturn(run func(leader uint64, proposalSequence uint64, viewNum uint64, decisionsInView uint64, quorumSize int) (bft.Proposer, bft.Phase)) *ProposerBuilder_NewProposer_Call {
+func (_c *ProposerBuilder_NewProposer_Call) RunAndReturn(run func(leader uint64, proposalSequence uint64, viewNum uint64, decisionsInView uint64, quorumSize int, carried *types.Proposal) (bft.Proposer, bft.Phase)) *ProposerBuilder_NewProposer_Call {
 	_c.Call.Return(run)
 	return _c
 }

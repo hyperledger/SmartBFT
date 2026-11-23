@@ -687,8 +687,8 @@ func createView(c *bft.Controller, leader, proposalSequence, viewNum, decisionsI
 func configureProposerBuilder(controller *bft.Controller) *atomic.Value {
 	pb := &mocks.ProposerBuilder{}
 	vs := &atomic.Value{}
-	pb.On("NewProposer", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).
-		Return(func(a uint64, b uint64, c uint64, d uint64, e int) bft.Proposer {
+	pb.On("NewProposer", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).
+		Return(func(a uint64, b uint64, c uint64, d uint64, e int, _ *types.Proposal) bft.Proposer {
 			return createView(controller, a, b, c, d, e, vs)
 		}, bft.Phase(bft.COMMITTED))
 	controller.ProposerBuilder = pb
@@ -1544,8 +1544,8 @@ func TestControllerKeepsRunningAfterDecideWaiterLeft(t *testing.T) {
 
 	views := make(chan *fakeProposer, 2)
 	pb := &mocks.ProposerBuilder{}
-	pb.On("NewProposer", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).
-		Return(func(leader uint64, _ uint64, _ uint64, _ uint64, _ int) bft.Proposer {
+	pb.On("NewProposer", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).
+		Return(func(leader uint64, _ uint64, _ uint64, _ uint64, _ int, _ *types.Proposal) bft.Proposer {
 			view := &fakeProposer{leader: leader, abortChan: make(chan struct{})}
 			views <- view
 			return view

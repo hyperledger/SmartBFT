@@ -269,6 +269,16 @@ func proposalFromProto(prop *protos.Proposal) types.Proposal {
 	}
 }
 
+// proposalToProto returns the given proposal as a message.
+func proposalToProto(proposal types.Proposal) *protos.Proposal {
+	return &protos.Proposal{
+		Header:               proposal.Header,
+		Payload:              proposal.Payload,
+		Metadata:             proposal.Metadata,
+		VerificationSequence: uint64(proposal.VerificationSequence),
+	}
+}
+
 // StorePrepares stores alongside the already stored in-flight proposal that it is prepared.
 func (ifp *InFlightData) StorePrepares(view, seq uint64) {
 	prop := ifp.InFlightProposal()
@@ -315,7 +325,7 @@ type ProposalMaker struct {
 }
 
 // NewProposer returns a new view
-func (pm *ProposalMaker) NewProposer(leader, proposalSequence, viewNum, decisionsInView uint64, quorumSize int) (proposer Proposer, phase Phase) {
+func (pm *ProposalMaker) NewProposer(leader, proposalSequence, viewNum, decisionsInView uint64, quorumSize int, carried *types.Proposal) (proposer Proposer, phase Phase) {
 	view := &View{
 		RetrieveCheckpoint: pm.Checkpoint.Get,
 		DecisionsPerLeader: pm.DecisionsPerLeader,
@@ -338,6 +348,7 @@ func (pm *ProposalMaker) NewProposer(leader, proposalSequence, viewNum, decision
 		State:              pm.State,
 		InFlight:           pm.InFlight,
 		InMsgQSize:         pm.InMsqQSize,
+		Carried:            carried,
 		ViewSequences:      pm.ViewSequences,
 		MetricsBlacklist:   pm.MetricsBlacklist,
 		MetricsView:        pm.MetricsView,

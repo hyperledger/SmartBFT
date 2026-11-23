@@ -215,7 +215,7 @@ func TestSetViewAndSeqDoesNotStartALeftView(t *testing.T) {
 	proposer.On("Start").Maybe()
 	proposer.On("Abort").Maybe() // if it was started, the controller aborts it when it stops
 	builder := &mocks.ProposerBuilder{}
-	builder.On("NewProposer", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).
+	builder.On("NewProposer", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).
 		Return(proposer, algorithm.Phase(algorithm.COMMITTED))
 	leaderMonitor := &mocks.LeaderMonitor{}
 	leaderMonitor.On("ChangeRole", mock.Anything, mock.Anything, mock.Anything)
@@ -259,9 +259,10 @@ func TestSetViewAndSeqDoesNotStartALeftView(t *testing.T) {
 	leaderMonitor.AssertCalled(t, "ChangeRole", algorithm.Follower, uint64(3), mock.Anything)
 }
 
-// TestViewsShareTheInFlightProposal makes sure that the views get the in-flight proposal that the persisted state and
-// the view changer use, so that a view knows whether a proposal it gets is already prepared.
-func TestViewsShareTheInFlightProposal(t *testing.T) {
+// TestNewProposerWiresTheView makes sure that the views get the in-flight proposal that the persisted state and the
+// view changer use, so that a view knows whether a proposal it gets is already prepared, and the proposal carried into
+// them.
+func TestNewProposerWiresTheView(t *testing.T) {
 	logger := zap.NewNop().Sugar()
 	inFlight := &algorithm.InFlightData{}
 	consensus := &Consensus{
@@ -273,6 +274,8 @@ func TestViewsShareTheInFlightProposal(t *testing.T) {
 		controller: &algorithm.Controller{ViewSequences: &atomic.Value{}},
 	}
 
-	view, _ := consensus.proposalMaker().NewProposer(1, 1, 0, 0, 3)
+	carried := &types.Proposal{Payload: []byte{1}}
+	view, _ := consensus.proposalMaker().NewProposer(1, 1, 0, 0, 3, carried)
 	require.Same(t, inFlight, view.(*algorithm.View).InFlight)
+	require.Same(t, carried, view.(*algorithm.View).Carried)
 }

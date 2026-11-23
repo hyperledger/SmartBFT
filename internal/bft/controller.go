@@ -71,7 +71,9 @@ type Proposer interface {
 
 // ProposerBuilder builds a new Proposer
 type ProposerBuilder interface {
-	NewProposer(leader, proposalSequence, viewNum, decisionsInView uint64, quorumSize int) (Proposer, Phase)
+	// NewProposer builds a view. carried is the proposal that a new view carries from this or an earlier view, for the
+	// view's first sequence, or nil. The view uses it in place of a pre-prepare from the leader.
+	NewProposer(leader, proposalSequence, viewNum, decisionsInView uint64, quorumSize int, carried *types.Proposal) (Proposer, Phase)
 }
 
 // Controller controls the entire flow of the consensus
@@ -399,7 +401,7 @@ func (c *Controller) convertViewMessageToHeartbeat(m *protos.Message) *protos.Me
 }
 
 func (c *Controller) startView(proposalSequence uint64) {
-	view, initPhase := c.ProposerBuilder.NewProposer(c.leaderID(), proposalSequence, c.currViewNumber, c.currDecisionsInView, c.quorum)
+	view, initPhase := c.ProposerBuilder.NewProposer(c.leaderID(), proposalSequence, c.currViewNumber, c.currDecisionsInView, c.quorum, nil)
 
 	if c.currViewNumber < c.minStartView {
 		c.startLeftView(proposalSequence)
