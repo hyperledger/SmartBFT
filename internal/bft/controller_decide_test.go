@@ -40,7 +40,7 @@ func TestControllerDecideViewBookkeeping(t *testing.T) {
 
 	t.Run("proposal carried from an earlier view", func(t *testing.T) {
 		// The decision doesn't count in the view, so the leader doesn't rotate, and it proposes next.
-		view := &View{abortChan: make(chan struct{})}
+		view := &View{Number: 2, abortChan: make(chan struct{})}
 		controller := newRotatingController(t, view)
 
 		controller.decide(decisionInView(t, view, 1, 5))
@@ -51,7 +51,7 @@ func TestControllerDecideViewBookkeeping(t *testing.T) {
 
 	t.Run("proposal of the view after a carried one", func(t *testing.T) {
 		// The decision counts again, so the leader rotates after it.
-		view := &View{abortChan: make(chan struct{})}
+		view := &View{Number: 2, abortChan: make(chan struct{})}
 		controller := newRotatingController(t, view)
 		builder := &recordingProposerBuilder{}
 		controller.ProposerBuilder = builder
@@ -68,6 +68,10 @@ func TestControllerDecideViewBookkeeping(t *testing.T) {
 		require.Equal(t, uint64(1), controller.getCurrentDecisionsInView())
 		require.Equal(t, uint64(4), controller.leaderID())
 		require.Equal(t, []uint64{2}, builder.started(), "the view must restart with the next leader")
+		restarted := builder.views[0]
+		require.Equal(t, uint64(4), restarted.LeaderID)
+		require.Equal(t, uint64(7), restarted.ProposalSequence)
+		require.Equal(t, uint64(1), restarted.DecisionsInView)
 	})
 
 	t.Run("view replaced", func(t *testing.T) {

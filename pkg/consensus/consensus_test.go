@@ -216,6 +216,22 @@ func TestSetViewAndSeqWithACarriedProposal(t *testing.T) {
 			decisions:         0,
 			expectedDecisions: 1,
 		},
+		{
+			description:       "decided through a sync after a new view record",
+			WALContent:        []*smartbftprotos.SavedMessage{newView},
+			view:              5,
+			seq:               11,
+			decisions:         5,
+			expectedDecisions: 0,
+		},
+		{
+			description:       "the next proposal of the view decided through a sync after a new view record",
+			WALContent:        []*smartbftprotos.SavedMessage{newView},
+			view:              6,
+			seq:               12,
+			decisions:         0,
+			expectedDecisions: 1,
+		},
 	} {
 		t.Run(test.description, func(t *testing.T) {
 			entries := make([][]byte, 0, len(test.WALContent))

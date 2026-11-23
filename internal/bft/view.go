@@ -908,6 +908,8 @@ func (vv *voteVerifier) verifyVote(vote *protos.Message) {
 
 func (v *View) decide(proposal *types.Proposal, signatures []types.Signature, requests []types.RequestInfo) {
 	v.Logger.Infof("Deciding on seq %d", v.ProposalSequence)
+	// The metadata was validated when the proposal was verified, before it was saved, so it parses here also in a
+	// view restored from the write ahead log.
 	md := &protos.ViewMetadata{}
 	if err := proto.Unmarshal(proposal.Metadata, md); err != nil {
 		v.Logger.Panicf("Failed to unmarshal the metadata of the decided proposal, error: %v", err)

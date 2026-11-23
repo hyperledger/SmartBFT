@@ -523,13 +523,20 @@ func (c *Consensus) setViewAndSeq(view, seq, dec uint64) (newView, newSeq, newDe
 	if err != nil {
 		c.Logger.Panicf("Failed loading new view, error: %v", err)
 	}
-	if viewSeq == nil {
+	switch {
+	case viewSeq == nil:
 		c.Logger.Debugf("No new view to restore")
-	} else if viewSeq.Seq >= seq {
+	case viewSeq.Seq >= seq:
 		// Check if metadata should be taken from the restored new view
 		c.Logger.Debugf("Restoring from new view with view %d and seq %d", viewSeq.View, viewSeq.Seq)
 		newView = viewSeq.View
 		newSeq = viewSeq.Seq
+		newDec = 0
+	case viewSeq.View > newView:
+		// The application decided after the new view, but its last decision is of an earlier view: it was made
+		// before the new view or carried into it, so it doesn't count in it (countsInView).
+		c.Logger.Debugf("Restoring view %d from the new view record, after the decision at seq %d", viewSeq.View, seq)
+		newView = viewSeq.View
 		newDec = 0
 	}
 

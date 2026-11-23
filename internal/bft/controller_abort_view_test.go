@@ -325,22 +325,26 @@ func (m *recordingLeaderMonitor) given() []Role {
 	return append([]Role(nil), m.roles...)
 }
 
-// recordingProposerBuilder returns a new view each time, and records the views it built.
+// recordingProposerBuilder returns a new view each time, with the given leader, sequence, view number and decisions in
+// view, and records the views it built.
 type recordingProposerBuilder struct {
 	lock  sync.Mutex
 	views []*View
 }
 
-func (b *recordingProposerBuilder) NewProposer(_, _, viewNum, _ uint64, _ int, _ *types.Proposal) (Proposer, Phase) {
+func (b *recordingProposerBuilder) NewProposer(leader, seq, viewNum, decisions uint64, _ int, _ *types.Proposal) (Proposer, Phase) {
 	b.lock.Lock()
 	defer b.lock.Unlock()
 	view := &View{
-		N:             4,
-		Number:        viewNum,
-		Logger:        newQuietLogger(),
-		InMsgQSize:    10,
-		MetricsView:   api.NewMetricsView(&disabled.Provider{}),
-		ViewSequences: &atomic.Value{},
+		N:                4,
+		LeaderID:         leader,
+		Number:           viewNum,
+		ProposalSequence: seq,
+		DecisionsInView:  decisions,
+		Logger:           newQuietLogger(),
+		InMsgQSize:       10,
+		MetricsView:      api.NewMetricsView(&disabled.Provider{}),
+		ViewSequences:    &atomic.Value{},
 	}
 	b.views = append(b.views, view)
 
