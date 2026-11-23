@@ -13,6 +13,8 @@ import (
 
 	algorithm "github.com/hyperledger/SmartBFT/internal/bft"
 	"github.com/hyperledger/SmartBFT/internal/bft/mocks"
+	bft "github.com/hyperledger/SmartBFT/pkg/api"
+	"github.com/hyperledger/SmartBFT/pkg/metrics/disabled"
 	"github.com/hyperledger/SmartBFT/pkg/types"
 	"github.com/hyperledger/SmartBFT/smartbftprotos"
 	"github.com/stretchr/testify/mock"
@@ -255,4 +257,22 @@ func TestSetViewAndSeqDoesNotStartALeftView(t *testing.T) {
 	builder.AssertNumberOfCalls(t, "NewProposer", 1)
 	proposer.AssertNotCalled(t, "Start")
 	leaderMonitor.AssertCalled(t, "ChangeRole", algorithm.Follower, uint64(3), mock.Anything)
+}
+
+// TestViewsShareTheInFlightProposal makes sure that the views get the in-flight proposal that the persisted state and
+// the view changer use, so that a view knows whether a proposal it gets is already prepared.
+func TestViewsShareTheInFlightProposal(t *testing.T) {
+	logger := zap.NewNop().Sugar()
+	inFlight := &algorithm.InFlightData{}
+	consensus := &Consensus{
+		Logger:     logger,
+		Metrics:    bft.NewMetrics(&disabled.Provider{}),
+		inFlight:   inFlight,
+		checkpoint: &types.Checkpoint{},
+		state:      &algorithm.PersistedState{InFlightProposal: inFlight, Logger: logger},
+		controller: &algorithm.Controller{ViewSequences: &atomic.Value{}},
+	}
+
+	view, _ := consensus.proposalMaker().NewProposer(1, 1, 0, 0, 3)
+	require.Same(t, inFlight, view.(*algorithm.View).InFlight)
 }

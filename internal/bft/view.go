@@ -90,6 +90,7 @@ type View struct {
 	ProposalSequence   uint64
 	DecisionsInView    uint64
 	State              State
+	InFlight           *InFlightData // shared with the view changer; if nil, every pre-prepare truncates the WAL
 	Phase              Phase
 	InMsgQSize         int
 	// Runtime
@@ -404,7 +405,10 @@ func (v *View) processProposal() Phase {
 
 	// We are about to send a prepare for a pre-prepare,
 	// so we record the pre-prepare. The record starts a new proposal pair,
-	// hence everything written before it may be truncated.
+	// hence everything written before it may be truncated, unless the proposal is the one already in flight and
+	// prepared: then the commit record that proves it prepared stays, so that it stays prepared after a restart.
+	// The write ahead log then keeps one more copy of the proposal each time this happens, until the pre-prepare of a
+	// later proposal truncates it.
 	savedMsg := &protos.SavedMessage{
 		Content: &protos.SavedMessage_ProposedRecord{
 			ProposedRecord: &protos.ProposedRecord{
@@ -413,7 +417,7 @@ func (v *View) processProposal() Phase {
 			},
 		},
 	}
-	if err = v.State.Save(savedMsg, true); err != nil {
+	if err = v.State.Save(savedMsg, !v.InFlight.IsPreparedProposal(proposal)); err != nil {
 		v.Logger.Panicf("Failed to save message to state, error: %v", err)
 	}
 	v.lastBroadcastSent = prepareMessage

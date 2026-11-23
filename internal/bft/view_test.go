@@ -1579,3 +1579,101 @@ func newView(t *testing.T, selfID uint64, network map[uint64]*testedView) *teste
 
 	return tv
 }
+
+// TestViewKeepsTheCommitOfAPreparedProposal makes sure that a view that gets the pre-prepare of the proposal already
+// in flight and prepared saves it without truncating the write ahead log, so that the proposal is still prepared when
+// it is restored from the log after a restart, and that the view truncates the log for any other proposal.
+func TestViewKeepsTheCommitOfAPreparedProposal(t *testing.T) {
+	other := proposal
+	other.Payload = []byte{9}
+
+	inFlight := func(p types.Proposal, prepared bool) *bft.InFlightData {
+		ifp := &bft.InFlightData{}
+		ifp.StoreProposal(p)
+		if prepared {
+			ifp.StorePrepares(0, 0)
+		}
+		return ifp
+	}
+
+	// The node prepared the proposal before, so the log has its pre-prepare and its commit.
+	proposed := &protos.SavedMessage{
+		Content: &protos.SavedMessage_ProposedRecord{
+			ProposedRecord: &protos.ProposedRecord{PrePrepare: prePrepare.GetPrePrepare()},
+		},
+	}
+	commit := newCommitRecordFor(0, digest)
+
+	for _, test := range []struct {
+		description string
+		inFlight    *bft.InFlightData
+		prepared    bool
+	}{
+		{description: "the proposal in flight, prepared", inFlight: inFlight(proposal, true), prepared: true},
+		{description: "the proposal in flight, not prepared", inFlight: inFlight(proposal, false)},
+		{description: "another proposal in flight, prepared", inFlight: inFlight(other, true)},
+		{description: "no in flight data", inFlight: nil},
+	} {
+		t.Run(test.description, func(t *testing.T) {
+			logger := zap.NewNop().Sugar()
+			dir := t.TempDir()
+			writeAheadLog, err := wal.Create(logger, dir, nil)
+			require.NoError(t, err)
+			before := &bft.PersistedState{WAL: writeAheadLog, Logger: logger, InFlightProposal: &bft.InFlightData{}}
+			require.NoError(t, before.Save(proposed, true))
+			require.NoError(t, before.Save(commit, false))
+			// The view and its state share the in-flight data, as they do in a node.
+			state := &bft.PersistedState{WAL: writeAheadLog, Logger: logger, InFlightProposal: test.inFlight}
+			if test.inFlight == nil {
+				state.InFlightProposal = &bft.InFlightData{}
+			}
+
+			verifier := &mocks.VerifierMock{}
+			verifier.On("VerificationSequence").Return(uint64(1))
+			verifier.On("VerifyProposal", mock.Anything).Return(nil, nil)
+			prepareSent := make(chan struct{}, 1)
+			comm := &mocks.CommMock{}
+			comm.On("BroadcastConsensus", mock.Anything).Run(func(args mock.Arguments) {
+				if args.Get(0).(*protos.Message).GetPrepare() != nil {
+					select {
+					case prepareSent <- struct{}{}:
+					default:
+					}
+				}
+			})
+
+			view := &bft.View{
+				RetrieveCheckpoint: (&types.Checkpoint{}).Get,
+				Comm:               comm,
+				Verifier:           verifier,
+				SelfID:             2,
+				State:              state,
+				InFlight:           test.inFlight,
+				Logger:             logger,
+				N:                  4,
+				NodesList:          []uint64{1, 2, 3, 4},
+				LeaderID:           1,
+				Quorum:             3,
+				Number:             1,
+				ProposalSequence:   0,
+				ViewSequences:      &atomic.Value{},
+				InMsgQSize:         40,
+				MetricsView:        api.NewMetricsView(&disabled.Provider{}),
+			}
+			view.Start()
+			view.HandleMessage(1, prePrepare)
+			select {
+			case <-prepareSent: // the view sends its prepare after it saves the pre-prepare
+			case <-time.After(time.Minute):
+				require.Fail(t, "the view did not send a prepare")
+			}
+			view.Abort()
+			require.NoError(t, writeAheadLog.Close())
+
+			writeAheadLog, entries, err := wal.InitializeAndReadAll(logger, dir, nil)
+			require.NoError(t, err)
+			defer writeAheadLog.Close()
+			require.Equal(t, test.prepared, restoreInFlight(t, entries, 0).InFlightProposal.IsInFlightPrepared())
+		})
+	}
+}

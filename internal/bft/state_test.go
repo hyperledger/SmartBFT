@@ -719,3 +719,72 @@ func TestRestoreDecisionsOfACarriedProposal(t *testing.T) {
 		})
 	}
 }
+
+func proposalDigest(record *protos.SavedMessage) string {
+	prop := record.GetProposedRecord().GetPrePrepare().GetProposal()
+	return types.Proposal{
+		VerificationSequence: int64(prop.GetVerificationSequence()),
+		Metadata:             prop.GetMetadata(),
+		Payload:              prop.GetPayload(),
+		Header:               prop.GetHeader(),
+	}.Digest()
+}
+
+func newCommitRecordFor(seq uint64, digest string) *protos.SavedMessage {
+	commit := newCommitRecord(seq, 5)
+	commit.GetCommit().GetCommit().Digest = digest
+	return commit
+}
+
+func restoreInFlight(t *testing.T, entries [][]byte, seq uint64) *bft.PersistedState {
+	t.Helper()
+	state := &bft.PersistedState{
+		Entries:          entries,
+		Logger:           zap.NewNop().Sugar(),
+		InFlightProposal: &bft.InFlightData{},
+	}
+	verifier := &mocks.VerifierMock{}
+	verifier.On("RequestsFromProposal", mock.Anything).Return(nil)
+	view := &bft.View{
+		Number:           5,
+		ProposalSequence: seq,
+		MetricsView:      api.NewMetricsView(&disabled.Provider{}),
+		Verifier:         verifier,
+	}
+	require.NoError(t, state.Restore(view))
+	return state
+}
+
+// TestRestoreKeepsTheProposalPrepared makes sure that a proposal whose pre-prepare was saved again after it was
+// prepared, without truncating the write ahead log, is restored as prepared.
+func TestRestoreKeepsTheProposalPrepared(t *testing.T) {
+	proposal := newProposalRecord(11, 5, &protos.ViewMetadata{ViewId: 5, LatestSequence: 11})
+	other := newProposalRecord(11, 5, &protos.ViewMetadata{ViewId: 5, LatestSequence: 11, DecisionsInView: 1})
+	commit := newCommitRecordFor(11, proposalDigest(proposal))
+	viewChange := &protos.SavedMessage{
+		Content: &protos.SavedMessage_ViewChange{ViewChange: &protos.ViewChange{NextView: 5}},
+	}
+
+	for _, test := range []struct {
+		description string
+		WALContent  []*protos.SavedMessage
+		prepared    bool
+	}{
+		{description: "the same proposal again", WALContent: []*protos.SavedMessage{proposal, commit, proposal}, prepared: true},
+		{description: "the same proposal again, then a view change", WALContent: []*protos.SavedMessage{proposal, commit, proposal, viewChange}, prepared: true},
+		{description: "the same proposal again, then a new view", WALContent: []*protos.SavedMessage{proposal, commit, proposal, newViewRecord(6, 11)}, prepared: true},
+		{description: "another proposal", WALContent: []*protos.SavedMessage{proposal, commit, other}},
+		{description: "a commit of another sequence", WALContent: []*protos.SavedMessage{proposal, newCommitRecordFor(10, proposalDigest(proposal)), proposal}},
+		{description: "no commit", WALContent: []*protos.SavedMessage{proposal}},
+	} {
+		t.Run(test.description, func(t *testing.T) {
+			entries := make([][]byte, 0, len(test.WALContent))
+			for _, record := range test.WALContent {
+				entries = append(entries, bft.MarshalOrPanic(record))
+			}
+			state := restoreInFlight(t, entries, 11)
+			require.NotNil(t, state.InFlightProposal.InFlightProposal())
+			require.Equal(t, test.prepared, state.InFlightProposal.IsInFlightPrepared())
+		})
+	}
+}

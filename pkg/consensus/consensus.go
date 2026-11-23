@@ -352,6 +352,7 @@ func (c *Consensus) proposalMaker() *algorithm.ProposalMaker {
 		DecisionsPerLeader: c.Config.DecisionsPerLeader,
 		Checkpoint:         c.checkpoint,
 		State:              c.state,
+		InFlight:           c.inFlight,
 		Comm:               c.controller,
 		Decider:            c.controller,
 		Logger:             c.Logger,
