@@ -58,14 +58,7 @@ func (ps *PersistedState) Save(msgToSave *protos.SavedMessage, truncateTo bool) 
 }
 
 func (ps *PersistedState) storeProposal(proposed *protos.ProposedRecord) {
-	proposal := proposed.GetPrePrepare().GetProposal()
-	proposalToStore := types.Proposal{
-		VerificationSequence: int64(proposal.GetVerificationSequence()),
-		Header:               proposal.GetHeader(),
-		Payload:              proposal.GetPayload(),
-		Metadata:             proposal.GetMetadata(),
-	}
-	ps.InFlightProposal.StoreProposal(proposalToStore)
+	ps.InFlightProposal.StoreProposal(proposalFromProto(proposed.GetPrePrepare().GetProposal()))
 }
 
 func (ps *PersistedState) storePrepared(commitMsg *protos.Message) {
@@ -285,13 +278,7 @@ func (ps *PersistedState) restoreInFlightProposal(proposed *protos.ProposedRecor
 // truncate the write ahead log, so the commit that proved it prepared stays before it.
 func (ps *PersistedState) earlierCommit(i int, proposed *protos.ProposedRecord) (*protos.Message, error) {
 	prePrepare := proposed.GetPrePrepare()
-	prop := prePrepare.GetProposal()
-	digest := types.Proposal{
-		VerificationSequence: int64(prop.GetVerificationSequence()),
-		Metadata:             prop.GetMetadata(),
-		Payload:              prop.GetPayload(),
-		Header:               prop.GetHeader(),
-	}.Digest()
+	digest := proposalFromProto(prePrepare.GetProposal()).Digest()
 
 	for j := i - 1; j >= 0; j-- {
 		record := &protos.SavedMessage{}
@@ -316,12 +303,8 @@ func (ps *PersistedState) recoverProposed(lastPersistedMessage *protos.ProposedR
 	}
 
 	prop := lastPersistedMessage.GetPrePrepare().GetProposal()
-	v.inFlightProposal = &types.Proposal{
-		VerificationSequence: int64(prop.GetVerificationSequence()),
-		Metadata:             prop.GetMetadata(),
-		Payload:              prop.GetPayload(),
-		Header:               prop.GetHeader(),
-	}
+	inFlightProposal := proposalFromProto(prop)
+	v.inFlightProposal = &inFlightProposal
 	restoreInFlightRequests(v)
 	ps.storeProposal(lastPersistedMessage)
 	commitMsg, err := ps.earlierCommit(len(ps.Entries)-1, lastPersistedMessage)
@@ -383,12 +366,8 @@ func (ps *PersistedState) recoverPrepared(lastPersistedMessage *protos.Message, 
 	// Else, v.ProposalSequence == prePrepareFromWAL.Seq
 
 	prop := prePrepareFromWAL.GetProposal()
-	v.inFlightProposal = &types.Proposal{
-		VerificationSequence: int64(prop.GetVerificationSequence()),
-		Metadata:             prop.GetMetadata(),
-		Payload:              prop.GetPayload(),
-		Header:               prop.GetHeader(),
-	}
+	inFlightProposal := proposalFromProto(prop)
+	v.inFlightProposal = &inFlightProposal
 	restoreInFlightRequests(v)
 	ps.storeProposal(prePrepareMsg.GetProposedRecord())
 	ps.storePrepared(lastPersistedMessage)

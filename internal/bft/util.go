@@ -259,6 +259,16 @@ func sameProposal(a, b types.Proposal) bool {
 	return bytes.Equal(a.Metadata, b.Metadata) && a.Digest() == b.Digest()
 }
 
+// proposalFromProto returns the proposal in the given message. It sets every field that the proposal's digest covers.
+func proposalFromProto(prop *protos.Proposal) types.Proposal {
+	return types.Proposal{
+		VerificationSequence: int64(prop.GetVerificationSequence()),
+		Metadata:             prop.GetMetadata(),
+		Payload:              prop.GetPayload(),
+		Header:               prop.GetHeader(),
+	}
+}
+
 // StorePrepares stores alongside the already stored in-flight proposal that it is prepared.
 func (ifp *InFlightData) StorePrepares(view, seq uint64) {
 	prop := ifp.InFlightProposal()

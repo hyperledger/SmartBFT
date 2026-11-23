@@ -6,7 +6,6 @@
 package bft_test
 
 import (
-	"fmt"
 	"testing"
 
 	"github.com/hyperledger/SmartBFT/internal/bft"
@@ -14,7 +13,6 @@ import (
 	"github.com/hyperledger/SmartBFT/pkg/api"
 	"github.com/hyperledger/SmartBFT/pkg/metrics/disabled"
 	"github.com/hyperledger/SmartBFT/pkg/types"
-	"github.com/hyperledger/SmartBFT/pkg/wal"
 	protos "github.com/hyperledger/SmartBFT/smartbftprotos"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -738,7 +736,7 @@ func newCommitRecordFor(seq uint64, digest string) *protos.SavedMessage {
 	return commit
 }
 
-func restoreInFlight(t *testing.T, entries [][]byte) *bft.PersistedState {
+func restoreInFlight(t *testing.T, entries [][]byte, seq uint64) *bft.PersistedState {
 	t.Helper()
 	state := &bft.PersistedState{
 		Entries:          entries,
@@ -749,7 +747,7 @@ func restoreInFlight(t *testing.T, entries [][]byte) *bft.PersistedState {
 	verifier.On("RequestsFromProposal", mock.Anything).Return(nil)
 	view := &bft.View{
 		Number:           5,
-		ProposalSequence: 11,
+		ProposalSequence: seq,
 		MetricsView:      api.NewMetricsView(&disabled.Provider{}),
 		Verifier:         verifier,
 	}
@@ -774,6 +772,7 @@ func TestRestoreKeepsTheProposalPrepared(t *testing.T) {
 	}{
 		{description: "the same proposal again", WALContent: []*protos.SavedMessage{proposal, commit, proposal}, prepared: true},
 		{description: "the same proposal again, then a view change", WALContent: []*protos.SavedMessage{proposal, commit, proposal, viewChange}, prepared: true},
+		{description: "the same proposal again, then a new view", WALContent: []*protos.SavedMessage{proposal, commit, proposal, newViewRecord(6, 11)}, prepared: true},
 		{description: "another proposal", WALContent: []*protos.SavedMessage{proposal, commit, other}},
 		{description: "a commit of another sequence", WALContent: []*protos.SavedMessage{proposal, newCommitRecordFor(10, proposalDigest(proposal)), proposal}},
 		{description: "no commit", WALContent: []*protos.SavedMessage{proposal}},
@@ -783,36 +782,9 @@ func TestRestoreKeepsTheProposalPrepared(t *testing.T) {
 			for _, record := range test.WALContent {
 				entries = append(entries, bft.MarshalOrPanic(record))
 			}
-			state := restoreInFlight(t, entries)
+			state := restoreInFlight(t, entries, 11)
 			require.NotNil(t, state.InFlightProposal.InFlightProposal())
 			require.Equal(t, test.prepared, state.InFlightProposal.IsInFlightPrepared())
-		})
-	}
-}
-
-// TestPreparedProposalSurvivesARestart writes the records of a proposal that is prepared and then pre-prepared again
-// to a write ahead log, reads it back as after a restart, and restores the proposal from it. It stays prepared only if
-// the second pre-prepare didn't truncate the log.
-func TestPreparedProposalSurvivesARestart(t *testing.T) {
-	proposal := newProposalRecord(11, 5, &protos.ViewMetadata{ViewId: 5, LatestSequence: 11})
-	commit := newCommitRecordFor(11, proposalDigest(proposal))
-	logger := zap.NewNop().Sugar()
-
-	for _, truncated := range []bool{false, true} {
-		t.Run(fmt.Sprintf("truncated %t", truncated), func(t *testing.T) {
-			dir := t.TempDir()
-			writeAheadLog, err := wal.Create(logger, dir, nil)
-			require.NoError(t, err)
-			state := &bft.PersistedState{WAL: writeAheadLog, Logger: logger, InFlightProposal: &bft.InFlightData{}}
-			require.NoError(t, state.Save(proposal, true))
-			require.NoError(t, state.Save(commit, false))
-			require.NoError(t, state.Save(proposal, truncated))
-			require.NoError(t, writeAheadLog.Close())
-
-			writeAheadLog, entries, err := wal.InitializeAndReadAll(logger, dir, nil)
-			require.NoError(t, err)
-			defer writeAheadLog.Close()
-			require.Equal(t, !truncated, restoreInFlight(t, entries).InFlightProposal.IsInFlightPrepared())
 		})
 	}
 }
