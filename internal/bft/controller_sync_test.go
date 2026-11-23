@@ -6,6 +6,7 @@
 package bft
 
 import (
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -147,6 +148,81 @@ func TestSyncDecisionsInView(t *testing.T) {
 		require.Equal(t, syncDecisions+1, decisions,
 			"DecisionsInView should be latestDecisionDecisions+1 when sync returns higher height")
 	})
+
+	t.Run("higher_height_of_an_earlier_view", func(t *testing.T) {
+		// The decision was made before the view changed, or was carried into this view, so the view has no
+		// decisions yet.
+		c := newController(t, types.SyncResponse{
+			Latest: types.Decision{
+				Proposal: types.Proposal{
+					Metadata: MarshalOrPanic(&protos.ViewMetadata{
+						LatestSequence:  controllerSeq + 1,
+						ViewId:          controllerView - 1,
+						DecisionsInView: controllerDecisions,
+					}),
+				},
+			},
+		})
+
+		viewNum, seq, decisions := c.sync()
+
+		require.Equal(t, controllerView, viewNum)
+		require.Equal(t, controllerSeq+2, seq)
+		require.Zero(t, decisions)
+	})
+
+	t.Run("same_height_of_an_earlier_view", func(t *testing.T) {
+		// Nothing new to report.
+		c := newController(t, types.SyncResponse{
+			Latest: types.Decision{
+				Proposal: types.Proposal{
+					Metadata: MarshalOrPanic(&protos.ViewMetadata{
+						LatestSequence:  controllerSeq,
+						ViewId:          controllerView - 1,
+						DecisionsInView: controllerDecisions,
+					}),
+				},
+			},
+		})
+
+		viewNum, seq, decisions := c.sync()
+
+		require.Zero(t, viewNum)
+		require.Zero(t, seq)
+		require.Zero(t, decisions)
+	})
+}
+
+// TestSyncPastADecisionOfAnEarlierView makes sure that a node that syncs a decision it didn't have, made before its
+// view or carried into it, restarts its view after that decision with no decisions in it, which is what the leader's
+// next proposal expects.
+func TestSyncPastADecisionOfAnEarlierView(t *testing.T) {
+	// The node is in view 6 at sequence 11, with no decisions in view 6. The others decided sequence 11, proposed in
+	// view 5, and are in view 6 at sequence 12.
+	fixture := newSyncFixture(t, 10, 6, 11, 5)
+	controller := fixture.controller
+	controller.currDecisionsInView = 0
+	running := &View{Number: 6, LeaderID: 3, abortChan: make(chan struct{})}
+	controller.currView = running
+	controller.ViewSequences = &atomic.Value{}
+	controller.ViewSequences.Store(ViewSequence{ViewActive: true, ProposalSeq: 11})
+	builder := &recordingProposerBuilder{}
+	controller.ProposerBuilder = builder
+	controller.LeaderMonitor = abortTestLeaderMonitor{}
+	t.Cleanup(func() {
+		for _, view := range builder.views {
+			view.Abort()
+		}
+	})
+
+	controller.changeView(controller.sync())
+
+	require.True(t, running.Stopped(), "the view at sequence 11 must not keep running")
+	require.Len(t, builder.views, 1)
+	restarted := builder.views[0]
+	require.Equal(t, uint64(6), restarted.Number)
+	require.Equal(t, uint64(12), restarted.ProposalSequence)
+	require.Zero(t, restarted.DecisionsInView)
 }
 
 // stateRespondingComm answers the state transfer request of sync() on behalf of

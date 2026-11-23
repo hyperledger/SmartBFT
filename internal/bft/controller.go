@@ -465,7 +465,7 @@ func (c *Controller) changeView(newViewNumber uint64, newProposalSequence uint64
 	stopped := c.currentViewStopped()
 
 	if !stopped && latestView == newViewNumber && c.leaderID() == leader &&
-		c.getCurrentDecisionsInView() == newDecisionsInView {
+		c.getCurrentDecisionsInView() == newDecisionsInView && c.currentViewSequence() == newProposalSequence {
 		c.Logger.Debugf("Got view change to %d but view is already running", newViewNumber)
 		return
 	}
@@ -482,6 +482,12 @@ func (c *Controller) changeView(newViewNumber uint64, newProposalSequence uint64
 	if iAm, _ := c.iAmTheLeader(); iAm {
 		c.Batcher.Reset()
 	}
+}
+
+// currentViewSequence returns the sequence that the current view is at.
+func (c *Controller) currentViewSequence() uint64 {
+	viewSequence, _ := c.ViewSequences.Load().(ViewSequence)
+	return viewSequence.ProposalSeq
 }
 
 // abortView stops the current view. The caller must hold viewTransitionLock.
@@ -795,13 +801,14 @@ func (c *Controller) sync() (viewNum uint64, seq uint64, decisions uint64) {
 
 	controllerSequence := c.latestSeq()
 	newProposalSequence = controllerSequence + 1
+	advanced := latestDecisionSeq > controllerSequence
 
 	controllerViewNum := c.currViewNumber
 	newViewNum = controllerViewNum
 
 	newDecisionsInView = c.getCurrentDecisionsInView()
 
-	if latestDecisionSeq > controllerSequence {
+	if advanced {
 		c.Logger.Infof("Synchronizer returned with sequence %d while the controller is at sequence %d", latestDecisionSeq, controllerSequence)
 		c.Logger.Debugf("Node %d is setting the checkpoint after sync returned with view %d and seq %d", c.ID, latestDecisionViewNum, latestDecisionSeq)
 		c.Checkpoint.Set(latestDecision.Proposal, latestDecision.Signatures)
@@ -815,15 +822,16 @@ func (c *Controller) sync() (viewNum uint64, seq uint64, decisions uint64) {
 		newViewNum = latestDecisionViewNum
 	}
 
+	// A decision of an earlier view than the controller's is still news if the controller didn't have it.
 	response := c.fetchState()
 	if response == nil {
 		c.Logger.Infof("Fetching state failed")
-		if latestDecisionMetadata == nil || latestDecisionViewNum < controllerViewNum {
-			// And the synchronizer did not return a new view
+		if latestDecisionMetadata == nil || (latestDecisionViewNum < controllerViewNum && !advanced) {
+			// And the synchronizer did not return a new view or a new decision
 			return 0, 0, 0
 		}
-	} else if response.View <= controllerViewNum && latestDecisionViewNum < controllerViewNum {
-		return 0, 0, 0 // no new view to report
+	} else if response.View <= controllerViewNum && latestDecisionViewNum < controllerViewNum && !advanced {
+		return 0, 0, 0 // no new view or decision to report
 	}
 
 	saveNewView := response != nil && response.View > newViewNum && response.Seq == latestDecisionSeq+1
@@ -867,6 +875,12 @@ func (c *Controller) sync() (viewNum uint64, seq uint64, decisions uint64) {
 		// otherwise a stale proposal stays in flight and makes the node's view data
 		// invalid for the rest of the cluster.
 		c.maybePruneInFlight(latestDecisionMetadata)
+	}
+
+	// The decision was made before the view changed, or was carried into the view (countsInView), and it is the latest
+	// one, so the view the node continues in has no decisions yet.
+	if advanced && !countsInView(latestDecisionMetadata, newViewNum) {
+		newDecisionsInView = 0
 	}
 
 	if newViewNum > controllerViewNum {
