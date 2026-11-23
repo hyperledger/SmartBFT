@@ -121,7 +121,8 @@ func TestSetViewAndSeqUsesTheTrailingProposalView(t *testing.T) {
 
 // TestSetViewAndSeqWithACarriedProposal makes sure that a node restarts in the view a proposal was carried into, which
 // keeps the metadata of the view it was proposed in, whether the proposal is still in flight or already decided. The
-// proposal doesn't count as a decision in that view, so the node restarts with none.
+// proposal doesn't count as a decision in that view, so the node restarts with none, but the next proposal of that
+// view counts.
 func TestSetViewAndSeqWithACarriedProposal(t *testing.T) {
 	logger := zap.NewNop().Sugar()
 	// proposed at sequence 11 in view 5, after 5 decisions in it, and carried into view 6
@@ -154,16 +155,39 @@ func TestSetViewAndSeqWithACarriedProposal(t *testing.T) {
 			NewView: &smartbftprotos.ViewMetadata{ViewId: 6, LatestSequence: 10},
 		},
 	}
+	// the first proposal of view 6, at sequence 12, after the carried one
+	proposedInView6 := &smartbftprotos.SavedMessage{
+		Content: &smartbftprotos.SavedMessage_ProposedRecord{
+			ProposedRecord: &smartbftprotos.ProposedRecord{
+				PrePrepare: &smartbftprotos.PrePrepare{
+					Seq:  12,
+					View: 6,
+					Proposal: &smartbftprotos.Proposal{
+						Metadata: algorithm.MarshalOrPanic(&smartbftprotos.ViewMetadata{ViewId: 6, LatestSequence: 12}),
+					},
+				},
+			},
+		},
+	}
+	commitInView6 := &smartbftprotos.SavedMessage{
+		Content: &smartbftprotos.SavedMessage_Commit{
+			Commit: &smartbftprotos.Message{
+				Content: &smartbftprotos.Message_Commit{Commit: &smartbftprotos.Commit{Seq: 12, View: 6}},
+			},
+		},
+	}
 
 	for _, test := range []struct {
 		description       string
 		WALContent        []*smartbftprotos.SavedMessage
-		seq, decisions    uint64 // of the last decision of the application, in view 5
+		view, seq         uint64 // of the last decision of the application
+		decisions         uint64
 		expectedDecisions uint64
 	}{
 		{
 			description:       "in flight",
 			WALContent:        []*smartbftprotos.SavedMessage{carried},
+			view:              5,
 			seq:               10,
 			decisions:         4,
 			expectedDecisions: 0,
@@ -171,6 +195,7 @@ func TestSetViewAndSeqWithACarriedProposal(t *testing.T) {
 		{
 			description:       "decided",
 			WALContent:        []*smartbftprotos.SavedMessage{carried, commit},
+			view:              5,
 			seq:               11,
 			decisions:         5,
 			expectedDecisions: 0,
@@ -178,9 +203,18 @@ func TestSetViewAndSeqWithACarriedProposal(t *testing.T) {
 		{
 			description:       "decided, after a new view record that the write ahead log kept",
 			WALContent:        []*smartbftprotos.SavedMessage{newView, carried, commit},
+			view:              5,
 			seq:               11,
 			decisions:         5,
 			expectedDecisions: 0,
+		},
+		{
+			description:       "the next proposal of the view decided",
+			WALContent:        []*smartbftprotos.SavedMessage{proposedInView6, commitInView6},
+			view:              6,
+			seq:               12,
+			decisions:         0,
+			expectedDecisions: 1,
 		},
 	} {
 		t.Run(test.description, func(t *testing.T) {
@@ -193,7 +227,7 @@ func TestSetViewAndSeqWithACarriedProposal(t *testing.T) {
 				state:  &algorithm.PersistedState{Entries: entries, Logger: logger},
 			}
 
-			view, seq, dec := consensus.setViewAndSeq(5, test.seq, test.decisions)
+			view, seq, dec := consensus.setViewAndSeq(test.view, test.seq, test.decisions)
 			require.Equal(t, uint64(6), view)
 			require.Equal(t, test.seq, seq)
 			require.Equal(t, test.expectedDecisions, dec)

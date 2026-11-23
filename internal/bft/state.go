@@ -98,10 +98,10 @@ func (ps *PersistedState) LoadNewViewIfApplicable() (*types.ViewAndSeq, error) {
 
 // decisionsInView returns the decisions in view before the proposal of the given pre-prepare. A proposal carried into
 // a later view keeps the metadata of the view it was proposed in, and doesn't count as a decision in the view it was
-// carried into, so there are none before it. A carry-over only moves a proposal to a later view, so a pre-prepare of an earlier view than its metadata
-// doesn't change the metadata.
+// carried into, so no decisions precede it in that view. A carry-over only moves a proposal to a later view, so a
+// pre-prepare of an earlier view than its metadata doesn't change the metadata.
 func decisionsInView(prePrepare *protos.PrePrepare, metadata *protos.ViewMetadata) uint64 {
-	if prePrepare.GetView() > metadata.GetViewId() {
+	if !countsInView(metadata, prePrepare.GetView()) {
 		return 0
 	}
 	return metadata.GetDecisionsInView()
@@ -114,7 +114,7 @@ func decisionsInView(prePrepare *protos.PrePrepare, metadata *protos.ViewMetadat
 // and makes this method return nil: LoadNewViewIfApplicable and
 // LoadViewChangeIfApplicable handle those records.
 // A proposal carried into a later view by a view change keeps the metadata of the view it was proposed in, so the
-// view comes from the pre-prepare, and the proposal is the first decision in that view.
+// view comes from the pre-prepare, and the proposal doesn't count as a decision in that view.
 func (ps *PersistedState) LoadLastProposalView() (*protos.ViewMetadata, error) {
 	for i := range slices.Backward(ps.Entries) {
 		persistedMessage := &protos.SavedMessage{}

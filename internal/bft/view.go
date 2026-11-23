@@ -913,13 +913,12 @@ func (v *View) decide(proposal *types.Proposal, signatures []types.Signature, re
 		v.Logger.Panicf("Failed to unmarshal the metadata of the decided proposal, error: %v", err)
 	}
 	// first make preparations for the next sequence so that the view will be ready to continue right after delivery
-	v.startNextSeq(md.GetViewId() >= v.Number)
+	v.startNextSeq(countsInView(md, v.Number))
 	signatures = append(signatures, *v.myProposalSig)
 	v.Decider.Decide(*proposal, signatures, requests)
 }
 
-// startNextSeq moves the view to its next sequence. A decision counts in the view only if it was proposed in it: a
-// proposal carried from an earlier view keeps the metadata of that view.
+// startNextSeq moves the view to its next sequence, and counts the decision in the view if it should (countsInView).
 func (v *View) startNextSeq(countDecision bool) {
 	prevSeq := v.ProposalSequence
 
