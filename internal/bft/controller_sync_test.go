@@ -193,6 +193,24 @@ func TestSyncDecisionsInView(t *testing.T) {
 	})
 }
 
+// TestSyncOnStartPastADecisionOfAnEarlierView makes sure that the sync when the controller starts compares the decision
+// it finds with the view the controller starts in, so a decision of an earlier view doesn't count in it.
+func TestSyncOnStartPastADecisionOfAnEarlierView(t *testing.T) {
+	// The node starts in view 6 at sequence 21. The others decided sequence 21, proposed in view 5, and are already
+	// at sequence 23, so the sync doesn't save a new view record.
+	fixture := newSyncFixture(t, 20, 6, 21, 5)
+	controller := fixture.controller
+	controller.currViewNumber = 0 // not started yet
+	controller.currDecisionsInView = 0
+	controller.Verifier = noopVerifier{}
+	controller.Comm.(*stateRespondingComm).seq = 23
+
+	view, seq, decisions := controller.syncOnStart(6, 21, 0)
+	require.Equal(t, uint64(6), view)
+	require.Equal(t, uint64(22), seq)
+	require.Zero(t, decisions)
+}
+
 // TestSyncPastADecisionOfAnEarlierView makes sure that a node that syncs a decision it didn't have, made before its
 // view or carried into it, restarts its view after that decision with no decisions in it, which is what the leader's
 // next proposal expects.
