@@ -465,7 +465,7 @@ func (c *Controller) changeView(newViewNumber uint64, newProposalSequence uint64
 	stopped := c.currentViewStopped()
 
 	if !stopped && latestView == newViewNumber && c.leaderID() == leader &&
-		c.getCurrentDecisionsInView() == newDecisionsInView && c.currentViewSequence() == newProposalSequence {
+		c.getCurrentDecisionsInView() == newDecisionsInView && c.currentViewSequence() >= newProposalSequence {
 		c.Logger.Debugf("Got view change to %d but view is already running", newViewNumber)
 		return
 	}
@@ -484,7 +484,8 @@ func (c *Controller) changeView(newViewNumber uint64, newProposalSequence uint64
 	}
 }
 
-// currentViewSequence returns the sequence that the current view is at.
+// currentViewSequence returns the sequence that the current view is at. The view moves to its next sequence before the
+// controller delivers its decision, so it can be one ahead of the checkpoint.
 func (c *Controller) currentViewSequence() uint64 {
 	viewSequence, _ := c.ViewSequences.Load().(ViewSequence)
 	return viewSequence.ProposalSeq
@@ -814,7 +815,11 @@ func (c *Controller) sync() (viewNum uint64, seq uint64, decisions uint64) {
 		c.Checkpoint.Set(latestDecision.Proposal, latestDecision.Signatures)
 		c.verificationSequence.Store(uint64(latestDecision.Proposal.VerificationSequence))
 		newProposalSequence = latestDecisionSeq + 1
-		newDecisionsInView = latestDecisionDecisions + 1
+		// A decision of an earlier view than the controller's, made before the view changed or carried into it,
+		// doesn't count in the controller's view (countsInView), so that view keeps its decisions.
+		if countsInView(latestDecisionMetadata, controllerViewNum) {
+			newDecisionsInView = latestDecisionDecisions + 1
+		}
 	}
 
 	if latestDecisionViewNum > controllerViewNum {
@@ -875,12 +880,6 @@ func (c *Controller) sync() (viewNum uint64, seq uint64, decisions uint64) {
 		// otherwise a stale proposal stays in flight and makes the node's view data
 		// invalid for the rest of the cluster.
 		c.maybePruneInFlight(latestDecisionMetadata)
-	}
-
-	// The decision was made before the view changed, or was carried into the view (countsInView), and it is the latest
-	// one, so the view the node continues in has no decisions yet.
-	if advanced && !countsInView(latestDecisionMetadata, newViewNum) {
-		newDecisionsInView = 0
 	}
 
 	if newViewNum > controllerViewNum {

@@ -6,6 +6,7 @@
 package bft
 
 import (
+	"fmt"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -150,8 +151,8 @@ func TestSyncDecisionsInView(t *testing.T) {
 	})
 
 	t.Run("higher_height_of_an_earlier_view", func(t *testing.T) {
-		// The decision was made before the view changed, or was carried into this view, so the view has no
-		// decisions yet.
+		// The decision was made before the view changed, or was carried into this view, so it doesn't count in the
+		// view, which keeps its decisions.
 		c := newController(t, types.SyncResponse{
 			Latest: types.Decision{
 				Proposal: types.Proposal{
@@ -168,7 +169,7 @@ func TestSyncDecisionsInView(t *testing.T) {
 
 		require.Equal(t, controllerView, viewNum)
 		require.Equal(t, controllerSeq+2, seq)
-		require.Zero(t, decisions)
+		require.Equal(t, controllerDecisions+1, decisions)
 	})
 
 	t.Run("same_height_of_an_earlier_view", func(t *testing.T) {
@@ -212,18 +213,50 @@ func TestSyncOnStartPastADecisionOfAnEarlierView(t *testing.T) {
 }
 
 // TestSyncPastADecisionOfAnEarlierView makes sure that a node that syncs a decision it didn't have, made before its
-// view or carried into it, restarts its view after that decision with no decisions in it, which is what the leader's
-// next proposal expects.
+// view or carried into it, restarts its view after that decision with the decisions the view already had, which is
+// what the leader's next proposal expects.
 func TestSyncPastADecisionOfAnEarlierView(t *testing.T) {
-	// The node is in view 6 at sequence 11, with no decisions in view 6. The others decided sequence 11, proposed in
-	// view 5, and are in view 6 at sequence 12.
-	fixture := newSyncFixture(t, 10, 6, 11, 5)
-	controller := fixture.controller
-	controller.currDecisionsInView = 0
+	for _, decisions := range []uint64{0, 2} {
+		t.Run(fmt.Sprintf("%d decisions in the view", decisions), func(t *testing.T) {
+			// The node is in view 6 at sequence 11. The others decided sequence 11, proposed in view 5, and are in
+			// view 6 at sequence 12. The decision doesn't count in view 6, which keeps its decisions.
+			controller, running, builder := newRunningSyncController(t, 11, decisions)
+
+			controller.changeView(controller.sync())
+
+			require.True(t, running.Stopped(), "the view at sequence 11 must not keep running")
+			require.Len(t, builder.views, 1)
+			restarted := builder.views[0]
+			require.Equal(t, uint64(6), restarted.Number)
+			require.Equal(t, uint64(12), restarted.ProposalSequence)
+			require.Equal(t, decisions, restarted.DecisionsInView)
+		})
+	}
+}
+
+// TestChangeViewDoesNotRestartAViewThatIsAhead makes sure that a sync that found nothing newer doesn't restart a view
+// that is already past the sequence the sync returns. The view moves to its next sequence before the controller
+// delivers its decision, so it can be one ahead of the checkpoint.
+func TestChangeViewDoesNotRestartAViewThatIsAhead(t *testing.T) {
+	// The checkpoint is at sequence 11, and the view decided 12 and is at 13.
+	controller, running, builder := newRunningSyncController(t, 13, 0)
+
+	controller.changeView(6, 12, 0)
+
+	require.False(t, running.Stopped())
+	require.Empty(t, builder.views)
+}
+
+// newRunningSyncController returns the controller of newSyncFixture, in view 6 with the given decisions in it, at
+// sequence 10, and the syncs it runs return sequence 11 from view 5. Its running view, led by node 3, is at the given
+// sequence, and the views it starts are built by the returned builder.
+func newRunningSyncController(t *testing.T, viewSeq, decisions uint64) (*Controller, *View, *recordingProposerBuilder) {
+	controller := newSyncFixture(t, 10, 6, 11, 5).controller
+	controller.currDecisionsInView = decisions
 	running := &View{Number: 6, LeaderID: 3, abortChan: make(chan struct{})}
 	controller.currView = running
 	controller.ViewSequences = &atomic.Value{}
-	controller.ViewSequences.Store(ViewSequence{ViewActive: true, ProposalSeq: 11})
+	controller.ViewSequences.Store(ViewSequence{ViewActive: true, ProposalSeq: viewSeq})
 	builder := &recordingProposerBuilder{}
 	controller.ProposerBuilder = builder
 	controller.LeaderMonitor = abortTestLeaderMonitor{}
@@ -233,14 +266,7 @@ func TestSyncPastADecisionOfAnEarlierView(t *testing.T) {
 		}
 	})
 
-	controller.changeView(controller.sync())
-
-	require.True(t, running.Stopped(), "the view at sequence 11 must not keep running")
-	require.Len(t, builder.views, 1)
-	restarted := builder.views[0]
-	require.Equal(t, uint64(6), restarted.Number)
-	require.Equal(t, uint64(12), restarted.ProposalSequence)
-	require.Zero(t, restarted.DecisionsInView)
+	return controller, running, builder
 }
 
 // stateRespondingComm answers the state transfer request of sync() on behalf of
