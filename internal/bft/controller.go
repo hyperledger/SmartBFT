@@ -434,7 +434,7 @@ func (c *Controller) startView(proposalSequence uint64) {
 // of the node from the write ahead log, such as the in flight proposal it reports in its view data.
 func (c *Controller) startLeftView(proposalSequence uint64) {
 	leader := c.leaderID()
-	c.ViewSequences.Store(ViewSequence{ViewActive: false, ProposalSeq: proposalSequence})
+	c.ViewSequences.Store(ViewSequence{ViewActive: false, ProposalSeq: proposalSequence, DecisionsInView: c.currDecisionsInView})
 
 	c.currViewLock.Lock()
 	c.currView = newLeftView(leader)
@@ -464,13 +464,19 @@ func (c *Controller) changeView(newViewNumber uint64, newProposalSequence uint64
 	leader := c.currentViewLeader()
 	stopped := c.currentViewStopped()
 
-	// The view moves to its next sequence before the controller delivers its decision and counts it, so a running view
-	// can be past the sequence a sync returns, with a count the sync doesn't know. It is never moved back.
-	if !stopped && latestView == newViewNumber && c.leaderID() == leader &&
-		(c.currentViewSequence() > newProposalSequence ||
-			c.currentViewSequence() == newProposalSequence && c.getCurrentDecisionsInView() == newDecisionsInView) {
-		c.Logger.Debugf("Got view change to %d but view is already running", newViewNumber)
-		return
+	// A running view moves to its next sequence, and counts its decision, before the controller delivers the decision,
+	// so it can be past what a sync returns. It is never moved back: delivering its decisions counts them and rotates
+	// the leader. At the requested sequence, it keeps running if it has the requested decisions and leader.
+	if !stopped && latestView == newViewNumber {
+		running := c.runningViewSequence()
+		if running.ProposalSeq > newProposalSequence {
+			c.Logger.Debugf("Got view change to %d at sequence %d but the view is at sequence %d", newViewNumber, newProposalSequence, running.ProposalSeq)
+			return
+		}
+		if running.ProposalSeq == newProposalSequence && running.DecisionsInView == newDecisionsInView && c.leaderID() == leader {
+			c.Logger.Debugf("Got view change to %d but view is already running", newViewNumber)
+			return
+		}
 	}
 
 	if !c.abortView(latestView, nil) {
@@ -487,12 +493,11 @@ func (c *Controller) changeView(newViewNumber uint64, newProposalSequence uint64
 	}
 }
 
-// currentViewSequence returns the sequence that the current view is at. ViewSequences must be set; if no view stored
-// a sequence in it yet, it returns 0, which makes changeView restart the view. The view moves to its next sequence
-// before the controller delivers its decision, so it can be ahead of the checkpoint.
-func (c *Controller) currentViewSequence() uint64 {
+// runningViewSequence returns the sequence that the current view is at and the decisions it counted. ViewSequences
+// must be set; if no view stored them in it yet, it returns zeros, which makes changeView restart the view.
+func (c *Controller) runningViewSequence() ViewSequence {
 	viewSequence, _ := c.ViewSequences.Load().(ViewSequence)
-	return viewSequence.ProposalSeq
+	return viewSequence
 }
 
 // abortView stops the current view. The caller must hold viewTransitionLock.

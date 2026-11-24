@@ -8,6 +8,7 @@ package bft
 import (
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/hyperledger/SmartBFT/pkg/api"
@@ -558,4 +559,34 @@ func TestGetLeaderId(t *testing.T) {
 	require.Equal(t, uint64(11), getLeaderID(view, uint64(len(nodes)), nodes, true, 6, decisionsPerLeader, nil))
 	require.Equal(t, uint64(11), getLeaderID(view, uint64(len(nodes)), nodes, true, 7, decisionsPerLeader, nil))
 	require.Equal(t, uint64(11), getLeaderID(view, uint64(len(nodes)), nodes, true, 8, decisionsPerLeader, nil))
+}
+
+// restoringState restores a view to the given sequence and decisions, as a write ahead log with a later proposal does.
+type restoringState struct {
+	seq, decisions uint64
+}
+
+func (*restoringState) Save(*protos.SavedMessage, bool) error { return nil }
+
+func (s *restoringState) Restore(v *View) error {
+	v.ProposalSequence = s.seq
+	v.DecisionsInView = s.decisions
+	return nil
+}
+
+// TestNewProposerPublishesTheRestoredSequence makes sure that the sequence and the decisions a view publishes are the
+// ones it runs at after the restore from the write ahead log, which can move it to a later sequence.
+func TestNewProposerPublishesTheRestoredSequence(t *testing.T) {
+	viewSequences := &atomic.Value{}
+	maker := &ProposalMaker{
+		Checkpoint:    &types.Checkpoint{},
+		State:         &restoringState{seq: 12, decisions: 3},
+		Logger:        zap.NewNop().Sugar(),
+		MetricsView:   api.NewMetricsView(&disabled.Provider{}),
+		ViewSequences: viewSequences,
+	}
+
+	view, _ := maker.NewProposer(1, 11, 0, 2, 3, nil)
+	require.Equal(t, uint64(12), view.(*View).ProposalSequence)
+	require.Equal(t, ViewSequence{ViewActive: true, ProposalSeq: 12, DecisionsInView: 3}, viewSequences.Load())
 }

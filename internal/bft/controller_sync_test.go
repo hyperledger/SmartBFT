@@ -211,6 +211,7 @@ func TestSyncOnStartPastADecisionOfAnEarlierView(t *testing.T) {
 	require.Equal(t, uint64(6), view)
 	require.Equal(t, uint64(22), seq)
 	require.Zero(t, decisions)
+	require.Empty(t, fixture.state.SavedMessages, "the sync must not save a new view record")
 }
 
 // TestSyncPastADecisionOfAnEarlierView makes sure that a node that syncs a decision it didn't have, made before its
@@ -237,22 +238,32 @@ func TestSyncPastADecisionOfAnEarlierView(t *testing.T) {
 }
 
 // TestChangeViewDoesNotRestartAViewThatIsAhead makes sure that a sync doesn't move a running view back. The view moves
-// to its next sequence before the controller delivers its decision and counts it, so it can be ahead of the checkpoint,
-// with decisions the sync doesn't count. A view at the sequence the sync returns restarts only if its count differs.
+// to its next sequence, and counts its decision, before the controller delivers the decision, so it can be ahead of the
+// checkpoint. A view past the sequence the sync returns keeps running, whatever the decisions or the leader. A view at
+// that sequence restarts if its own decisions or its leader differ.
 func TestChangeViewDoesNotRestartAViewThatIsAhead(t *testing.T) {
-	// The checkpoint is at sequence 10, and the sync returns decision 11, so the view is to run at 12. The view
-	// already decided 11, or 11 and 12, but the controller didn't deliver them yet.
+	// The checkpoint is at sequence 10, and the sync returns decision 11, so the view is to run at 12. The view at 12
+	// or 13 already decided 11, or 11 and 12, but the controller didn't deliver them yet. The leader of view 6 is 3.
 	for _, test := range []struct {
-		viewSeq, syncDecisions uint64
+		description            string
+		viewSeq, viewDecisions uint64
+		leader                 uint64 // of the running view
+		syncDecisions          uint64
 		restarted              bool
 	}{
-		{viewSeq: 12, syncDecisions: 0},
-		{viewSeq: 12, syncDecisions: 1, restarted: true},
-		{viewSeq: 13, syncDecisions: 0},
-		{viewSeq: 13, syncDecisions: 1},
+		{description: "at the sequence", viewSeq: 12, leader: 3},
+		{description: "at the sequence, other decisions", viewSeq: 12, leader: 3, syncDecisions: 1, restarted: true},
+		{description: "at the sequence, a decision not delivered yet", viewSeq: 12, viewDecisions: 1, leader: 3, syncDecisions: 1},
+		{description: "at the sequence, another leader", viewSeq: 12, leader: 4, restarted: true},
+		{description: "past the sequence", viewSeq: 13, leader: 3},
+		{description: "past the sequence, other decisions", viewSeq: 13, leader: 3, syncDecisions: 1},
+		{description: "past the sequence, another leader", viewSeq: 13, leader: 4},
 	} {
-		t.Run(fmt.Sprintf("view at %d, %d decisions", test.viewSeq, test.syncDecisions), func(t *testing.T) {
+		t.Run(test.description, func(t *testing.T) {
 			controller, running, builder := newRunningSyncController(t, test.viewSeq, 0)
+			running.LeaderID = test.leader
+			running.DecisionsInView = test.viewDecisions
+			controller.ViewSequences.Store(ViewSequence{ViewActive: true, ProposalSeq: test.viewSeq, DecisionsInView: test.viewDecisions})
 
 			controller.changeView(6, 12, test.syncDecisions)
 
@@ -289,10 +300,10 @@ func TestSyncOnStartPrunesAStaleInFlightProposal(t *testing.T) {
 func newRunningSyncController(t *testing.T, viewSeq, decisions uint64) (*Controller, *View, *recordingProposerBuilder) {
 	controller := newSyncFixture(t, 10, 6, 11, 5).controller
 	controller.currDecisionsInView = decisions
-	running := &View{Number: 6, LeaderID: 3, abortChan: make(chan struct{})}
+	running := &View{Number: 6, LeaderID: 3, DecisionsInView: decisions, abortChan: make(chan struct{})}
 	controller.currView = running
 	controller.ViewSequences = &atomic.Value{}
-	controller.ViewSequences.Store(ViewSequence{ViewActive: true, ProposalSeq: viewSeq})
+	controller.ViewSequences.Store(ViewSequence{ViewActive: true, ProposalSeq: viewSeq, DecisionsInView: decisions})
 	builder := &recordingProposerBuilder{}
 	controller.ProposerBuilder = builder
 	controller.LeaderMonitor = abortTestLeaderMonitor{}

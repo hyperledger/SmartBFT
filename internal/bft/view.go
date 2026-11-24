@@ -271,8 +271,9 @@ func (v *View) run() {
 	defer v.viewEnded.Done()
 	defer func() {
 		v.ViewSequences.Store(ViewSequence{
-			ProposalSeq: v.ProposalSequence,
-			ViewActive:  false,
+			ProposalSeq:     v.ProposalSequence,
+			DecisionsInView: v.DecisionsInView,
+			ViewActive:      false,
 		})
 	}()
 	for {
@@ -937,7 +938,7 @@ func (v *View) startNextSeq(countDecision bool) {
 	// follower that compares its own sequence against it - ends up comparing a decided
 	// sequence against a proposal sequence, which hides a follower that is behind by
 	// exactly the sequence in flight.
-	v.ViewSequences.Store(ViewSequence{ProposalSeq: nextSeq, ViewActive: true})
+	v.ViewSequences.Store(ViewSequence{ProposalSeq: nextSeq, DecisionsInView: v.DecisionsInView, ViewActive: true})
 
 	v.MetricsView.ProposalSequence.Set(float64(v.ProposalSequence))
 	v.MetricsView.DecisionsInView.Set(float64(v.DecisionsInView))
