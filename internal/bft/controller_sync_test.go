@@ -152,14 +152,14 @@ func TestSyncDecisionsInView(t *testing.T) {
 
 	t.Run("higher_height_of_an_earlier_view", func(t *testing.T) {
 		// The decision was made before the view changed, or was carried into this view, so it doesn't count in the
-		// view, which keeps its decisions.
+		// view, which keeps its decisions, not the decision's.
 		c := newController(t, types.SyncResponse{
 			Latest: types.Decision{
 				Proposal: types.Proposal{
 					Metadata: MarshalOrPanic(&protos.ViewMetadata{
 						LatestSequence:  controllerSeq + 1,
 						ViewId:          controllerView - 1,
-						DecisionsInView: controllerDecisions,
+						DecisionsInView: 1,
 					}),
 				},
 			},
@@ -198,7 +198,8 @@ func TestSyncDecisionsInView(t *testing.T) {
 // it finds with the view the controller starts in, so a decision of an earlier view doesn't count in it.
 func TestSyncOnStartPastADecisionOfAnEarlierView(t *testing.T) {
 	// The node starts in view 6 at sequence 21. The others decided sequence 21, proposed in view 5, and are already
-	// at sequence 23, so the sync doesn't save a new view record.
+	// at sequence 23. Without the start view, the sync would take the view and decisions from the decision; if the
+	// others were at 22, it would save a new view record for view 6 with no decisions, which hides that.
 	fixture := newSyncFixture(t, 20, 6, 21, 5)
 	controller := fixture.controller
 	controller.currViewNumber = 0 // not started yet
@@ -228,23 +229,29 @@ func TestSyncPastADecisionOfAnEarlierView(t *testing.T) {
 			require.Len(t, builder.views, 1)
 			restarted := builder.views[0]
 			require.Equal(t, uint64(6), restarted.Number)
+			require.Equal(t, uint64(3), restarted.LeaderID)
 			require.Equal(t, uint64(12), restarted.ProposalSequence)
 			require.Equal(t, decisions, restarted.DecisionsInView)
 		})
 	}
 }
 
-// TestChangeViewDoesNotRestartAViewThatIsAhead makes sure that a sync that found nothing newer doesn't restart a view
-// that is already past the sequence the sync returns. The view moves to its next sequence before the controller
-// delivers its decision, so it can be one ahead of the checkpoint.
+// TestChangeViewDoesNotRestartAViewThatIsAhead makes sure that a sync doesn't restart a view that is already at or past
+// the sequence the sync returns. The view moves to its next sequence before the controller delivers its decision, so
+// it can be ahead of the checkpoint.
 func TestChangeViewDoesNotRestartAViewThatIsAhead(t *testing.T) {
-	// The checkpoint is at sequence 11, and the view decided 12 and is at 13.
-	controller, running, builder := newRunningSyncController(t, 13, 0)
+	// The checkpoint is at sequence 10, and the sync returns decision 11, so the view is to run at 12. The view
+	// already decided 11, or 11 and 12, but the controller didn't deliver them yet.
+	for _, viewSeq := range []uint64{12, 13} {
+		t.Run(fmt.Sprintf("view at %d", viewSeq), func(t *testing.T) {
+			controller, running, builder := newRunningSyncController(t, viewSeq, 0)
 
-	controller.changeView(6, 12, 0)
+			controller.changeView(6, 12, 0)
 
-	require.False(t, running.Stopped())
-	require.Empty(t, builder.views)
+			require.False(t, running.Stopped())
+			require.Empty(t, builder.views)
+		})
+	}
 }
 
 // newRunningSyncController returns the controller of newSyncFixture, in view 6 with the given decisions in it, at

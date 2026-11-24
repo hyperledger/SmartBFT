@@ -484,8 +484,9 @@ func (c *Controller) changeView(newViewNumber uint64, newProposalSequence uint64
 	}
 }
 
-// currentViewSequence returns the sequence that the current view is at. The view moves to its next sequence before the
-// controller delivers its decision, so it can be one ahead of the checkpoint.
+// currentViewSequence returns the sequence that the current view is at, or 0 if no view stored it, which makes
+// changeView restart the view. The view moves to its next sequence before the controller delivers its decision, so it
+// can be ahead of the checkpoint.
 func (c *Controller) currentViewSequence() uint64 {
 	viewSequence, _ := c.ViewSequences.Load().(ViewSequence)
 	return viewSequence.ProposalSeq
@@ -974,6 +975,8 @@ func (c *Controller) relinquishLeaderToken() {
 func (c *Controller) syncOnStart(startViewNumber uint64, startProposalSequence uint64, startDecisionsInView uint64) (viewNum uint64, seq uint64, decisions uint64) {
 	// sync compares what it finds with the view and the decisions of the controller, so they must be the ones it
 	// starts with. For example, a decision of an earlier view than the start view doesn't count in the start view.
+	// No other goroutine reads them yet: Start calls this before it runs the controller, and the view changer waits
+	// until Start is done, so they are written directly, as Start does.
 	c.currViewNumber = startViewNumber
 	c.currDecisionsInView = startDecisionsInView
 	syncView, syncSeq, syncDecsions := c.sync()
