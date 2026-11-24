@@ -690,10 +690,21 @@ func (c *Controller) decide(d decision) {
 		c.MaybePruneRevokedRequests()
 		return
 	}
-	c.incrementCurrentDecisionsInView()
+	md := &protos.ViewMetadata{}
+	if err := proto.Unmarshal(d.proposal.Metadata, md); err != nil {
+		c.Logger.Panicf("Failed to unmarshal proposal metadata, error: %v", err)
+	}
+
+	// A proposal carried from an earlier view doesn't count as a decision in this view, so the leader doesn't rotate
+	// because of it. The decision is of the current view (d.view is c.currView), which startView built with the
+	// current view number, so the view counts it the same way.
+	counted := countsInView(md, c.getCurrentViewNumber())
+	if counted {
+		c.incrementCurrentDecisionsInView()
+	}
 
 	if d.view.Stopped() {
-		// The view that decided was aborted but not replaced, so the decision still counts in this view,
+		// The view that decided was aborted but not replaced, so a decision that counts in this view still counts,
 		// in case the view is restarted with the same number after a sync.
 		// However, rotating the leader would restart the aborted view, and an aborted view cannot propose,
 		// so do not rotate and do not acquire the leader token.
@@ -703,12 +714,14 @@ func (c *Controller) decide(d decision) {
 		return
 	}
 
-	md := &protos.ViewMetadata{}
-	if err := proto.Unmarshal(d.proposal.Metadata, md); err != nil {
-		c.Logger.Panicf("Failed to unmarshal proposal metadata, error: %v", err)
+	rotate := counted && c.checkIfRotate(md.GetBlackList())
+	if !counted {
+		// The carried proposal is now the checkpoint, and its blacklist, which comes from the view it was proposed in,
+		// can make another node the leader of this view. That is the leader a node that restarts, or that decided the
+		// proposal before the view change, follows.
+		rotate = c.leaderID() != d.view.GetLeaderID()
 	}
-
-	if c.checkIfRotate(md.GetBlackList()) {
+	if rotate {
 		c.Logger.Debugf("Restarting view to rotate the leader")
 		c.changeView(c.getCurrentViewNumber(), md.GetLatestSequence()+1, c.getCurrentDecisionsInView())
 		c.Logger.Debugf("Restarting timers in request pool due to leader rotation")

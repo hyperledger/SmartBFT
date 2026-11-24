@@ -523,13 +523,21 @@ func (c *Consensus) setViewAndSeq(view, seq, dec uint64) (newView, newSeq, newDe
 	if err != nil {
 		c.Logger.Panicf("Failed loading new view, error: %v", err)
 	}
-	if viewSeq == nil {
+	switch {
+	case viewSeq == nil:
 		c.Logger.Debugf("No new view to restore")
-	} else if viewSeq.Seq >= seq {
+	case viewSeq.Seq >= seq:
 		// Check if metadata should be taken from the restored new view
 		c.Logger.Debugf("Restoring from new view with view %d and seq %d", viewSeq.View, viewSeq.Seq)
 		newView = viewSeq.View
 		newSeq = viewSeq.Seq
+		newDec = 0
+	case viewSeq.View > newView:
+		// The application's last decision was made before the record's view, or was carried into it (countsInView),
+		// and it is the latest one, so that view has no decisions yet. Only the view comes from the record: its
+		// sequence is older than the application's.
+		c.Logger.Debugf("Restoring view %d from the new view record, after the decision at seq %d", viewSeq.View, seq)
+		newView = viewSeq.View
 		newDec = 0
 	}
 
@@ -537,7 +545,10 @@ func (c *Consensus) setViewAndSeq(view, seq, dec uint64) (newView, newSeq, newDe
 	// is saved. In that case the trailing proposal still defines the view
 	// and the decision count the node was in before the restart. So does a
 	// proposal carried into a later view, which keeps the metadata of the
-	// view it was proposed in, also once it is decided.
+	// view it was proposed in, also once it is decided: it doesn't count as
+	// a decision in the view it was carried into. A proposal of its own
+	// view that the application decided doesn't get here, since the
+	// application's view is then the proposal's.
 	lastProposal, err := c.state.LoadLastProposalView()
 	if err != nil {
 		c.Logger.Panicf("Failed loading the last proposal view, error: %v", err)
@@ -546,9 +557,6 @@ func (c *Consensus) setViewAndSeq(view, seq, dec uint64) (newView, newSeq, newDe
 		c.Logger.Debugf("Restoring start view %d from the last proposal record", lastProposal.GetViewId())
 		newView = lastProposal.GetViewId()
 		newDec = lastProposal.GetDecisionsInView()
-		if lastProposal.GetLatestSequence() == seq {
-			newDec++ // the application already decided it
-		}
 	}
 	return newView, newSeq, newDec
 }

@@ -908,17 +908,26 @@ func (vv *voteVerifier) verifyVote(vote *protos.Message) {
 
 func (v *View) decide(proposal *types.Proposal, signatures []types.Signature, requests []types.RequestInfo) {
 	v.Logger.Infof("Deciding on seq %d", v.ProposalSequence)
+	// The metadata was validated when the proposal was verified, before it was saved, so it parses here also in a
+	// view restored from the write ahead log.
+	md := &protos.ViewMetadata{}
+	if err := proto.Unmarshal(proposal.Metadata, md); err != nil {
+		v.Logger.Panicf("Failed to unmarshal the metadata of the decided proposal, error: %v", err)
+	}
 	// first make preparations for the next sequence so that the view will be ready to continue right after delivery
-	v.startNextSeq()
+	v.startNextSeq(countsInView(md, v.Number))
 	signatures = append(signatures, *v.myProposalSig)
 	v.Decider.Decide(*proposal, signatures, requests)
 }
 
-func (v *View) startNextSeq() {
+// startNextSeq moves the view to its next sequence, and counts the decision in the view if it should (countsInView).
+func (v *View) startNextSeq(countDecision bool) {
 	prevSeq := v.ProposalSequence
 
 	v.ProposalSequence++
-	v.DecisionsInView++
+	if countDecision {
+		v.DecisionsInView++
+	}
 
 	nextSeq := v.ProposalSequence
 

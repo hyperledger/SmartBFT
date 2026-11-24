@@ -1736,7 +1736,7 @@ func savedRecord(t *testing.T, entry []byte) *protos.SavedMessage {
 // it at its first sequence, as if the leader had proposed it: the view saves it as a pre-prepare of this view, sends a
 // prepare for it, and decides it with its bytes unchanged. The metadata of the earlier view doesn't make the view
 // reject it, and the leader doesn't send a pre-prepare for it. The proposal was prepared in the earlier view, so the
-// commit record that proves it stays in the write ahead log.
+// commit record that proves it stays in the write ahead log. Its decision doesn't count as a decision in the view.
 func TestViewStartsWithACarriedProposal(t *testing.T) {
 	digest := carriedProposal.Digest()
 	prepareFrom := &protos.Message{
@@ -1822,6 +1822,8 @@ func TestViewStartsWithACarriedProposal(t *testing.T) {
 				require.Fail(t, "the view did not decide")
 			}
 			view.Abort()
+			require.Equal(t, uint64(6), view.ProposalSequence)
+			require.Zero(t, view.DecisionsInView)
 			require.NoError(t, writeAheadLog.Close())
 
 			writeAheadLog, entries, err := wal.InitializeAndReadAll(logger, dir, nil)
@@ -1836,6 +1838,86 @@ func TestViewStartsWithACarriedProposal(t *testing.T) {
 			require.True(t, proto.Equal(proposedInView1.GetProposedRecord().GetPrePrepare().GetProposal(), carriedRecord.GetProposal()))
 		})
 	}
+}
+
+// TestViewCountsTheProposalAfterACarriedOne makes sure that after deciding a carried proposal, which doesn't count in
+// the view, the view accepts the leader's next proposal with no decisions in the view, and counts it.
+func TestViewCountsTheProposalAfterACarriedOne(t *testing.T) {
+	next := types.Proposal{
+		Header:               []byte{0},
+		Payload:              []byte{2},
+		Metadata:             bft.MarshalOrPanic(&protos.ViewMetadata{ViewId: 2, LatestSequence: 6}),
+		VerificationSequence: 1,
+	}
+	prepareFor := func(seq uint64, digest string) *protos.Message {
+		return &protos.Message{
+			Version: types.ProtocolVersion,
+			Content: &protos.Message_Prepare{Prepare: &protos.Prepare{View: 2, Seq: seq, Digest: digest}},
+		}
+	}
+	commitFor := func(seq uint64, digest string, signer uint64) *protos.Message {
+		return &protos.Message{
+			Version: types.ProtocolVersion,
+			Content: &protos.Message_Commit{Commit: &protos.Commit{
+				View: 2, Seq: seq, Digest: digest, Signature: &protos.Signature{Signer: signer, Value: []byte{4}},
+			}},
+		}
+	}
+
+	sent := make(chan *protos.Message, 100)
+	comm := &mocks.CommMock{}
+	comm.On("BroadcastConsensus", mock.Anything).Run(func(args mock.Arguments) {
+		sent <- args.Get(0).(*protos.Message)
+	})
+	decided := make(chan types.Proposal, 2)
+	decider := &mocks.Decider{}
+	decider.On("Decide", mock.Anything, mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
+		decided <- args.Get(0).(types.Proposal)
+	})
+	verifier := &mocks.VerifierMock{}
+	verifier.On("VerificationSequence").Return(uint64(1))
+	verifier.On("VerifyProposal", mock.Anything).Return(nil, nil)
+	verifier.On("VerifyConsenterSig", mock.Anything, mock.Anything).Return(nil, nil)
+	view := newCarryingView(4, carriedProposal, comm, verifier)
+	view.Decider = decider
+	view.Start()
+	t.Cleanup(view.Abort)
+
+	decide := func(seq uint64, digest string) types.Proposal {
+		t.Helper()
+		require.NotNil(t, nextMessage(t, sent).GetPrepare())
+		view.HandleMessage(2, prepareFor(seq, digest))
+		view.HandleMessage(3, prepareFor(seq, digest))
+		require.NotNil(t, nextMessage(t, sent).GetCommit())
+		view.HandleMessage(2, commitFor(seq, digest, 2))
+		view.HandleMessage(3, commitFor(seq, digest, 3))
+		select {
+		case proposal := <-decided:
+			return proposal
+		case <-time.After(time.Minute):
+			require.Fail(t, "the view did not decide")
+			return types.Proposal{}
+		}
+	}
+
+	require.Equal(t, carriedProposal, decide(5, carriedProposal.Digest()))
+
+	view.HandleMessage(1, &protos.Message{
+		Version: types.ProtocolVersion,
+		Content: &protos.Message_PrePrepare{PrePrepare: &protos.PrePrepare{
+			View: 2, Seq: 6, Proposal: &protos.Proposal{
+				Header:               next.Header,
+				Payload:              next.Payload,
+				Metadata:             next.Metadata,
+				VerificationSequence: uint64(next.VerificationSequence),
+			},
+		}},
+	})
+	require.Equal(t, next, decide(6, next.Digest()))
+
+	view.Abort()
+	require.Equal(t, uint64(7), view.ProposalSequence)
+	require.Equal(t, uint64(1), view.DecisionsInView)
 }
 
 // TestViewIgnoresACarriedProposalOfAnotherSequence makes sure that a view that is not at the sequence of the carried

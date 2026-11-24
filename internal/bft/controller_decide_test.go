@@ -38,6 +38,88 @@ func TestControllerDecideViewBookkeeping(t *testing.T) {
 		require.Empty(t, controller.leaderToken)
 	})
 
+	t.Run("proposal carried from an earlier view", func(t *testing.T) {
+		// The decision doesn't count in the view, so the leader doesn't rotate, and it proposes next.
+		view := &View{Number: 2, LeaderID: 3, abortChan: make(chan struct{})}
+		controller := newRotatingController(t, view)
+
+		controller.decide(decisionInView(t, view, 1, 5))
+		require.Equal(t, uint64(0), controller.getCurrentDecisionsInView())
+		require.Equal(t, uint64(3), controller.leaderID())
+		require.Len(t, controller.leaderToken, 1)
+	})
+
+	t.Run("proposal carried from an earlier view, view aborted", func(t *testing.T) {
+		view := &View{Number: 2, LeaderID: 3, abortChan: make(chan struct{})}
+		controller := newRotatingController(t, view)
+		view.stop()
+
+		controller.decide(decisionInView(t, view, 1, 5))
+		require.Equal(t, uint64(0), controller.getCurrentDecisionsInView())
+		require.Equal(t, uint64(3), controller.leaderID())
+		require.Empty(t, controller.leaderToken)
+	})
+
+	t.Run("proposal of the view after a carried one", func(t *testing.T) {
+		// The decision counts again, so the leader rotates after it.
+		view := &View{Number: 2, LeaderID: 3, abortChan: make(chan struct{})}
+		controller := newRotatingController(t, view)
+		builder := &recordingProposerBuilder{}
+		controller.ProposerBuilder = builder
+		controller.LeaderMonitor = abortTestLeaderMonitor{}
+		controller.RequestPool = timersPool{}
+		t.Cleanup(func() {
+			for _, started := range builder.views {
+				started.Abort()
+			}
+		})
+
+		controller.decide(decisionInView(t, view, 1, 5))
+		controller.decide(decisionInView(t, view, 2, 6))
+		require.Equal(t, uint64(1), controller.getCurrentDecisionsInView())
+		require.Equal(t, uint64(4), controller.leaderID())
+		require.Equal(t, []uint64{2}, builder.started(), "the view must restart with the next leader")
+		restarted := builder.views[0]
+		require.Equal(t, uint64(4), restarted.LeaderID)
+		require.Equal(t, uint64(7), restarted.ProposalSequence)
+		require.Equal(t, uint64(1), restarted.DecisionsInView)
+	})
+
+	t.Run("proposal carried from an earlier view with a blacklist that changes the leader", func(t *testing.T) {
+		// The carried proposal becomes the checkpoint, and with its blacklist node 4 leads view 2, so the view
+		// restarts with node 4 as its leader, at the next sequence and with no decisions.
+		view := &View{Number: 2, LeaderID: 3, abortChan: make(chan struct{})}
+		controller := newRotatingController(t, view)
+		controller.Deliver = applicationFunc(func(proposal types.Proposal, signatures []types.Signature) types.Reconfig {
+			controller.Checkpoint.Set(proposal, signatures)
+			return types.Reconfig{}
+		})
+		builder := &recordingProposerBuilder{}
+		controller.ProposerBuilder = builder
+		controller.LeaderMonitor = abortTestLeaderMonitor{}
+		controller.RequestPool = timersPool{}
+		t.Cleanup(func() {
+			for _, started := range builder.views {
+				started.Abort()
+			}
+		})
+		carried := decisionInView(t, view, 1, 5)
+		metadata, err := proto.Marshal(&protos.ViewMetadata{ViewId: 1, LatestSequence: 5, BlackList: []uint64{3}})
+		require.NoError(t, err)
+		carried.proposal.Metadata = metadata
+
+		controller.decide(carried)
+		require.Equal(t, uint64(0), controller.getCurrentDecisionsInView())
+		require.Equal(t, uint64(4), controller.leaderID())
+		require.Len(t, builder.views, 1)
+		restarted := builder.views[0]
+		require.Equal(t, uint64(2), restarted.Number)
+		require.Equal(t, uint64(4), restarted.LeaderID)
+		require.Equal(t, uint64(6), restarted.ProposalSequence)
+		require.Equal(t, uint64(0), restarted.DecisionsInView)
+		require.Empty(t, controller.leaderToken)
+	})
+
 	t.Run("view replaced", func(t *testing.T) {
 		view := &View{abortChan: make(chan struct{})}
 		view.stop()
@@ -115,6 +197,35 @@ func newDecidingController(t *testing.T, currView Proposer) *Controller {
 		leaderToken: make(chan struct{}, 1),
 	}
 }
+
+// newRotatingController returns a controller in view 2 that rotates the leader after every decision, and whose own ID
+// is the leader of view 2 before any decision in it.
+func newRotatingController(t *testing.T, currView Proposer) *Controller {
+	controller := newDecidingController(t, currView)
+	controller.LeaderRotation = true
+	controller.DecisionsPerLeader = 1
+	controller.currViewNumber = 2
+	controller.ID = 3
+
+	return controller
+}
+
+// decisionInView returns a decision of the given view on a proposal of the given view and sequence.
+func decisionInView(t *testing.T, view Proposer, proposedInView, seq uint64) decision {
+	metadata, err := proto.Marshal(&protos.ViewMetadata{ViewId: proposedInView, LatestSequence: seq})
+	require.NoError(t, err)
+	d := newDecision(t, view)
+	d.proposal.Metadata = metadata
+
+	return d
+}
+
+// timersPool is a request pool that only restarts its timers.
+type timersPool struct {
+	RequestPool
+}
+
+func (timersPool) RestartTimers() {}
 
 func newDecision(t *testing.T, view Proposer) decision {
 	metadata, err := proto.Marshal(&protos.ViewMetadata{})
