@@ -533,8 +533,9 @@ func (c *Consensus) setViewAndSeq(view, seq, dec uint64) (newView, newSeq, newDe
 		newSeq = viewSeq.Seq
 		newDec = 0
 	case viewSeq.View > newView:
-		// The application decided after the new view, but its last decision is of an earlier view: it was made
-		// before the new view or carried into it, so it doesn't count in it (countsInView).
+		// The application's last decision was made before the record's view, or was carried into it (countsInView),
+		// and it is the latest one, so that view has no decisions yet. Only the view comes from the record: its
+		// sequence is older than the application's.
 		c.Logger.Debugf("Restoring view %d from the new view record, after the decision at seq %d", viewSeq.View, seq)
 		newView = viewSeq.View
 		newDec = 0

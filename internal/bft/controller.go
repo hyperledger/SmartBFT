@@ -695,8 +695,9 @@ func (c *Controller) decide(d decision) {
 		c.Logger.Panicf("Failed to unmarshal proposal metadata, error: %v", err)
 	}
 
-	// A proposal carried from an earlier view doesn't count as a decision in this view, so the leader doesn't change
-	// because of it either.
+	// A proposal carried from an earlier view doesn't count as a decision in this view, so the leader doesn't rotate
+	// because of it. The decision is of the current view (d.view is c.currView), which startView built with the
+	// current view number, so the view counts it the same way.
 	counted := countsInView(md, c.getCurrentViewNumber())
 	if counted {
 		c.incrementCurrentDecisionsInView()
@@ -713,7 +714,14 @@ func (c *Controller) decide(d decision) {
 		return
 	}
 
-	if counted && c.checkIfRotate(md.GetBlackList()) {
+	rotate := counted && c.checkIfRotate(md.GetBlackList())
+	if !counted {
+		// The carried proposal is now the checkpoint, and its blacklist, which comes from the view it was proposed in,
+		// can make another node the leader of this view. That is the leader a node that restarts, or that decided the
+		// proposal before the view change, follows.
+		rotate = c.leaderID() != d.view.GetLeaderID()
+	}
+	if rotate {
 		c.Logger.Debugf("Restarting view to rotate the leader")
 		c.changeView(c.getCurrentViewNumber(), md.GetLatestSequence()+1, c.getCurrentDecisionsInView())
 		c.Logger.Debugf("Restarting timers in request pool due to leader rotation")

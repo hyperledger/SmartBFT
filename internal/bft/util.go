@@ -270,8 +270,8 @@ func proposalFromProto(prop *protos.Proposal) types.Proposal {
 }
 
 // countsInView returns whether deciding a proposal with the given metadata counts as a decision in the given view. A
-// proposal carried from an earlier view keeps the metadata of that view, so it doesn't. Only a proposal from an earlier
-// view is carried, so any other proposal counts, as it did before proposals were carried.
+// proposal carried from an earlier view keeps the metadata of that view, so it doesn't. Any other proposal counts, as it
+// did before proposals were carried.
 func countsInView(md *protos.ViewMetadata, view uint64) bool {
 	return md.GetViewId() >= view
 }

@@ -101,6 +101,7 @@ func (ps *PersistedState) LoadNewViewIfApplicable() (*types.ViewAndSeq, error) {
 // carried into, so no decisions precede it in that view. A carry-over only moves a proposal to a later view, so a
 // pre-prepare of an earlier view than its metadata doesn't change the metadata.
 func decisionsInView(prePrepare *protos.PrePrepare, metadata *protos.ViewMetadata) uint64 {
+	// The proposal was carried into the pre-prepare's view if it doesn't count in it.
 	if !countsInView(metadata, prePrepare.GetView()) {
 		return 0
 	}

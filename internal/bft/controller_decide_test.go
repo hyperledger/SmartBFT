@@ -40,7 +40,7 @@ func TestControllerDecideViewBookkeeping(t *testing.T) {
 
 	t.Run("proposal carried from an earlier view", func(t *testing.T) {
 		// The decision doesn't count in the view, so the leader doesn't rotate, and it proposes next.
-		view := &View{Number: 2, abortChan: make(chan struct{})}
+		view := &View{Number: 2, LeaderID: 3, abortChan: make(chan struct{})}
 		controller := newRotatingController(t, view)
 
 		controller.decide(decisionInView(t, view, 1, 5))
@@ -49,9 +49,20 @@ func TestControllerDecideViewBookkeeping(t *testing.T) {
 		require.Len(t, controller.leaderToken, 1)
 	})
 
+	t.Run("proposal carried from an earlier view, view aborted", func(t *testing.T) {
+		view := &View{Number: 2, LeaderID: 3, abortChan: make(chan struct{})}
+		controller := newRotatingController(t, view)
+		view.stop()
+
+		controller.decide(decisionInView(t, view, 1, 5))
+		require.Equal(t, uint64(0), controller.getCurrentDecisionsInView())
+		require.Equal(t, uint64(3), controller.leaderID())
+		require.Empty(t, controller.leaderToken)
+	})
+
 	t.Run("proposal of the view after a carried one", func(t *testing.T) {
 		// The decision counts again, so the leader rotates after it.
-		view := &View{Number: 2, abortChan: make(chan struct{})}
+		view := &View{Number: 2, LeaderID: 3, abortChan: make(chan struct{})}
 		controller := newRotatingController(t, view)
 		builder := &recordingProposerBuilder{}
 		controller.ProposerBuilder = builder
@@ -72,6 +83,41 @@ func TestControllerDecideViewBookkeeping(t *testing.T) {
 		require.Equal(t, uint64(4), restarted.LeaderID)
 		require.Equal(t, uint64(7), restarted.ProposalSequence)
 		require.Equal(t, uint64(1), restarted.DecisionsInView)
+	})
+
+	t.Run("proposal carried from an earlier view with a blacklist that changes the leader", func(t *testing.T) {
+		// The carried proposal becomes the checkpoint, and with its blacklist node 4 leads view 2, so the view
+		// restarts with node 4 as its leader, at the next sequence and with no decisions.
+		view := &View{Number: 2, LeaderID: 3, abortChan: make(chan struct{})}
+		controller := newRotatingController(t, view)
+		controller.Deliver = applicationFunc(func(proposal types.Proposal, signatures []types.Signature) types.Reconfig {
+			controller.Checkpoint.Set(proposal, signatures)
+			return types.Reconfig{}
+		})
+		builder := &recordingProposerBuilder{}
+		controller.ProposerBuilder = builder
+		controller.LeaderMonitor = abortTestLeaderMonitor{}
+		controller.RequestPool = timersPool{}
+		t.Cleanup(func() {
+			for _, started := range builder.views {
+				started.Abort()
+			}
+		})
+		carried := decisionInView(t, view, 1, 5)
+		metadata, err := proto.Marshal(&protos.ViewMetadata{ViewId: 1, LatestSequence: 5, BlackList: []uint64{3}})
+		require.NoError(t, err)
+		carried.proposal.Metadata = metadata
+
+		controller.decide(carried)
+		require.Equal(t, uint64(0), controller.getCurrentDecisionsInView())
+		require.Equal(t, uint64(4), controller.leaderID())
+		require.Len(t, builder.views, 1)
+		restarted := builder.views[0]
+		require.Equal(t, uint64(2), restarted.Number)
+		require.Equal(t, uint64(4), restarted.LeaderID)
+		require.Equal(t, uint64(6), restarted.ProposalSequence)
+		require.Equal(t, uint64(0), restarted.DecisionsInView)
+		require.Empty(t, controller.leaderToken)
 	})
 
 	t.Run("view replaced", func(t *testing.T) {
