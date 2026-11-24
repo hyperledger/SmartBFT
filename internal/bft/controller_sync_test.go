@@ -236,22 +236,51 @@ func TestSyncPastADecisionOfAnEarlierView(t *testing.T) {
 	}
 }
 
-// TestChangeViewDoesNotRestartAViewThatIsAhead makes sure that a sync doesn't restart a view that is already at or past
-// the sequence the sync returns. The view moves to its next sequence before the controller delivers its decision, so
-// it can be ahead of the checkpoint.
+// TestChangeViewDoesNotRestartAViewThatIsAhead makes sure that a sync doesn't move a running view back. The view moves
+// to its next sequence before the controller delivers its decision and counts it, so it can be ahead of the checkpoint,
+// with decisions the sync doesn't count. A view at the sequence the sync returns restarts only if its count differs.
 func TestChangeViewDoesNotRestartAViewThatIsAhead(t *testing.T) {
 	// The checkpoint is at sequence 10, and the sync returns decision 11, so the view is to run at 12. The view
 	// already decided 11, or 11 and 12, but the controller didn't deliver them yet.
-	for _, viewSeq := range []uint64{12, 13} {
-		t.Run(fmt.Sprintf("view at %d", viewSeq), func(t *testing.T) {
-			controller, running, builder := newRunningSyncController(t, viewSeq, 0)
+	for _, test := range []struct {
+		viewSeq, syncDecisions uint64
+		restarted              bool
+	}{
+		{viewSeq: 12, syncDecisions: 0},
+		{viewSeq: 12, syncDecisions: 1, restarted: true},
+		{viewSeq: 13, syncDecisions: 0},
+		{viewSeq: 13, syncDecisions: 1},
+	} {
+		t.Run(fmt.Sprintf("view at %d, %d decisions", test.viewSeq, test.syncDecisions), func(t *testing.T) {
+			controller, running, builder := newRunningSyncController(t, test.viewSeq, 0)
 
-			controller.changeView(6, 12, 0)
+			controller.changeView(6, 12, test.syncDecisions)
 
-			require.False(t, running.Stopped())
-			require.Empty(t, builder.views)
+			require.Equal(t, test.restarted, running.Stopped())
+			require.Equal(t, test.restarted, len(builder.views) == 1)
 		})
 	}
+}
+
+// TestSyncOnStartPrunesAStaleInFlightProposal makes sure that the sync when the controller starts removes an in-flight
+// proposal that is already decided, also when the decision is of an earlier view and the sync has nothing else to
+// report.
+func TestSyncOnStartPrunesAStaleInFlightProposal(t *testing.T) {
+	// The node restarts in view 6 at sequence 11, and its write ahead log still has the proposal of sequence 10, from
+	// view 5, in flight. The synchronizer returns that decision, and the others are in view 6.
+	fixture := newSyncFixture(t, 10, 5, 10, 5)
+	controller := fixture.controller
+	controller.currViewNumber = 0 // not started yet
+	controller.Verifier = noopVerifier{}
+	controller.InFlight.StoreProposal(types.Proposal{
+		Metadata: MarshalOrPanic(&protos.ViewMetadata{ViewId: 5, LatestSequence: 10}),
+	})
+
+	view, seq, decisions := controller.syncOnStart(6, 11, 0)
+	require.Equal(t, uint64(6), view)
+	require.Equal(t, uint64(11), seq)
+	require.Zero(t, decisions)
+	require.Nil(t, controller.InFlight.InFlightProposal())
 }
 
 // newRunningSyncController returns the controller of newSyncFixture, in view 6 with the given decisions in it, at

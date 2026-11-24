@@ -464,8 +464,11 @@ func (c *Controller) changeView(newViewNumber uint64, newProposalSequence uint64
 	leader := c.currentViewLeader()
 	stopped := c.currentViewStopped()
 
+	// The view moves to its next sequence before the controller delivers its decision and counts it, so a running view
+	// can be past the sequence a sync returns, with a count the sync doesn't know. It is never moved back.
 	if !stopped && latestView == newViewNumber && c.leaderID() == leader &&
-		c.getCurrentDecisionsInView() == newDecisionsInView && c.currentViewSequence() >= newProposalSequence {
+		(c.currentViewSequence() > newProposalSequence ||
+			c.currentViewSequence() == newProposalSequence && c.getCurrentDecisionsInView() == newDecisionsInView) {
 		c.Logger.Debugf("Got view change to %d but view is already running", newViewNumber)
 		return
 	}
@@ -484,9 +487,9 @@ func (c *Controller) changeView(newViewNumber uint64, newProposalSequence uint64
 	}
 }
 
-// currentViewSequence returns the sequence that the current view is at, or 0 if no view stored it, which makes
-// changeView restart the view. The view moves to its next sequence before the controller delivers its decision, so it
-// can be ahead of the checkpoint.
+// currentViewSequence returns the sequence that the current view is at. ViewSequences must be set; if no view stored
+// a sequence in it yet, it returns 0, which makes changeView restart the view. The view moves to its next sequence
+// before the controller delivers its decision, so it can be ahead of the checkpoint.
 func (c *Controller) currentViewSequence() uint64 {
 	viewSequence, _ := c.ViewSequences.Load().(ViewSequence)
 	return viewSequence.ProposalSeq
@@ -830,14 +833,20 @@ func (c *Controller) sync() (viewNum uint64, seq uint64, decisions uint64) {
 
 	// A decision of an earlier view than the controller's is still news if the controller didn't have it.
 	response := c.fetchState()
+	var nothingNew bool
 	if response == nil {
 		c.Logger.Infof("Fetching state failed")
-		if latestDecisionMetadata == nil || (latestDecisionViewNum < controllerViewNum && !advanced) {
-			// And the synchronizer did not return a new view or a new decision
-			return 0, 0, 0
+		// And the synchronizer did not return a new view or a new decision
+		nothingNew = latestDecisionMetadata == nil || (latestDecisionViewNum < controllerViewNum && !advanced)
+	} else {
+		nothingNew = response.View <= controllerViewNum && latestDecisionViewNum < controllerViewNum && !advanced
+	}
+	if nothingNew {
+		// Like every sync, it decides whether the in-flight proposal is stale.
+		if latestDecisionMetadata != nil {
+			c.maybePruneInFlight(latestDecisionMetadata)
 		}
-	} else if response.View <= controllerViewNum && latestDecisionViewNum < controllerViewNum && !advanced {
-		return 0, 0, 0 // no new view or decision to report
+		return 0, 0, 0
 	}
 
 	saveNewView := response != nil && response.View > newViewNum && response.Seq == latestDecisionSeq+1
