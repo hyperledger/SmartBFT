@@ -6,7 +6,6 @@
 package bft
 
 import (
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -196,8 +195,6 @@ func newDecidingController(t *testing.T, currView Proposer) *Controller {
 		currView:    currView,
 		stopChan:    make(chan struct{}),
 		leaderToken: make(chan struct{}, 1),
-		// no view stored its sequence in it, as the test views don't run
-		ViewSequences: &atomic.Value{},
 	}
 }
 

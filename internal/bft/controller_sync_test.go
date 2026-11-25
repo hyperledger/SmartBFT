@@ -254,6 +254,7 @@ func TestChangeViewDoesNotRestartAViewThatIsAhead(t *testing.T) {
 		{description: "at the sequence", viewSeq: 12, leader: 3},
 		{description: "at the sequence, other decisions", viewSeq: 12, leader: 3, syncDecisions: 1, restarted: true},
 		{description: "at the sequence, a decision not delivered yet", viewSeq: 12, viewDecisions: 1, leader: 3, syncDecisions: 1},
+		{description: "at the sequence, more decisions than the sync knows", viewSeq: 12, viewDecisions: 2, leader: 3, syncDecisions: 1},
 		{description: "at the sequence, another leader", viewSeq: 12, leader: 4, restarted: true},
 		{description: "past the sequence", viewSeq: 13, leader: 3},
 		{description: "past the sequence, other decisions", viewSeq: 13, leader: 3, syncDecisions: 1},
@@ -271,6 +272,32 @@ func TestChangeViewDoesNotRestartAViewThatIsAhead(t *testing.T) {
 			require.Equal(t, test.restarted, len(builder.views) == 1)
 		})
 	}
+}
+
+// TestSyncWithNothingNewKeepsAViewThatIsAhead makes sure that when a sync finds nothing new, restarting the current
+// view as the run loop does doesn't restart a view that counted a decision the controller didn't deliver yet.
+func TestSyncWithNothingNewKeepsAViewThatIsAhead(t *testing.T) {
+	// The checkpoint is at sequence 10. The view decided 11 and is at 12 with 2 decisions, and the controller counted 1.
+	// The synchronizer returns decision 10 from view 5, and the others are in view 6.
+	controller := newSyncFixture(t, 10, 6, 10, 5).controller
+	controller.currDecisionsInView = 1
+	running := &View{Number: 6, LeaderID: 3, DecisionsInView: 2, abortChan: make(chan struct{})}
+	controller.currView = running
+	controller.ViewSequences = &atomic.Value{}
+	controller.ViewSequences.Store(ViewSequence{ViewActive: true, ProposalSeq: 12, DecisionsInView: 2})
+	builder := &recordingProposerBuilder{}
+	controller.ProposerBuilder = builder
+	controller.LeaderMonitor = abortTestLeaderMonitor{}
+
+	view, seq, decisions := controller.sync()
+	require.Zero(t, view)
+	require.Zero(t, seq)
+	require.Zero(t, decisions)
+
+	// what the run loop does when the sync has nothing new
+	controller.changeView(controller.getCurrentViewNumber(), controller.ViewSequences.Load().(ViewSequence).ProposalSeq, controller.getCurrentDecisionsInView())
+	require.False(t, running.Stopped())
+	require.Empty(t, builder.views)
 }
 
 // TestSyncOnStartPrunesAStaleInFlightProposal makes sure that the sync when the controller starts removes an in-flight

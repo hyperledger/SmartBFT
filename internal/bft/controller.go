@@ -465,15 +465,16 @@ func (c *Controller) changeView(newViewNumber uint64, newProposalSequence uint64
 	stopped := c.currentViewStopped()
 
 	// A running view moves to its next sequence, and counts its decision, before the controller delivers the decision,
-	// so it can be past what a sync returns. It is never moved back: delivering its decisions counts them and rotates
-	// the leader. At the requested sequence, it keeps running if it has the requested decisions and leader.
+	// so it can be past what a sync returns, or have more decisions than the controller counted. It is never moved
+	// back: delivering its decisions counts them and rotates the leader. At the requested sequence, it keeps running if
+	// it has at least the requested decisions and the requested leader.
 	if !stopped && latestView == newViewNumber {
 		running := c.runningViewSequence()
 		if running.ProposalSeq > newProposalSequence {
 			c.Logger.Debugf("Got view change to %d at sequence %d but the view is at sequence %d", newViewNumber, newProposalSequence, running.ProposalSeq)
 			return
 		}
-		if running.ProposalSeq == newProposalSequence && running.DecisionsInView == newDecisionsInView && c.leaderID() == leader {
+		if running.ProposalSeq == newProposalSequence && running.DecisionsInView >= newDecisionsInView && c.leaderID() == leader {
 			c.Logger.Debugf("Got view change to %d but view is already running", newViewNumber)
 			return
 		}
@@ -493,9 +494,12 @@ func (c *Controller) changeView(newViewNumber uint64, newProposalSequence uint64
 	}
 }
 
-// runningViewSequence returns the sequence that the current view is at and the decisions it counted. ViewSequences
-// must be set; if no view stored them in it yet, it returns zeros, which makes changeView restart the view.
+// runningViewSequence returns the sequence that the current view is at and the decisions it counted, or zeros if no
+// view stored them, which makes changeView restart the view.
 func (c *Controller) runningViewSequence() ViewSequence {
+	if c.ViewSequences == nil {
+		return ViewSequence{}
+	}
 	viewSequence, _ := c.ViewSequences.Load().(ViewSequence)
 	return viewSequence
 }
