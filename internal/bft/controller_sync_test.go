@@ -6,6 +6,8 @@
 package bft
 
 import (
+	"fmt"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -147,6 +149,204 @@ func TestSyncDecisionsInView(t *testing.T) {
 		require.Equal(t, syncDecisions+1, decisions,
 			"DecisionsInView should be latestDecisionDecisions+1 when sync returns higher height")
 	})
+
+	t.Run("higher_height_of_an_earlier_view", func(t *testing.T) {
+		// The decision was made before the view changed, or was carried into this view, so it doesn't count in the
+		// view, which keeps its decisions, not the decision's.
+		c := newController(t, types.SyncResponse{
+			Latest: types.Decision{
+				Proposal: types.Proposal{
+					Metadata: MarshalOrPanic(&protos.ViewMetadata{
+						LatestSequence:  controllerSeq + 1,
+						ViewId:          controllerView - 1,
+						DecisionsInView: 1,
+					}),
+				},
+			},
+		})
+
+		viewNum, seq, decisions := c.sync()
+
+		require.Equal(t, controllerView, viewNum)
+		require.Equal(t, controllerSeq+2, seq)
+		require.Equal(t, controllerDecisions+1, decisions)
+	})
+
+	t.Run("same_height_of_an_earlier_view", func(t *testing.T) {
+		// Nothing new to report.
+		c := newController(t, types.SyncResponse{
+			Latest: types.Decision{
+				Proposal: types.Proposal{
+					Metadata: MarshalOrPanic(&protos.ViewMetadata{
+						LatestSequence:  controllerSeq,
+						ViewId:          controllerView - 1,
+						DecisionsInView: controllerDecisions,
+					}),
+				},
+			},
+		})
+
+		viewNum, seq, decisions := c.sync()
+
+		require.Zero(t, viewNum)
+		require.Zero(t, seq)
+		require.Zero(t, decisions)
+	})
+}
+
+// TestSyncOnStartPastADecisionOfAnEarlierView makes sure that the sync when the controller starts compares the decision
+// it finds with the view the controller starts in, so a decision of an earlier view doesn't count in it.
+func TestSyncOnStartPastADecisionOfAnEarlierView(t *testing.T) {
+	// The node starts in view 6 at sequence 21. The others decided sequence 21, proposed in view 5, and are already
+	// at sequence 23. Without the start view, the sync would take the view and decisions from the decision; if the
+	// others were at 22, it would save a new view record for view 6 with no decisions, which hides that.
+	fixture := newSyncFixture(t, 20, 6, 21, 5)
+	controller := fixture.controller
+	controller.currViewNumber = 0 // not started yet
+	controller.currDecisionsInView = 0
+	controller.Verifier = noopVerifier{}
+	controller.Comm.(*stateRespondingComm).seq = 23
+
+	view, seq, decisions := controller.syncOnStart(6, 21, 0)
+	require.Equal(t, uint64(6), view)
+	require.Equal(t, uint64(22), seq)
+	require.Zero(t, decisions)
+	require.Empty(t, fixture.state.SavedMessages, "the sync must not save a new view record")
+}
+
+// TestSyncPastADecisionOfAnEarlierView makes sure that a node that syncs a decision it didn't have, made before its
+// view or carried into it, restarts its view after that decision with the decisions the view already had, which is
+// what the leader's next proposal expects.
+func TestSyncPastADecisionOfAnEarlierView(t *testing.T) {
+	for _, decisions := range []uint64{0, 2} {
+		t.Run(fmt.Sprintf("%d decisions in the view", decisions), func(t *testing.T) {
+			// The node is in view 6 at sequence 11. The others decided sequence 11, proposed in view 5, and are in
+			// view 6 at sequence 12. The decision doesn't count in view 6, which keeps its decisions.
+			controller, running, builder := newRunningSyncController(t, 11, decisions)
+
+			syncView, syncSeq, syncDecisions := controller.sync()
+			controller.changeView(syncView, syncSeq, syncDecisions)
+
+			require.True(t, running.Stopped(), "the view at sequence 11 must not keep running")
+			require.Len(t, builder.views, 1)
+			restarted := builder.views[0]
+			require.Equal(t, uint64(6), restarted.Number)
+			require.Equal(t, uint64(3), restarted.LeaderID)
+			require.Equal(t, uint64(12), restarted.ProposalSequence)
+			require.Equal(t, decisions, restarted.DecisionsInView)
+			require.Equal(t, ViewSequence{ViewActive: true, ProposalSeq: 12, DecisionsInView: decisions}, controller.ViewSequences.Load())
+
+			// the same sync result again finds the restarted view running
+			controller.changeView(syncView, syncSeq, syncDecisions)
+			require.Len(t, builder.views, 1)
+		})
+	}
+}
+
+// TestChangeViewDoesNotRestartAViewThatIsAhead makes sure that a sync doesn't move a running view back. The view moves
+// to its next sequence, and counts its decision, before the controller delivers the decision, so it can be ahead of the
+// checkpoint. A view past the sequence the sync returns keeps running, whatever the decisions or the leader. A view at
+// that sequence restarts if its own decisions or its leader differ.
+func TestChangeViewDoesNotRestartAViewThatIsAhead(t *testing.T) {
+	// The checkpoint is at sequence 10, and the sync returns decision 11, so the view is to run at 12. The view at 12
+	// or 13 already decided 11, or 11 and 12, but the controller didn't deliver them yet. The leader of view 6 is 3.
+	for _, test := range []struct {
+		description            string
+		viewSeq, viewDecisions uint64
+		leader                 uint64 // of the running view
+		syncDecisions          uint64
+		restarted              bool
+	}{
+		{description: "at the sequence", viewSeq: 12, leader: 3},
+		{description: "at the sequence, other decisions", viewSeq: 12, leader: 3, syncDecisions: 1, restarted: true},
+		{description: "at the sequence, a decision not delivered yet", viewSeq: 12, viewDecisions: 1, leader: 3, syncDecisions: 1},
+		{description: "at the sequence, more decisions than the sync knows", viewSeq: 12, viewDecisions: 2, leader: 3, syncDecisions: 1},
+		{description: "at the sequence, another leader", viewSeq: 12, leader: 4, restarted: true},
+		{description: "past the sequence", viewSeq: 13, leader: 3},
+		{description: "past the sequence, other decisions", viewSeq: 13, leader: 3, syncDecisions: 1},
+		{description: "past the sequence, another leader", viewSeq: 13, leader: 4},
+	} {
+		t.Run(test.description, func(t *testing.T) {
+			controller, running, builder := newRunningSyncController(t, test.viewSeq, 0)
+			running.LeaderID = test.leader
+			running.DecisionsInView = test.viewDecisions
+			controller.ViewSequences.Store(ViewSequence{ViewActive: true, ProposalSeq: test.viewSeq, DecisionsInView: test.viewDecisions})
+
+			controller.changeView(6, 12, test.syncDecisions)
+
+			require.Equal(t, test.restarted, running.Stopped())
+			require.Equal(t, test.restarted, len(builder.views) == 1)
+		})
+	}
+}
+
+// TestSyncWithNothingNewKeepsAViewThatIsAhead makes sure that when a sync finds nothing new, restarting the current
+// view as the run loop does doesn't restart a view that counted a decision the controller didn't deliver yet.
+func TestSyncWithNothingNewKeepsAViewThatIsAhead(t *testing.T) {
+	// The checkpoint is at sequence 10. The view decided 11 and is at 12 with 2 decisions, and the controller counted 1.
+	// The synchronizer returns decision 10 from view 5, and the others are in view 6.
+	controller := newSyncFixture(t, 10, 6, 10, 5).controller
+	controller.currDecisionsInView = 1
+	running := &View{Number: 6, LeaderID: 3, DecisionsInView: 2, abortChan: make(chan struct{})}
+	controller.currView = running
+	controller.ViewSequences = &atomic.Value{}
+	controller.ViewSequences.Store(ViewSequence{ViewActive: true, ProposalSeq: 12, DecisionsInView: 2})
+	builder := &recordingProposerBuilder{viewSequences: controller.ViewSequences}
+	controller.ProposerBuilder = builder
+	controller.LeaderMonitor = abortTestLeaderMonitor{}
+
+	view, seq, decisions := controller.sync()
+	require.Zero(t, view)
+	require.Zero(t, seq)
+	require.Zero(t, decisions)
+
+	// what the run loop does when the sync has nothing new
+	controller.changeView(controller.getCurrentViewNumber(), controller.ViewSequences.Load().(ViewSequence).ProposalSeq, controller.getCurrentDecisionsInView())
+	require.False(t, running.Stopped())
+	require.Empty(t, builder.views)
+}
+
+// TestSyncOnStartPrunesAStaleInFlightProposal makes sure that the sync when the controller starts removes an in-flight
+// proposal that is already decided, also when the decision is of an earlier view and the sync has nothing else to
+// report.
+func TestSyncOnStartPrunesAStaleInFlightProposal(t *testing.T) {
+	// The node restarts in view 6 at sequence 11, and its write ahead log still has the proposal of sequence 10, from
+	// view 5, in flight. The synchronizer returns that decision, and the others are in view 6.
+	fixture := newSyncFixture(t, 10, 5, 10, 5)
+	controller := fixture.controller
+	controller.currViewNumber = 0 // not started yet
+	controller.Verifier = noopVerifier{}
+	controller.InFlight.StoreProposal(types.Proposal{
+		Metadata: MarshalOrPanic(&protos.ViewMetadata{ViewId: 5, LatestSequence: 10}),
+	})
+
+	view, seq, decisions := controller.syncOnStart(6, 11, 0)
+	require.Equal(t, uint64(6), view)
+	require.Equal(t, uint64(11), seq)
+	require.Zero(t, decisions)
+	require.Nil(t, controller.InFlight.InFlightProposal())
+}
+
+// newRunningSyncController returns the controller of newSyncFixture, in view 6 with the given decisions in it, at
+// sequence 10, and the syncs it runs return sequence 11 from view 5. Its running view, led by node 3, is at the given
+// sequence, and the views it starts are built by the returned builder.
+func newRunningSyncController(t *testing.T, viewSeq, decisions uint64) (*Controller, *View, *recordingProposerBuilder) {
+	controller := newSyncFixture(t, 10, 6, 11, 5).controller
+	controller.currDecisionsInView = decisions
+	running := &View{Number: 6, LeaderID: 3, DecisionsInView: decisions, abortChan: make(chan struct{})}
+	controller.currView = running
+	controller.ViewSequences = &atomic.Value{}
+	controller.ViewSequences.Store(ViewSequence{ViewActive: true, ProposalSeq: viewSeq, DecisionsInView: decisions})
+	builder := &recordingProposerBuilder{viewSequences: controller.ViewSequences}
+	controller.ProposerBuilder = builder
+	controller.LeaderMonitor = abortTestLeaderMonitor{}
+	t.Cleanup(func() {
+		for _, view := range builder.views {
+			view.Abort()
+		}
+	})
+
+	return controller, running, builder
 }
 
 // stateRespondingComm answers the state transfer request of sync() on behalf of

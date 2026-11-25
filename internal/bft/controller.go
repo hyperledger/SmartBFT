@@ -434,7 +434,7 @@ func (c *Controller) startView(proposalSequence uint64) {
 // of the node from the write ahead log, such as the in flight proposal it reports in its view data.
 func (c *Controller) startLeftView(proposalSequence uint64) {
 	leader := c.leaderID()
-	c.ViewSequences.Store(ViewSequence{ViewActive: false, ProposalSeq: proposalSequence})
+	c.ViewSequences.Store(ViewSequence{ViewActive: false, ProposalSeq: proposalSequence, DecisionsInView: c.currDecisionsInView})
 
 	c.currViewLock.Lock()
 	c.currView = newLeftView(leader)
@@ -464,10 +464,20 @@ func (c *Controller) changeView(newViewNumber uint64, newProposalSequence uint64
 	leader := c.currentViewLeader()
 	stopped := c.currentViewStopped()
 
-	if !stopped && latestView == newViewNumber && c.leaderID() == leader &&
-		c.getCurrentDecisionsInView() == newDecisionsInView {
-		c.Logger.Debugf("Got view change to %d but view is already running", newViewNumber)
-		return
+	// A running view moves to its next sequence, and counts its decision, before the controller delivers the decision,
+	// so it can be past what a sync returns, or have more decisions than the controller counted. It is never moved
+	// back: delivering its decisions counts them and rotates the leader. At the requested sequence, it keeps running if
+	// it has at least the requested decisions and the requested leader.
+	if !stopped && latestView == newViewNumber {
+		running := c.runningViewSequence()
+		if running.ProposalSeq > newProposalSequence {
+			c.Logger.Debugf("Got view change to %d at sequence %d but the view is at sequence %d", newViewNumber, newProposalSequence, running.ProposalSeq)
+			return
+		}
+		if running.ProposalSeq == newProposalSequence && running.DecisionsInView >= newDecisionsInView && c.leaderID() == leader {
+			c.Logger.Debugf("Got view change to %d but view is already running", newViewNumber)
+			return
+		}
 	}
 
 	if !c.abortView(latestView, nil) {
@@ -482,6 +492,16 @@ func (c *Controller) changeView(newViewNumber uint64, newProposalSequence uint64
 	if iAm, _ := c.iAmTheLeader(); iAm {
 		c.Batcher.Reset()
 	}
+}
+
+// runningViewSequence returns the sequence that the current view is at and the decisions it counted, or zeros if no
+// view stored them, which makes changeView restart the view.
+func (c *Controller) runningViewSequence() ViewSequence {
+	if c.ViewSequences == nil {
+		return ViewSequence{}
+	}
+	viewSequence, _ := c.ViewSequences.Load().(ViewSequence)
+	return viewSequence
 }
 
 // abortView stops the current view. The caller must hold viewTransitionLock.
@@ -795,19 +815,24 @@ func (c *Controller) sync() (viewNum uint64, seq uint64, decisions uint64) {
 
 	controllerSequence := c.latestSeq()
 	newProposalSequence = controllerSequence + 1
+	advanced := latestDecisionSeq > controllerSequence
 
 	controllerViewNum := c.currViewNumber
 	newViewNum = controllerViewNum
 
 	newDecisionsInView = c.getCurrentDecisionsInView()
 
-	if latestDecisionSeq > controllerSequence {
+	if advanced {
 		c.Logger.Infof("Synchronizer returned with sequence %d while the controller is at sequence %d", latestDecisionSeq, controllerSequence)
 		c.Logger.Debugf("Node %d is setting the checkpoint after sync returned with view %d and seq %d", c.ID, latestDecisionViewNum, latestDecisionSeq)
 		c.Checkpoint.Set(latestDecision.Proposal, latestDecision.Signatures)
 		c.verificationSequence.Store(uint64(latestDecision.Proposal.VerificationSequence))
 		newProposalSequence = latestDecisionSeq + 1
-		newDecisionsInView = latestDecisionDecisions + 1
+		// A decision of an earlier view than the controller's, made before the view changed or carried into it,
+		// doesn't count in the controller's view (countsInView), so that view keeps its decisions.
+		if countsInView(latestDecisionMetadata, controllerViewNum) {
+			newDecisionsInView = latestDecisionDecisions + 1
+		}
 	}
 
 	if latestDecisionViewNum > controllerViewNum {
@@ -815,15 +840,22 @@ func (c *Controller) sync() (viewNum uint64, seq uint64, decisions uint64) {
 		newViewNum = latestDecisionViewNum
 	}
 
+	// A decision of an earlier view than the controller's is still news if the controller didn't have it.
 	response := c.fetchState()
+	var nothingNew bool
 	if response == nil {
 		c.Logger.Infof("Fetching state failed")
-		if latestDecisionMetadata == nil || latestDecisionViewNum < controllerViewNum {
-			// And the synchronizer did not return a new view
-			return 0, 0, 0
+		// And the synchronizer did not return a new view or a new decision
+		nothingNew = latestDecisionMetadata == nil || (latestDecisionViewNum < controllerViewNum && !advanced)
+	} else {
+		nothingNew = response.View <= controllerViewNum && latestDecisionViewNum < controllerViewNum && !advanced
+	}
+	if nothingNew {
+		// Like every sync, it decides whether the in-flight proposal is stale.
+		if latestDecisionMetadata != nil {
+			c.maybePruneInFlight(latestDecisionMetadata)
 		}
-	} else if response.View <= controllerViewNum && latestDecisionViewNum < controllerViewNum {
-		return 0, 0, 0 // no new view to report
+		return 0, 0, 0
 	}
 
 	saveNewView := response != nil && response.View > newViewNum && response.Seq == latestDecisionSeq+1
@@ -959,6 +991,12 @@ func (c *Controller) relinquishLeaderToken() {
 }
 
 func (c *Controller) syncOnStart(startViewNumber uint64, startProposalSequence uint64, startDecisionsInView uint64) (viewNum uint64, seq uint64, decisions uint64) {
+	// sync compares what it finds with the view and the decisions of the controller, so they must be the ones it
+	// starts with. For example, a decision of an earlier view than the start view doesn't count in the start view.
+	// No other goroutine reads them yet: Start calls this before it runs the controller, and the view changer waits
+	// until Start is done, so they are written directly, as Start does.
+	c.currViewNumber = startViewNumber
+	c.currDecisionsInView = startDecisionsInView
 	syncView, syncSeq, syncDecsions := c.sync()
 	c.MaybePruneRevokedRequests()
 	viewNum = startViewNumber

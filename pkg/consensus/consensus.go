@@ -488,7 +488,6 @@ func (c *Consensus) continueCreateComponents() {
 	c.viewChanger.Controller = c.controller
 	c.viewChanger.Pruner = c.controller
 	c.viewChanger.RequestsTimer = c.Pool
-	c.viewChanger.ViewSequences = c.controller.ViewSequences
 }
 
 func (c *Consensus) setViewAndSeq(view, seq, dec uint64) (newView, newSeq, newDec uint64) {

@@ -750,7 +750,7 @@ func TestNormalPath(t *testing.T) {
 	deciderWG.Wait()
 	// after deciding sequence 1 the view advertises the sequence it proposes next, which
 	// is the one followers compare their own sequence against
-	require.Equal(t, bft.ViewSequence{ViewActive: true, ProposalSeq: 2}, viewSeq.Load().(bft.ViewSequence))
+	require.Equal(t, bft.ViewSequence{ViewActive: true, ProposalSeq: 2, DecisionsInView: 2}, viewSeq.Load().(bft.ViewSequence))
 	dProp = <-decidedProposal
 	secondProposal := proposal
 	secondProposal.Metadata = bft.MarshalOrPanic(&protos.ViewMetadata{

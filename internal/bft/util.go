@@ -361,11 +361,6 @@ func (pm *ProposalMaker) NewProposer(leader, proposalSequence, viewNum, decision
 		MetricsView:        pm.MetricsView,
 	}
 
-	view.ViewSequences.Store(ViewSequence{
-		ViewActive:  true,
-		ProposalSeq: proposalSequence,
-	})
-
 	pm.restoreOnceFromWAL.Do(func() {
 		err := pm.State.Restore(view)
 		if err != nil {
@@ -383,6 +378,13 @@ func (pm *ProposalMaker) NewProposer(leader, proposalSequence, viewNum, decision
 		view.DecisionsInView = decisionsInView
 	}
 
+	// Published after the restore, which can move the view to a later sequence.
+	view.ViewSequences.Store(ViewSequence{
+		ViewActive:      true,
+		ProposalSeq:     view.ProposalSequence,
+		DecisionsInView: view.DecisionsInView,
+	})
+
 	view.MetricsView.ViewNumber.Set(float64(view.Number))
 	view.MetricsView.LeaderID.Set(float64(view.LeaderID))
 	view.MetricsView.ProposalSequence.Set(float64(view.ProposalSequence))
@@ -394,8 +396,9 @@ func (pm *ProposalMaker) NewProposer(leader, proposalSequence, viewNum, decision
 
 // ViewSequence indicates if a view is currently active and its current proposal sequence
 type ViewSequence struct {
-	ViewActive  bool
-	ProposalSeq uint64
+	ViewActive      bool
+	ProposalSeq     uint64
+	DecisionsInView uint64 // the decisions the view counted before ProposalSeq
 }
 
 // MsgToString converts a given message to a printable string
