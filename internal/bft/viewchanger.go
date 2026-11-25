@@ -103,7 +103,6 @@ type ViewChanger struct {
 	Pruner        Pruner
 
 	// for the in flight proposal view
-	ViewSequences    *atomic.Value
 	inFlightView     *View
 	inFlightViewLock sync.RWMutex
 
