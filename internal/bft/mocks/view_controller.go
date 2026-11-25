@@ -5,6 +5,7 @@
 package mocks
 
 import (
+	"github.com/hyperledger/SmartBFT/pkg/types"
 	mock "github.com/stretchr/testify/mock"
 )
 
@@ -221,8 +222,8 @@ func (_c *ViewController_ReleaseViewWrite_Call) RunAndReturn(run func()) *ViewCo
 }
 
 // ViewChanged provides a mock function for the type ViewController
-func (_mock *ViewController) ViewChanged(newViewNumber uint64, newProposalSequence uint64) {
-	_mock.Called(newViewNumber, newProposalSequence)
+func (_mock *ViewController) ViewChanged(newViewNumber uint64, newProposalSequence uint64, carried *types.Proposal) {
+	_mock.Called(newViewNumber, newProposalSequence, carried)
 	return
 }
 
@@ -234,11 +235,12 @@ type ViewController_ViewChanged_Call struct {
 // ViewChanged is a helper method to define mock.On call
 //   - newViewNumber uint64
 //   - newProposalSequence uint64
-func (_e *ViewController_Expecter) ViewChanged(newViewNumber any, newProposalSequence any) *ViewController_ViewChanged_Call {
-	return &ViewController_ViewChanged_Call{Call: _e.mock.On("ViewChanged", newViewNumber, newProposalSequence)}
+//   - carried *types.Proposal
+func (_e *ViewController_Expecter) ViewChanged(newViewNumber any, newProposalSequence any, carried any) *ViewController_ViewChanged_Call {
+	return &ViewController_ViewChanged_Call{Call: _e.mock.On("ViewChanged", newViewNumber, newProposalSequence, carried)}
 }
 
-func (_c *ViewController_ViewChanged_Call) Run(run func(newViewNumber uint64, newProposalSequence uint64)) *ViewController_ViewChanged_Call {
+func (_c *ViewController_ViewChanged_Call) Run(run func(newViewNumber uint64, newProposalSequence uint64, carried *types.Proposal)) *ViewController_ViewChanged_Call {
 	_c.Call.Run(func(args mock.Arguments) {
 		var arg0 uint64
 		if args[0] != nil {
@@ -248,9 +250,14 @@ func (_c *ViewController_ViewChanged_Call) Run(run func(newViewNumber uint64, ne
 		if args[1] != nil {
 			arg1 = args[1].(uint64)
 		}
+		var arg2 *types.Proposal
+		if args[2] != nil {
+			arg2 = args[2].(*types.Proposal)
+		}
 		run(
 			arg0,
 			arg1,
+			arg2,
 		)
 	})
 	return _c
@@ -261,7 +268,7 @@ func (_c *ViewController_ViewChanged_Call) Return() *ViewController_ViewChanged_
 	return _c
 }
 
-func (_c *ViewController_ViewChanged_Call) RunAndReturn(run func(newViewNumber uint64, newProposalSequence uint64)) *ViewController_ViewChanged_Call {
+func (_c *ViewController_ViewChanged_Call) RunAndReturn(run func(newViewNumber uint64, newProposalSequence uint64, carried *types.Proposal)) *ViewController_ViewChanged_Call {
 	_c.Run(run)
 	return _c
 }

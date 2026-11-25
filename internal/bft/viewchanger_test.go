@@ -336,7 +336,7 @@ func TestViewDataProcess(t *testing.T) {
 	controller := &mocks.ViewController{}
 	viewNumChan := make(chan uint64)
 	seqNumChan := make(chan uint64)
-	controller.On("ViewChanged", mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
+	controller.On("ViewChanged", mock.Anything, mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
 		num := args.Get(0).(uint64)
 		viewNumChan <- num
 		num = args.Get(1).(uint64)
@@ -414,7 +414,7 @@ func TestNewViewProcess(t *testing.T) {
 	controller := &mocks.ViewController{}
 	viewNumChan := make(chan uint64)
 	seqNumChan := make(chan uint64)
-	controller.On("ViewChanged", mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
+	controller.On("ViewChanged", mock.Anything, mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
 		num := args.Get(0).(uint64)
 		viewNumChan <- num
 		num = args.Get(1).(uint64)
@@ -503,7 +503,7 @@ func TestNormalProcess(t *testing.T) {
 	controller := &mocks.ViewController{}
 	viewNumChan := make(chan uint64)
 	seqNumChan := make(chan uint64)
-	controller.On("ViewChanged", mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
+	controller.On("ViewChanged", mock.Anything, mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
 		num := args.Get(0).(uint64)
 		viewNumChan <- num
 		num = args.Get(1).(uint64)
@@ -1234,7 +1234,7 @@ func TestCommitLastDecision(t *testing.T) {
 	controller := &mocks.ViewController{}
 	viewNumChan := make(chan uint64)
 	seqNumChan := make(chan uint64)
-	controller.On("ViewChanged", mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
+	controller.On("ViewChanged", mock.Anything, mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
 		num := args.Get(0).(uint64)
 		viewNumChan <- num
 		num = args.Get(1).(uint64)
@@ -2153,7 +2153,7 @@ func TestCommitInFlight(t *testing.T) {
 	controller := &mocks.ViewController{}
 	viewNumChan := make(chan uint64)
 	seqNumChan := make(chan uint64)
-	controller.On("ViewChanged", mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
+	controller.On("ViewChanged", mock.Anything, mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
 		num := args.Get(0).(uint64)
 		viewNumChan <- num
 		num = args.Get(1).(uint64)
@@ -2363,7 +2363,7 @@ func TestInFlightViewMessageFromItselfWithWrongView(t *testing.T) {
 	verifier.On("VerifyConsenterSig", mock.Anything, mock.Anything).Return(nil, nil)
 	verifier.On("RequestsFromProposal", mock.Anything).Return(nil)
 	controller := &mocks.ViewController{}
-	controller.On("ViewChanged", mock.Anything, mock.Anything).Return(nil).Maybe()
+	controller.On("ViewChanged", mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
 	expectAbortAndHold(controller)
 	reqTimer := &mocks.RequestsTimer{}
 	reqTimer.On("StopTimers")
@@ -2508,7 +2508,7 @@ func TestCommitWhileHavingInFlight(t *testing.T) {
 	verifier.On("VerifyConsenterSig", mock.Anything, mock.Anything).Return(nil, nil)
 	verifier.On("RequestsFromProposal", mock.Anything).Return(nil)
 	controller := &mocks.ViewController{}
-	controller.On("ViewChanged", mock.Anything, mock.Anything)
+	controller.On("ViewChanged", mock.Anything, mock.Anything, mock.Anything)
 	expectAbortAndHold(controller)
 	reqTimer := &mocks.RequestsTimer{}
 	reqTimer.On("StopTimers")
@@ -2595,7 +2595,7 @@ func TestDontCommitInFlight(t *testing.T) {
 	controller := &mocks.ViewController{}
 	viewNumChan := make(chan uint64)
 	seqNumChan := make(chan uint64)
-	controller.On("ViewChanged", mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
+	controller.On("ViewChanged", mock.Anything, mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
 		num := args.Get(0).(uint64)
 		viewNumChan <- num
 		num = args.Get(1).(uint64)
@@ -2691,7 +2691,7 @@ func newViewChangerWithInFlight(t *testing.T, verifier api.Verifier) (*bft.ViewC
 	log := basicLog.Sugar()
 	viewChangedChan := make(chan uint64, 1)
 	controller := &mocks.ViewController{}
-	controller.On("ViewChanged", mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
+	controller.On("ViewChanged", mock.Anything, mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
 		viewChangedChan <- args.Get(0).(uint64)
 	}).Return(nil).Maybe()
 	expectAbortAndHold(controller)
@@ -3309,7 +3309,7 @@ func TestNewViewWithoutLeaderViewData(t *testing.T) {
 			controller := &mocks.ViewController{}
 			viewNumChan := make(chan uint64, 1)
 			seqNumChan := make(chan uint64, 1)
-			controller.On("ViewChanged", mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
+			controller.On("ViewChanged", mock.Anything, mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
 				viewNumChan <- args.Get(0).(uint64)
 				seqNumChan <- args.Get(1).(uint64)
 			})
@@ -3458,7 +3458,7 @@ func TestViewChangerKeepsRunningAfterInFlightWaiterLeft(t *testing.T) {
 			verifier.On("VerifyConsenterSig", mock.Anything, mock.Anything).Return(nil, nil)
 			verifier.On("RequestsFromProposal", mock.Anything).Return(nil)
 			controller := &mocks.ViewController{}
-			controller.On("ViewChanged", mock.Anything, mock.Anything).Maybe()
+			controller.On("ViewChanged", mock.Anything, mock.Anything, mock.Anything).Maybe()
 			expectAbortAndHold(controller)
 			reqTimer := &mocks.RequestsTimer{}
 			reqTimer.On("StopTimers")
