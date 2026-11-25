@@ -1373,7 +1373,7 @@ func (v *ViewChanger) commitInFlightProposal(proposal *protos.Proposal) (success
 		ProposalSequence:   inFlightViewLatestSeq,
 		State:              v.State,
 		InMsgQSize:         v.InMsqQSize,
-		ViewSequences:      v.ViewSequences,
+		ViewSequences:      &atomic.Value{}, // its own: the controller's is for the views the controller runs
 		Phase:              PREPARED,
 		MetricsBlacklist:   v.MetricsBlacklist,
 		MetricsView:        v.MetricsView,

@@ -224,7 +224,8 @@ func TestSyncPastADecisionOfAnEarlierView(t *testing.T) {
 			// view 6 at sequence 12. The decision doesn't count in view 6, which keeps its decisions.
 			controller, running, builder := newRunningSyncController(t, 11, decisions)
 
-			controller.changeView(controller.sync())
+			syncView, syncSeq, syncDecisions := controller.sync()
+			controller.changeView(syncView, syncSeq, syncDecisions)
 
 			require.True(t, running.Stopped(), "the view at sequence 11 must not keep running")
 			require.Len(t, builder.views, 1)
@@ -233,6 +234,11 @@ func TestSyncPastADecisionOfAnEarlierView(t *testing.T) {
 			require.Equal(t, uint64(3), restarted.LeaderID)
 			require.Equal(t, uint64(12), restarted.ProposalSequence)
 			require.Equal(t, decisions, restarted.DecisionsInView)
+			require.Equal(t, ViewSequence{ViewActive: true, ProposalSeq: 12, DecisionsInView: decisions}, controller.ViewSequences.Load())
+
+			// the same sync result again finds the restarted view running
+			controller.changeView(syncView, syncSeq, syncDecisions)
+			require.Len(t, builder.views, 1)
 		})
 	}
 }
@@ -285,7 +291,7 @@ func TestSyncWithNothingNewKeepsAViewThatIsAhead(t *testing.T) {
 	controller.currView = running
 	controller.ViewSequences = &atomic.Value{}
 	controller.ViewSequences.Store(ViewSequence{ViewActive: true, ProposalSeq: 12, DecisionsInView: 2})
-	builder := &recordingProposerBuilder{}
+	builder := &recordingProposerBuilder{viewSequences: controller.ViewSequences}
 	controller.ProposerBuilder = builder
 	controller.LeaderMonitor = abortTestLeaderMonitor{}
 
@@ -331,7 +337,7 @@ func newRunningSyncController(t *testing.T, viewSeq, decisions uint64) (*Control
 	controller.currView = running
 	controller.ViewSequences = &atomic.Value{}
 	controller.ViewSequences.Store(ViewSequence{ViewActive: true, ProposalSeq: viewSeq, DecisionsInView: decisions})
-	builder := &recordingProposerBuilder{}
+	builder := &recordingProposerBuilder{viewSequences: controller.ViewSequences}
 	controller.ProposerBuilder = builder
 	controller.LeaderMonitor = abortTestLeaderMonitor{}
 	t.Cleanup(func() {

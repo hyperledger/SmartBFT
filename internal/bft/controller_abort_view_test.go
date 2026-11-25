@@ -326,10 +326,12 @@ func (m *recordingLeaderMonitor) given() []Role {
 }
 
 // recordingProposerBuilder returns a new view each time, with the given leader, sequence, view number and decisions in
-// view, and records the views it built.
+// view, and records the views it built. If viewSequences is set, the views publish to it, and the builder publishes
+// each view's sequence and decisions to it, as ProposalMaker does.
 type recordingProposerBuilder struct {
-	lock  sync.Mutex
-	views []*View
+	lock          sync.Mutex
+	views         []*View
+	viewSequences *atomic.Value
 }
 
 func (b *recordingProposerBuilder) NewProposer(leader, seq, viewNum, decisions uint64, _ int, _ *types.Proposal) (Proposer, Phase) {
@@ -345,6 +347,10 @@ func (b *recordingProposerBuilder) NewProposer(leader, seq, viewNum, decisions u
 		InMsgQSize:       10,
 		MetricsView:      api.NewMetricsView(&disabled.Provider{}),
 		ViewSequences:    &atomic.Value{},
+	}
+	if b.viewSequences != nil {
+		view.ViewSequences = b.viewSequences
+		b.viewSequences.Store(ViewSequence{ViewActive: true, ProposalSeq: seq, DecisionsInView: decisions})
 	}
 	b.views = append(b.views, view)
 

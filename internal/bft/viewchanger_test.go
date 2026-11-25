@@ -2293,6 +2293,7 @@ func TestCommitInFlight(t *testing.T) {
 
 	require.Equal(t, []bool{false, false}, state.TruncateTo,
 		"a view change and a new view must not truncate the WAL in this change")
+	require.Nil(t, vc.ViewSequences.Load(), "the in flight view must not publish its sequence as the controller's view's")
 }
 
 // histogramsRecorder is a metrics provider that records the values observed by its histograms.
