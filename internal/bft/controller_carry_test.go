@@ -117,3 +117,20 @@ func TestCarriedProposalRestartsAViewThatStartedWithout(t *testing.T) {
 	controller.changeView(1, 5, 0, carried)
 	require.Equal(t, []*types.Proposal{nil, carried}, builder.carriedProposals(), "the view is already running")
 }
+
+// TestViewWithACarriedProposalIsNotRestartedForNothing makes sure that a view that started with a carried proposal is
+// not restarted for a copy of that proposal, nor at a later sequence, where no proposal is carried.
+func TestViewWithACarriedProposalIsNotRestartedForNothing(t *testing.T) {
+	controller, builder := newCarryingController(t)
+	carried := &types.Proposal{Payload: []byte{1}}
+	controller.changeView(1, 5, 0, carried)
+
+	copied := *carried
+	controller.changeView(1, 5, 0, &copied)
+	require.Len(t, builder.views, 1, "the view already runs with that carried proposal")
+
+	// the view decided the carried proposal, which doesn't count in it, and is at sequence 6
+	controller.ViewSequences.Store(ViewSequence{ViewActive: true, ProposalSeq: 6})
+	controller.changeView(1, 6, 0, nil)
+	require.Len(t, builder.views, 1, "the view at sequence 6 already runs")
+}

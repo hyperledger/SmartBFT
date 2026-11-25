@@ -478,8 +478,12 @@ func (c *Controller) changeView(newViewNumber uint64, newProposalSequence uint64
 
 	// A view that started with a carried proposal keeps it when it is restarted at that sequence, for example after a
 	// sync that found nothing newer, so that its leader doesn't propose another proposal there.
-	if carried == nil && newViewNumber == latestView && newProposalSequence == c.carriedSeq {
-		carried = c.carried
+	var runningCarried *types.Proposal
+	if newViewNumber == latestView {
+		runningCarried = c.carriedAt(newProposalSequence)
+	}
+	if carried == nil {
+		carried = runningCarried
 	}
 
 	leader := c.currentViewLeader()
@@ -496,7 +500,7 @@ func (c *Controller) changeView(newViewNumber uint64, newProposalSequence uint64
 			return
 		}
 		if running.ProposalSeq == newProposalSequence && running.DecisionsInView >= newDecisionsInView && c.leaderID() == leader &&
-			carried == c.carried {
+			sameCarried(carried, runningCarried) {
 			c.Logger.Debugf("Got view change to %d but view is already running", newViewNumber)
 			return
 		}
@@ -514,6 +518,23 @@ func (c *Controller) changeView(newViewNumber uint64, newProposalSequence uint64
 	if iAm, _ := c.iAmTheLeader(); iAm {
 		c.Batcher.Reset()
 	}
+}
+
+// carriedAt returns the proposal that the current view started with at the given sequence, or nil if it started with
+// none there.
+func (c *Controller) carriedAt(seq uint64) *types.Proposal {
+	if seq != c.carriedSeq {
+		return nil
+	}
+	return c.carried
+}
+
+// sameCarried returns whether the two carried proposals, which can be nil, are the same.
+func sameCarried(a, b *types.Proposal) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return sameProposal(*a, *b)
 }
 
 // runningViewSequence returns the sequence that the current view is at and the decisions it counted, or zeros if no
