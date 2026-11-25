@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hyperledger/SmartBFT/pkg/api"
+	"github.com/hyperledger/SmartBFT/pkg/metrics/disabled"
 	"github.com/hyperledger/SmartBFT/pkg/types"
 	"github.com/stretchr/testify/require"
 )
@@ -67,16 +69,16 @@ func TestViewChangedPassesTheCarriedProposal(t *testing.T) {
 }
 
 // newCarryingController returns a controller in view 0 whose own ID leads view 1, with a view builder that records
-// what it built.
+// what it built and publishes where each view starts, as ProposalMaker does.
 func newCarryingController(t *testing.T) (*Controller, *recordingProposerBuilder) {
-	builder := &recordingProposerBuilder{}
 	controller := newDecidingController(t, &View{abortChan: make(chan struct{})})
 	controller.ID = 2
 	controller.Batcher = abortTestBatcher{}
 	controller.LeaderMonitor = abortTestLeaderMonitor{}
-	controller.ProposerBuilder = builder
 	controller.ViewSequences = &atomic.Value{}
 	controller.ViewSequences.Store(ViewSequence{ViewActive: true, ProposalSeq: 5})
+	builder := &recordingProposerBuilder{viewSequences: controller.ViewSequences}
+	controller.ProposerBuilder = builder
 	t.Cleanup(builder.abortAll)
 
 	return controller, builder
@@ -102,20 +104,58 @@ func TestRestartKeepsTheCarriedProposal(t *testing.T) {
 	require.Len(t, controller.leaderToken, 1)
 }
 
-// TestCarriedProposalRestartsAViewThatStartedWithout makes sure that a carried proposal for a view that a sync already
-// started without it restarts the view with it, and that the same carried proposal again doesn't.
-func TestCarriedProposalRestartsAViewThatStartedWithout(t *testing.T) {
+// TestCarriedProposalDoesNotReplaceWhatTheViewStartedWith makes sure that a view isn't restarted at the sequence it
+// started at with a carried proposal, if it started there without one or with another one, also after it stopped: it
+// may have voted for another proposal there, or proposed one.
+func TestCarriedProposalDoesNotReplaceWhatTheViewStartedWith(t *testing.T) {
 	controller, builder := newCarryingController(t)
 	carried := &types.Proposal{Payload: []byte{1}}
+	other := &types.Proposal{Payload: []byte{2}}
 
-	controller.changeView(1, 5, 0, nil)
-	<-controller.leaderToken // the leader got the token, as the view started without a carried proposal
+	controller.changeView(1, 5, 0, nil) // for example, a sync started the view without the carried proposal
 	controller.changeView(1, 5, 0, carried)
+	require.Equal(t, []*types.Proposal{nil}, builder.carriedProposals())
+
+	controller.changeView(2, 5, 0, carried)
+	builder.views[1].Abort()
+	controller.changeView(2, 5, 0, other)
 	require.Equal(t, []*types.Proposal{nil, carried}, builder.carriedProposals())
-	require.Empty(t, controller.leaderToken)
+}
+
+// TestCarriedProposalForALaterSequence makes sure that a carried proposal for a later sequence than the running view
+// restarts the view with it, and that the view doesn't keep the carried proposal of the earlier sequence.
+func TestCarriedProposalForALaterSequence(t *testing.T) {
+	controller, builder := newCarryingController(t)
+	carried := &types.Proposal{Payload: []byte{1}}
+	later := &types.Proposal{Payload: []byte{2}}
 
 	controller.changeView(1, 5, 0, carried)
-	require.Equal(t, []*types.Proposal{nil, carried}, builder.carriedProposals(), "the view is already running")
+	controller.changeView(1, 6, 0, later)
+	require.Equal(t, []*types.Proposal{carried, later}, builder.carriedProposals())
+	require.Nil(t, controller.carriedAt(5))
+	require.Same(t, later, controller.carriedAt(6))
+}
+
+// TestCarriedProposalIsNotUsedWhereTheViewDoesNotStart makes sure that when the restore from the write ahead log moves
+// the view past the sequence of the carried proposal, the controller doesn't keep the carried proposal, and the leader
+// takes the token, since the view waits for a pre-prepare.
+func TestCarriedProposalIsNotUsedWhereTheViewDoesNotStart(t *testing.T) {
+	controller, _ := newCarryingController(t)
+	controller.ID = 1 // the leader of view 0
+	controller.ProposerBuilder = &ProposalMaker{
+		Checkpoint:    controller.Checkpoint,
+		State:         &restoringState{seq: 6},
+		Logger:        controller.Logger,
+		MetricsView:   api.NewMetricsView(&disabled.Provider{}),
+		ViewSequences: controller.ViewSequences,
+		N:             4,
+	}
+
+	controller.startView(5, &types.Proposal{Payload: []byte{1}})
+	t.Cleanup(controller.currView.Abort)
+	require.Len(t, controller.leaderToken, 1)
+	require.Nil(t, controller.carriedAt(5))
+	require.Nil(t, controller.carriedAt(6))
 }
 
 // TestViewWithACarriedProposalIsNotRestartedForNothing makes sure that a view that started with a carried proposal is

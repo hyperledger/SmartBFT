@@ -122,10 +122,10 @@ type Controller struct {
 	// sets them in separate steps.
 	viewTransitionLock sync.Mutex
 
-	// carried is the proposal that the current view started with at sequence carriedSeq, or nil. They are written and
-	// read under viewTransitionLock, or while no goroutine of the controller runs.
-	carried    *types.Proposal
-	carriedSeq uint64
+	// startSeq is the sequence the current view started at, and carried the proposal it started with there, or nil.
+	// They are written and read under viewTransitionLock, or while no goroutine of the controller runs.
+	startSeq uint64
+	carried  *types.Proposal
 
 	currDecisionsInViewLock sync.RWMutex
 	currDecisionsInView     uint64
@@ -408,13 +408,21 @@ func (c *Controller) convertViewMessageToHeartbeat(m *protos.Message) *protos.Me
 // startView starts the current view at the given sequence. If carried isn't nil, it is the proposal for that sequence,
 // and the view starts with it instead of a proposal from the leader, so the leader doesn't propose there.
 func (c *Controller) startView(proposalSequence uint64, carried *types.Proposal) {
-	c.carried, c.carriedSeq = carried, proposalSequence
 	view, initPhase := c.ProposerBuilder.NewProposer(c.leaderID(), proposalSequence, c.currViewNumber, c.currDecisionsInView, c.quorum, carried)
 
 	if c.currViewNumber < c.minStartView {
 		c.startLeftView(proposalSequence)
 		return
 	}
+
+	// The view uses the carried proposal only at its sequence. A restore from the write ahead log can have moved the
+	// view past it, and then the view waits for a pre-prepare from the leader instead.
+	startSeq := c.runningViewSequence().ProposalSeq
+	if carried != nil && startSeq != proposalSequence {
+		c.Logger.Warnf("View %d starts at sequence %d, not at %d, so it doesn't use the carried proposal", c.currViewNumber, startSeq, proposalSequence)
+		carried = nil
+	}
+	c.startSeq, c.carried = startSeq, carried
 
 	c.currViewLock.Lock()
 	c.currView = view
@@ -482,6 +490,11 @@ func (c *Controller) changeView(newViewNumber uint64, newProposalSequence uint64
 	if newViewNumber == latestView {
 		runningCarried = c.carriedAt(newProposalSequence)
 	}
+	// The view keeps what it started with at a sequence: it may have voted for another proposal there, or proposed one.
+	if carried != nil && newViewNumber == latestView && newProposalSequence == c.startSeq && !sameCarried(carried, runningCarried) {
+		c.Logger.Warnf("Got view change to %d at sequence %d with a carried proposal, but the view started there with another one, or with none", newViewNumber, newProposalSequence)
+		return
+	}
 	if carried == nil {
 		carried = runningCarried
 	}
@@ -492,15 +505,14 @@ func (c *Controller) changeView(newViewNumber uint64, newProposalSequence uint64
 	// A running view moves to its next sequence, and counts its decision, before the controller delivers the decision,
 	// so it can be past what a sync returns, or have more decisions than the controller counted. It is never moved
 	// back: delivering its decisions counts them and rotates the leader. At the requested sequence, it keeps running if
-	// it has at least the requested decisions, the requested leader and the requested carried proposal.
+	// it has at least the requested decisions and the requested leader.
 	if !stopped && latestView == newViewNumber {
 		running := c.runningViewSequence()
 		if running.ProposalSeq > newProposalSequence {
 			c.Logger.Debugf("Got view change to %d at sequence %d but the view is at sequence %d", newViewNumber, newProposalSequence, running.ProposalSeq)
 			return
 		}
-		if running.ProposalSeq == newProposalSequence && running.DecisionsInView >= newDecisionsInView && c.leaderID() == leader &&
-			sameCarried(carried, runningCarried) {
+		if running.ProposalSeq == newProposalSequence && running.DecisionsInView >= newDecisionsInView && c.leaderID() == leader {
 			c.Logger.Debugf("Got view change to %d but view is already running", newViewNumber)
 			return
 		}
@@ -523,7 +535,7 @@ func (c *Controller) changeView(newViewNumber uint64, newProposalSequence uint64
 // carriedAt returns the proposal that the current view started with at the given sequence, or nil if it started with
 // none there.
 func (c *Controller) carriedAt(seq uint64) *types.Proposal {
-	if seq != c.carriedSeq {
+	if seq != c.startSeq {
 		return nil
 	}
 	return c.carried
