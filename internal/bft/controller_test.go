@@ -70,8 +70,8 @@ func TestControllerBasic(t *testing.T) {
 
 	leaderMon.On("ProcessMsg", uint64(2), heartbeat)
 	controller.ProcessMessages(2, heartbeat)
-	controller.ViewChanged(2, 1)
-	controller.ViewChanged(3, 2)
+	controller.ViewChanged(2, 1, nil)
+	controller.ViewChanged(3, 2, nil)
 	controller.AbortView(3, nil)
 	controller.AbortView(3, nil)
 	controller.Stop()
@@ -370,7 +370,7 @@ func TestViewChanged(t *testing.T) {
 	commWG.Wait()
 
 	commWG.Add(6) // propose
-	controller.ViewChanged(2, 0)
+	controller.ViewChanged(2, 0, nil)
 	commWG.Wait()
 	batcher.AssertNumberOfCalls(t, "NextBatch", 1)
 	assembler.AssertNumberOfCalls(t, "AssembleProposal", 1)
@@ -1583,7 +1583,7 @@ func TestControllerKeepsRunningAfterDecideWaiterLeft(t *testing.T) {
 	<-decided // the waiter in Decide left since its view was aborted
 	close(releaseDelivery)
 
-	controller.ViewChanged(1, 2)
+	controller.ViewChanged(1, 2, nil)
 	select {
 	case <-views:
 	case <-time.After(3 * time.Second):

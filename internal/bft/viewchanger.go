@@ -22,7 +22,10 @@ import (
 
 // ViewController controls the view
 type ViewController interface {
-	ViewChanged(newViewNumber uint64, newProposalSequence uint64)
+	// ViewChanged aborts the current view and starts the given view at the given sequence, with the given carried
+	// proposal for that sequence if it isn't nil. A restart of the current view at the sequence it started at keeps
+	// the carried proposal it started with, and a different carried proposal there is refused.
+	ViewChanged(newViewNumber uint64, newProposalSequence uint64, carried *types.Proposal)
 	// AbortView aborts the given view and waits until it has stopped. It stops
 	// waiting when cancel is closed, so that stopping the view changer does not
 	// hang on a view that waits for a lock held by a reconfiguration.
@@ -1285,7 +1288,7 @@ func (v *ViewChanger) processNewViewMsg(msg *protos.NewView) {
 	v.realView = v.currView
 	v.MetricsViewChange.RealView.Set(float64(v.realView))
 	v.nvs.clear()
-	v.Controller.ViewChanged(v.currView, mySequence+1)
+	v.Controller.ViewChanged(v.currView, mySequence+1, nil)
 
 	v.RequestsTimer.RestartTimers()
 	v.checkTimeout = false

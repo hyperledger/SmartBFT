@@ -122,6 +122,11 @@ type Controller struct {
 	// sets them in separate steps.
 	viewTransitionLock sync.Mutex
 
+	// startSeq is the sequence the current view started at, and carried the proposal it started with there, or nil.
+	// They are written and read under viewTransitionLock, or while no goroutine of the controller runs.
+	startSeq uint64
+	carried  *types.Proposal
+
 	currDecisionsInViewLock sync.RWMutex
 	currDecisionsInView     uint64
 
@@ -400,13 +405,24 @@ func (c *Controller) convertViewMessageToHeartbeat(m *protos.Message) *protos.Me
 	}
 }
 
-func (c *Controller) startView(proposalSequence uint64) {
-	view, initPhase := c.ProposerBuilder.NewProposer(c.leaderID(), proposalSequence, c.currViewNumber, c.currDecisionsInView, c.quorum, nil)
+// startView starts the current view at the given sequence. If carried isn't nil, it is the proposal for that sequence,
+// and the view starts with it instead of a proposal from the leader, so the leader doesn't propose there.
+func (c *Controller) startView(proposalSequence uint64, carried *types.Proposal) {
+	view, initPhase := c.ProposerBuilder.NewProposer(c.leaderID(), proposalSequence, c.currViewNumber, c.currDecisionsInView, c.quorum, carried)
 
 	if c.currViewNumber < c.minStartView {
 		c.startLeftView(proposalSequence)
 		return
 	}
+
+	// The view uses the carried proposal only if it is for the sequence the view starts at (View.Carried). A restore
+	// from the write ahead log can have moved the view past it, and then the view waits for a pre-prepare instead.
+	startSeq := c.runningViewSequence().ProposalSeq
+	if carried != nil && !carriedFor(carried, startSeq) {
+		c.Logger.Warnf("View %d starts at sequence %d, which the carried proposal isn't for, so it doesn't use it", c.currViewNumber, startSeq)
+		carried = nil
+	}
+	c.startSeq, c.carried = startSeq, carried
 
 	c.currViewLock.Lock()
 	c.currView = view
@@ -416,10 +432,13 @@ func (c *Controller) startView(proposalSequence uint64) {
 	role := Follower
 	leader, _ := c.iAmTheLeader()
 	if leader {
-		if initPhase == COMMITTED || initPhase == ABORT {
+		switch {
+		case carried != nil:
+			c.Logger.Debugf("Not acquiring leader token when starting view with a carried proposal")
+		case initPhase == COMMITTED || initPhase == ABORT:
 			c.Logger.Debugf("Acquiring leader token when starting view with phase %s", initPhase.String())
 			c.acquireLeaderToken()
-		} else {
+		default:
 			c.Logger.Debugf("Not acquiring leader token when starting view with phase %s", initPhase.String())
 		}
 		role = Leader
@@ -444,7 +463,13 @@ func (c *Controller) startLeftView(proposalSequence uint64) {
 	c.Logger.Infof("Not starting view %d, which the node left, waiting for a later view", c.currViewNumber)
 }
 
-func (c *Controller) changeView(newViewNumber uint64, newProposalSequence uint64, newDecisionsInView uint64) {
+// changeView aborts the current view and starts the given view at the given sequence, with the given decisions in it
+// and the given carried proposal for that sequence, if it isn't nil. A new view change, a sync and a leader rotation
+// all call it. It does nothing for an earlier view or a view the node left, and it keeps the current view if that is
+// already the requested one. A restart of the current view at the sequence it started at keeps the carried proposal it
+// started with, and a different carried proposal there is refused, since the view may have voted for or proposed
+// another proposal there.
+func (c *Controller) changeView(newViewNumber uint64, newProposalSequence uint64, newDecisionsInView uint64, carried *types.Proposal) {
 	c.viewTransitionLock.Lock()
 	defer c.viewTransitionLock.Unlock()
 
@@ -459,6 +484,21 @@ func (c *Controller) changeView(newViewNumber uint64, newProposalSequence uint64
 	if newViewNumber < c.minStartView {
 		c.Logger.Debugf("Got view change to %d but views before %d were left", newViewNumber, c.minStartView)
 		return
+	}
+
+	// A view that started with a carried proposal keeps it when it is restarted at that sequence, for example after a
+	// sync that found nothing newer, so that its leader doesn't propose another proposal there.
+	var runningCarried *types.Proposal
+	if newViewNumber == latestView {
+		runningCarried = c.carriedAt(newProposalSequence)
+	}
+	// The view keeps what it started with at a sequence: it may have voted for another proposal there, or proposed one.
+	if carried != nil && newViewNumber == latestView && newProposalSequence == c.startSeq && !sameCarried(carried, runningCarried) {
+		c.Logger.Warnf("Got view change to %d at sequence %d with a carried proposal, but the view started there with another one, or with none", newViewNumber, newProposalSequence)
+		return
+	}
+	if carried == nil {
+		carried = runningCarried
 	}
 
 	leader := c.currentViewLeader()
@@ -487,11 +527,34 @@ func (c *Controller) changeView(newViewNumber uint64, newProposalSequence uint64
 	c.setCurrentViewNumber(newViewNumber)
 	c.setCurrentDecisionsInView(newDecisionsInView)
 	c.Logger.Debugf("Starting view after setting decisions in view to %d", newDecisionsInView)
-	c.startView(newProposalSequence)
+	c.startView(newProposalSequence, carried)
 
 	if iAm, _ := c.iAmTheLeader(); iAm {
 		c.Batcher.Reset()
 	}
+}
+
+// carriedFor returns whether the carried proposal is for the given sequence.
+func carriedFor(carried *types.Proposal, seq uint64) bool {
+	md := &protos.ViewMetadata{}
+	return proto.Unmarshal(carried.Metadata, md) == nil && md.GetLatestSequence() == seq
+}
+
+// carriedAt returns the proposal that the current view started with at the given sequence, or nil if it started with
+// none there.
+func (c *Controller) carriedAt(seq uint64) *types.Proposal {
+	if seq != c.startSeq {
+		return nil
+	}
+	return c.carried
+}
+
+// sameCarried returns whether the two carried proposals, which can be nil, are the same.
+func sameCarried(a, b *types.Proposal) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return sameProposal(*a, *b)
 }
 
 // runningViewSequence returns the sequence that the current view is at and the decisions it counted, or zeros if no
@@ -624,14 +687,16 @@ func (c *Controller) ReleaseViewWrite() {
 	c.viewTransitionLock.Unlock()
 }
 
-// ViewChanged makes the controller abort the current view and start a new one with the given numbers
-func (c *Controller) ViewChanged(newViewNumber uint64, newProposalSequence uint64) {
+// ViewChanged makes the controller abort the current view and start a new one with the given numbers, and with the
+// given carried proposal for the given sequence, if it isn't nil. The rules of changeView apply: for example, a
+// different carried proposal for the sequence the current view started at is refused.
+func (c *Controller) ViewChanged(newViewNumber uint64, newProposalSequence uint64, carried *types.Proposal) {
 	c.Logger.Debugf("ViewChanged, the new view is %d", newViewNumber)
 	amILeader, _ := c.iAmTheLeader()
 	if amILeader {
 		c.Batcher.Close()
 	}
-	c.viewChange <- viewInfo{proposalSeq: newProposalSequence, viewNumber: newViewNumber}
+	c.viewChange <- viewInfo{proposalSeq: newProposalSequence, viewNumber: newViewNumber, carried: carried}
 }
 
 func (c *Controller) propose() {
@@ -662,7 +727,7 @@ func (c *Controller) run() {
 			c.decide(d)
 		case newView := <-c.viewChange:
 			c.Logger.Debugf("get newView from viewChange")
-			c.changeView(newView.viewNumber, newView.proposalSeq, 0)
+			c.changeView(newView.viewNumber, newView.proposalSeq, 0, newView.carried)
 		case <-c.stopChan:
 			return
 		case <-c.leaderToken:
@@ -672,14 +737,14 @@ func (c *Controller) run() {
 			view, seq, dec := c.sync()
 			c.MaybePruneRevokedRequests()
 			if view > 0 || seq > 0 {
-				c.changeView(view, seq, dec)
+				c.changeView(view, seq, dec, nil)
 			} else {
 				c.Logger.Debugf("view and seq is zero")
 				vs := c.ViewSequences.Load()
 				if vs == nil {
 					c.Logger.Panicf("ViewSequences is nil")
 				}
-				c.changeView(c.getCurrentViewNumber(), vs.(ViewSequence).ProposalSeq, c.getCurrentDecisionsInView())
+				c.changeView(c.getCurrentViewNumber(), vs.(ViewSequence).ProposalSeq, c.getCurrentDecisionsInView(), nil)
 			}
 		}
 	}
@@ -743,7 +808,7 @@ func (c *Controller) decide(d decision) {
 	}
 	if rotate {
 		c.Logger.Debugf("Restarting view to rotate the leader")
-		c.changeView(c.getCurrentViewNumber(), md.GetLatestSequence()+1, c.getCurrentDecisionsInView())
+		c.changeView(c.getCurrentViewNumber(), md.GetLatestSequence()+1, c.getCurrentDecisionsInView(), nil)
 		c.Logger.Debugf("Restarting timers in request pool due to leader rotation")
 		c.RequestPool.RestartTimers()
 	}
@@ -1042,7 +1107,7 @@ func (c *Controller) Start(startViewNumber uint64, startProposalSequence uint64,
 
 	c.currViewNumber = startViewNumber
 	c.currDecisionsInView = startDecisionsInView
-	c.startView(startProposalSequence)
+	c.startView(startProposalSequence, nil)
 
 	go func() {
 		defer c.controllerDone.Done()
@@ -1168,6 +1233,7 @@ func (c *Controller) removeDeliveredFromPool(d decision) {
 type viewInfo struct {
 	viewNumber  uint64
 	proposalSeq uint64
+	carried     *types.Proposal
 }
 
 type decision struct {

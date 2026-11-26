@@ -208,7 +208,7 @@ func TestAbortViewWaitsForAViewThatIsBeingStarted(t *testing.T) {
 
 	changed := make(chan struct{})
 	go func() {
-		controller.changeView(2, 1, 0)
+		controller.changeView(2, 1, 0, nil)
 		close(changed)
 	}()
 
@@ -286,7 +286,7 @@ func TestAbortViewAndHoldBlocksViewChangesUntilReleased(t *testing.T) {
 
 	changed := make(chan struct{})
 	go func() {
-		controller.changeView(0, 0, 0)
+		controller.changeView(0, 0, 0, nil)
 		close(changed)
 	}()
 
@@ -326,17 +326,20 @@ func (m *recordingLeaderMonitor) given() []Role {
 }
 
 // recordingProposerBuilder returns a new view each time, with the given leader, sequence, view number and decisions in
-// view, and records the views it built. If viewSequences is set, the views publish to it, and the builder publishes
-// each view's sequence and decisions to it, as ProposalMaker does.
+// view, and records the views it built and the carried proposals it was given, which the views don't get. If
+// viewSequences is set, the views publish to it, and the builder publishes each view's sequence and decisions to it, as
+// ProposalMaker does.
 type recordingProposerBuilder struct {
 	lock          sync.Mutex
 	views         []*View
+	carried       []*types.Proposal
 	viewSequences *atomic.Value
 }
 
-func (b *recordingProposerBuilder) NewProposer(leader, seq, viewNum, decisions uint64, _ int, _ *types.Proposal) (Proposer, Phase) {
+func (b *recordingProposerBuilder) NewProposer(leader, seq, viewNum, decisions uint64, _ int, carried *types.Proposal) (Proposer, Phase) {
 	b.lock.Lock()
 	defer b.lock.Unlock()
+	b.carried = append(b.carried, carried)
 	view := &View{
 		N:                4,
 		LeaderID:         leader,
@@ -355,6 +358,25 @@ func (b *recordingProposerBuilder) NewProposer(leader, seq, viewNum, decisions u
 	b.views = append(b.views, view)
 
 	return view, COMMITTED
+}
+
+// abortAll aborts the views the builder built.
+func (b *recordingProposerBuilder) abortAll() {
+	b.lock.Lock()
+	views := append([]*View(nil), b.views...)
+	b.lock.Unlock()
+
+	for _, view := range views {
+		view.Abort()
+	}
+}
+
+// carriedProposals returns the carried proposals the builder was given, one for each view it built.
+func (b *recordingProposerBuilder) carriedProposals() []*types.Proposal {
+	b.lock.Lock()
+	defer b.lock.Unlock()
+
+	return append([]*types.Proposal(nil), b.carried...)
 }
 
 // started returns the numbers of the views that were started.
@@ -402,11 +424,11 @@ func TestControllerDoesNotStartALeftView(t *testing.T) {
 	controller.ReleaseViewWrite()
 
 	// a sync that finds nothing newer restarts the current view, and a leader rotation does the same
-	controller.changeView(0, 2, 1)
+	controller.changeView(0, 2, 1, nil)
 	require.Empty(t, builder.started(), "a left view was started again")
 
 	// a new view message for view 1 starts it
-	controller.changeView(1, 2, 0)
+	controller.changeView(1, 2, 0, nil)
 	require.Equal(t, []uint64{1}, builder.started())
 
 	controller.AbortView(1, nil)
@@ -461,7 +483,7 @@ func TestControllerDoesNotRunALeftStartView(t *testing.T) {
 	require.Empty(t, builder.started())
 
 	// a new view message for view 1 starts it
-	controller.changeView(1, 1, 0)
+	controller.changeView(1, 1, 0, nil)
 	require.Equal(t, []uint64{1}, builder.started())
 	controller.AbortView(1, nil)
 }

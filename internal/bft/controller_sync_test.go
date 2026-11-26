@@ -225,7 +225,7 @@ func TestSyncPastADecisionOfAnEarlierView(t *testing.T) {
 			controller, running, builder := newRunningSyncController(t, 11, decisions)
 
 			syncView, syncSeq, syncDecisions := controller.sync()
-			controller.changeView(syncView, syncSeq, syncDecisions)
+			controller.changeView(syncView, syncSeq, syncDecisions, nil)
 
 			require.True(t, running.Stopped(), "the view at sequence 11 must not keep running")
 			require.Len(t, builder.views, 1)
@@ -237,7 +237,7 @@ func TestSyncPastADecisionOfAnEarlierView(t *testing.T) {
 			require.Equal(t, ViewSequence{ViewActive: true, ProposalSeq: 12, DecisionsInView: decisions}, controller.ViewSequences.Load())
 
 			// the same sync result again finds the restarted view running
-			controller.changeView(syncView, syncSeq, syncDecisions)
+			controller.changeView(syncView, syncSeq, syncDecisions, nil)
 			require.Len(t, builder.views, 1)
 		})
 	}
@@ -272,7 +272,7 @@ func TestChangeViewDoesNotRestartAViewThatIsAhead(t *testing.T) {
 			running.DecisionsInView = test.viewDecisions
 			controller.ViewSequences.Store(ViewSequence{ViewActive: true, ProposalSeq: test.viewSeq, DecisionsInView: test.viewDecisions})
 
-			controller.changeView(6, 12, test.syncDecisions)
+			controller.changeView(6, 12, test.syncDecisions, nil)
 
 			require.Equal(t, test.restarted, running.Stopped())
 			require.Equal(t, test.restarted, len(builder.views) == 1)
@@ -301,7 +301,7 @@ func TestSyncWithNothingNewKeepsAViewThatIsAhead(t *testing.T) {
 	require.Zero(t, decisions)
 
 	// what the run loop does when the sync has nothing new
-	controller.changeView(controller.getCurrentViewNumber(), controller.ViewSequences.Load().(ViewSequence).ProposalSeq, controller.getCurrentDecisionsInView())
+	controller.changeView(controller.getCurrentViewNumber(), controller.ViewSequences.Load().(ViewSequence).ProposalSeq, controller.getCurrentDecisionsInView(), nil)
 	require.False(t, running.Stopped())
 	require.Empty(t, builder.views)
 }
@@ -340,11 +340,7 @@ func newRunningSyncController(t *testing.T, viewSeq, decisions uint64) (*Control
 	builder := &recordingProposerBuilder{viewSequences: controller.ViewSequences}
 	controller.ProposerBuilder = builder
 	controller.LeaderMonitor = abortTestLeaderMonitor{}
-	t.Cleanup(func() {
-		for _, view := range builder.views {
-			view.Abort()
-		}
-	})
+	t.Cleanup(builder.abortAll)
 
 	return controller, running, builder
 }
@@ -530,7 +526,7 @@ func TestSyncHoldsViewTransitionLockUntilTheNewViewIsSaved(t *testing.T) {
 
 	changed := make(chan struct{})
 	go func() {
-		fixture.controller.changeView(0, 0, 0)
+		fixture.controller.changeView(0, 0, 0, nil)
 		close(changed)
 	}()
 
