@@ -267,7 +267,7 @@ func TestSetViewAndSeqDoesNotStartALeftView(t *testing.T) {
 	proposer.On("Abort").Maybe() // if it was started, the controller aborts it when it stops
 	builder := &mocks.ProposerBuilder{}
 	builder.On("NewProposer", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).
-		Return(proposer, algorithm.Phase(algorithm.COMMITTED))
+		Return(proposer, algorithm.Phase(algorithm.COMMITTED), (*types.Proposal)(nil))
 	leaderMonitor := &mocks.LeaderMonitor{}
 	leaderMonitor.On("ChangeRole", mock.Anything, mock.Anything, mock.Anything)
 	leaderMonitor.On("Close")
@@ -325,8 +325,8 @@ func TestNewProposerWiresTheView(t *testing.T) {
 		controller: &algorithm.Controller{ViewSequences: &atomic.Value{}},
 	}
 
-	carried := &types.Proposal{Payload: []byte{1}}
-	view, _ := consensus.proposalMaker().NewProposer(1, 1, 0, 0, 3, carried)
+	carried := &types.Proposal{Payload: []byte{1}, Metadata: algorithm.MarshalOrPanic(&smartbftprotos.ViewMetadata{LatestSequence: 1})}
+	view, _, _ := consensus.proposalMaker().NewProposer(1, 1, 0, 0, 3, carried)
 	require.Same(t, inFlight, view.(*algorithm.View).InFlight)
 	require.Same(t, carried, view.(*algorithm.View).Carried)
 }

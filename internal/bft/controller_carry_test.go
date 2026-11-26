@@ -182,3 +182,40 @@ func TestViewWithACarriedProposalIsNotRestartedForNothing(t *testing.T) {
 	controller.changeView(1, 6, 0, nil)
 	require.Len(t, builder.views, 1, "the view at sequence 6 already runs")
 }
+
+// acceptingVerifier accepts every proposal.
+type acceptingVerifier struct {
+	noopVerifier
+}
+
+func (acceptingVerifier) VerifyProposal(types.Proposal) ([]types.RequestInfo, error) { return nil, nil }
+
+// TestRestoredCarriedProposalIsKeptOnRestart makes sure that the controller knows the carried proposal of a view that
+// was restored from the write ahead log in the middle of it, so that a restart of the view at that sequence keeps it,
+// and the leader doesn't propose another proposal there.
+func TestRestoredCarriedProposalIsKeptOnRestart(t *testing.T) {
+	controller, _ := newCarryingController(t) // node 2 leads view 1
+	controller.currViewNumber = 1
+	controller.quorum = 3
+	restored := newCarriedProposal(5, 0)
+	controller.ProposerBuilder = &ProposalMaker{
+		Checkpoint:    controller.Checkpoint,
+		State:         &restoringState{seq: 5, proposal: restored, view: 1, phase: PROPOSED},
+		Logger:        controller.Logger,
+		Comm:          &stubComm{},
+		Verifier:      acceptingVerifier{},
+		MetricsView:   api.NewMetricsView(&disabled.Provider{}),
+		ViewSequences: controller.ViewSequences,
+		N:             4,
+	}
+	t.Cleanup(func() { controller.currView.Abort() })
+
+	controller.startView(5, nil) // as Start does
+	require.Same(t, restored, controller.carriedAt(5))
+	require.Empty(t, controller.leaderToken)
+
+	controller.currView.Abort() // the view stops, and a sync that found nothing newer restarts it
+	controller.changeView(1, 5, 0, nil)
+	require.Same(t, restored, controller.carriedAt(5))
+	require.Empty(t, controller.leaderToken)
+}

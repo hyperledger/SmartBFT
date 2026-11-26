@@ -156,13 +156,13 @@ type blockingProposerBuilder struct {
 	once    sync.Once
 }
 
-func (b *blockingProposerBuilder) NewProposer(uint64, uint64, uint64, uint64, int, *types.Proposal) (Proposer, Phase) {
+func (b *blockingProposerBuilder) NewProposer(uint64, uint64, uint64, uint64, int, *types.Proposal) (Proposer, Phase, *types.Proposal) {
 	b.once.Do(func() {
 		close(b.entered)
 	})
 	<-b.release
 
-	return b.view, COMMITTED
+	return b.view, COMMITTED, nil
 }
 
 // TestAbortViewWaitsForAViewThatIsBeingStarted covers the race between
@@ -336,7 +336,7 @@ type recordingProposerBuilder struct {
 	viewSequences *atomic.Value
 }
 
-func (b *recordingProposerBuilder) NewProposer(leader, seq, viewNum, decisions uint64, _ int, carried *types.Proposal) (Proposer, Phase) {
+func (b *recordingProposerBuilder) NewProposer(leader, seq, viewNum, decisions uint64, _ int, carried *types.Proposal) (Proposer, Phase, *types.Proposal) {
 	b.lock.Lock()
 	defer b.lock.Unlock()
 	b.carried = append(b.carried, carried)
@@ -357,7 +357,12 @@ func (b *recordingProposerBuilder) NewProposer(leader, seq, viewNum, decisions u
 	}
 	b.views = append(b.views, view)
 
-	return view, COMMITTED
+	// as ProposalMaker does, the view uses a carried proposal only if it is for the sequence the view starts at
+	if carried != nil && !carriedFor(carried, seq) {
+		carried = nil
+	}
+
+	return view, COMMITTED, carried
 }
 
 // abortAll aborts the views the builder built.
