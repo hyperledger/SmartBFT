@@ -47,7 +47,7 @@ func (_m *ProposerBuilder) EXPECT() *ProposerBuilder_Expecter {
 }
 
 // NewProposer provides a mock function for the type ProposerBuilder
-func (_mock *ProposerBuilder) NewProposer(leader uint64, proposalSequence uint64, viewNum uint64, decisionsInView uint64, quorumSize int, carried *types.Proposal) (bft.Proposer, bft.Phase) {
+func (_mock *ProposerBuilder) NewProposer(leader uint64, proposalSequence uint64, viewNum uint64, decisionsInView uint64, quorumSize int, carried *types.Proposal) (bft.Proposer, bft.Phase, *types.Proposal) {
 	ret := _mock.Called(leader, proposalSequence, viewNum, decisionsInView, quorumSize, carried)
 
 	if len(ret) == 0 {
@@ -56,7 +56,8 @@ func (_mock *ProposerBuilder) NewProposer(leader uint64, proposalSequence uint64
 
 	var r0 bft.Proposer
 	var r1 bft.Phase
-	if returnFunc, ok := ret.Get(0).(func(uint64, uint64, uint64, uint64, int, *types.Proposal) (bft.Proposer, bft.Phase)); ok {
+	var r2 *types.Proposal
+	if returnFunc, ok := ret.Get(0).(func(uint64, uint64, uint64, uint64, int, *types.Proposal) (bft.Proposer, bft.Phase, *types.Proposal)); ok {
 		return returnFunc(leader, proposalSequence, viewNum, decisionsInView, quorumSize, carried)
 	}
 	if returnFunc, ok := ret.Get(0).(func(uint64, uint64, uint64, uint64, int, *types.Proposal) bft.Proposer); ok {
@@ -71,7 +72,14 @@ func (_mock *ProposerBuilder) NewProposer(leader uint64, proposalSequence uint64
 	} else {
 		r1 = ret.Get(1).(bft.Phase)
 	}
-	return r0, r1
+	if returnFunc, ok := ret.Get(2).(func(uint64, uint64, uint64, uint64, int, *types.Proposal) *types.Proposal); ok {
+		r2 = returnFunc(leader, proposalSequence, viewNum, decisionsInView, quorumSize, carried)
+	} else {
+		if ret.Get(2) != nil {
+			r2 = ret.Get(2).(*types.Proposal)
+		}
+	}
+	return r0, r1, r2
 }
 
 // ProposerBuilder_NewProposer_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'NewProposer'
@@ -128,12 +136,12 @@ func (_c *ProposerBuilder_NewProposer_Call) Run(run func(leader uint64, proposal
 	return _c
 }
 
-func (_c *ProposerBuilder_NewProposer_Call) Return(proposer bft.Proposer, phase bft.Phase) *ProposerBuilder_NewProposer_Call {
-	_c.Call.Return(proposer, phase)
+func (_c *ProposerBuilder_NewProposer_Call) Return(proposer bft.Proposer, phase bft.Phase, proposal *types.Proposal) *ProposerBuilder_NewProposer_Call {
+	_c.Call.Return(proposer, phase, proposal)
 	return _c
 }
 
-func (_c *ProposerBuilder_NewProposer_Call) RunAndReturn(run func(leader uint64, proposalSequence uint64, viewNum uint64, decisionsInView uint64, quorumSize int, carried *types.Proposal) (bft.Proposer, bft.Phase)) *ProposerBuilder_NewProposer_Call {
+func (_c *ProposerBuilder_NewProposer_Call) RunAndReturn(run func(leader uint64, proposalSequence uint64, viewNum uint64, decisionsInView uint64, quorumSize int, carried *types.Proposal) (bft.Proposer, bft.Phase, *types.Proposal)) *ProposerBuilder_NewProposer_Call {
 	_c.Call.Return(run)
 	return _c
 }

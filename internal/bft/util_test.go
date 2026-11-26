@@ -561,9 +561,13 @@ func TestGetLeaderId(t *testing.T) {
 	require.Equal(t, uint64(11), getLeaderID(view, uint64(len(nodes)), nodes, true, 8, decisionsPerLeader, nil))
 }
 
-// restoringState restores a view to the given sequence and decisions, as a write ahead log with a later proposal does.
+// restoringState restores a view to the given sequence and decisions, as a write ahead log with a later proposal does,
+// and, if proposal is set, in the middle of that proposal, pre-prepared in the given view, in the given phase.
 type restoringState struct {
 	seq, decisions uint64
+	proposal       *types.Proposal
+	view           uint64
+	phase          Phase
 }
 
 func (*restoringState) Save(*protos.SavedMessage, bool) error { return nil }
@@ -571,7 +575,76 @@ func (*restoringState) Save(*protos.SavedMessage, bool) error { return nil }
 func (s *restoringState) Restore(v *View) error {
 	v.ProposalSequence = s.seq
 	v.DecisionsInView = s.decisions
+	if s.proposal != nil {
+		v.inFlightProposal = s.proposal
+		v.Number = s.view
+		v.Phase = s.phase
+	}
 	return nil
+}
+
+// TestNewProposerReportsTheCarriedProposalItStartsWith makes sure that a view uses a carried proposal only at the
+// sequence it starts at, and starts with a carried proposal it was in the middle of when it was restored.
+func TestNewProposerReportsTheCarriedProposalItStartsWith(t *testing.T) {
+	carriedAt := func(view, seq uint64) *types.Proposal {
+		return &types.Proposal{Metadata: MarshalOrPanic(&protos.ViewMetadata{ViewId: view, LatestSequence: seq})}
+	}
+	carried := carriedAt(1, 5)
+
+	for _, test := range []struct {
+		description string
+		state       *restoringState
+		viewNum     uint64
+		carried     *types.Proposal
+		startsWith  *types.Proposal
+		viewCarried *types.Proposal // what the view gets as Carried
+	}{
+		{description: "carried for the start sequence", state: &restoringState{seq: 5}, viewNum: 2, carried: carried, startsWith: carried, viewCarried: carried},
+		{description: "carried for another sequence", state: &restoringState{seq: 6}, viewNum: 2, carried: carried},
+		{
+			description: "restored in the middle of a carried proposal", viewNum: 2, startsWith: carried,
+			state: &restoringState{seq: 5, proposal: carried, view: 2, phase: PROPOSED},
+		},
+		{
+			description: "restored prepared, in the middle of a carried proposal", viewNum: 2, startsWith: carried,
+			state: &restoringState{seq: 5, proposal: carried, view: 2, phase: PREPARED},
+		},
+		{
+			description: "restored in the middle of a proposal of its view", viewNum: 1,
+			state: &restoringState{seq: 5, proposal: carried, view: 1, phase: PROPOSED},
+		},
+		{
+			description: "restored in the middle of a proposal of its view, and given a carried one", viewNum: 1, carried: carried,
+			state: &restoringState{seq: 5, proposal: carriedAt(1, 5), view: 1, phase: PROPOSED},
+		},
+		{
+			description: "restored in the middle of a carried proposal of an earlier view", viewNum: 3,
+			state: &restoringState{seq: 5, proposal: carried, view: 2, phase: PROPOSED},
+		},
+		{
+			description: "restored in the middle of a carried proposal, and given it again", viewNum: 2, carried: carried, startsWith: carried,
+			state: &restoringState{seq: 5, proposal: carried, view: 2, phase: PROPOSED},
+		},
+		{
+			description: "restored in the middle of a carried proposal, and given another one", viewNum: 2, startsWith: carried,
+			carried: &types.Proposal{Payload: []byte{1}, Metadata: carried.Metadata},
+			state:   &restoringState{seq: 5, proposal: carried, view: 2, phase: PROPOSED},
+		},
+	} {
+		t.Run(test.description, func(t *testing.T) {
+			maker := &ProposalMaker{
+				Checkpoint:    &types.Checkpoint{},
+				State:         test.state,
+				Logger:        zap.NewNop().Sugar(),
+				MetricsView:   api.NewMetricsView(&disabled.Provider{}),
+				ViewSequences: &atomic.Value{},
+			}
+
+			view, _, startsWith := maker.NewProposer(1, 5, test.viewNum, 0, 3, test.carried)
+			require.Same(t, test.startsWith, startsWith)
+			require.Same(t, test.viewCarried, view.(*View).Carried, "the view gets the carried proposal only if it starts with it")
+		})
+	}
 }
 
 // TestNewProposerPublishesTheRestoredSequence makes sure that the sequence and the decisions a view publishes are the
@@ -586,7 +659,7 @@ func TestNewProposerPublishesTheRestoredSequence(t *testing.T) {
 		ViewSequences: viewSequences,
 	}
 
-	view, _ := maker.NewProposer(1, 11, 0, 2, 3, nil)
+	view, _, _ := maker.NewProposer(1, 11, 0, 2, 3, nil)
 	require.Equal(t, uint64(12), view.(*View).ProposalSequence)
 	require.Equal(t, ViewSequence{ViewActive: true, ProposalSeq: 12, DecisionsInView: 3}, viewSequences.Load())
 }

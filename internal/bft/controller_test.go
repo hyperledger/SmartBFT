@@ -690,7 +690,7 @@ func configureProposerBuilder(controller *bft.Controller) *atomic.Value {
 	pb.On("NewProposer", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).
 		Return(func(a uint64, b uint64, c uint64, d uint64, e int, _ *types.Proposal) bft.Proposer {
 			return createView(controller, a, b, c, d, e, vs)
-		}, bft.Phase(bft.COMMITTED))
+		}, bft.Phase(bft.COMMITTED), (*types.Proposal)(nil))
 	controller.ProposerBuilder = pb
 	return vs
 }
@@ -1549,7 +1549,7 @@ func TestControllerKeepsRunningAfterDecideWaiterLeft(t *testing.T) {
 			view := &fakeProposer{leader: leader, abortChan: make(chan struct{})}
 			views <- view
 			return view
-		}, bft.Phase(bft.COMMITTED))
+		}, bft.Phase(bft.COMMITTED), (*types.Proposal)(nil))
 
 	startedWG := sync.WaitGroup{}
 	startedWG.Add(1)

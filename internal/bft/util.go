@@ -331,8 +331,8 @@ type ProposalMaker struct {
 	Checkpoint         *types.Checkpoint
 }
 
-// NewProposer returns a new view
-func (pm *ProposalMaker) NewProposer(leader, proposalSequence, viewNum, decisionsInView uint64, quorumSize int, carried *types.Proposal) (proposer Proposer, phase Phase) {
+// NewProposer returns a new view, its phase, and the carried proposal it starts with (ProposerBuilder).
+func (pm *ProposalMaker) NewProposer(leader, proposalSequence, viewNum, decisionsInView uint64, quorumSize int, carried *types.Proposal) (proposer Proposer, phase Phase, startsWith *types.Proposal) {
 	view := &View{
 		RetrieveCheckpoint: pm.Checkpoint.Get,
 		DecisionsPerLeader: pm.DecisionsPerLeader,
@@ -355,17 +355,18 @@ func (pm *ProposalMaker) NewProposer(leader, proposalSequence, viewNum, decision
 		State:              pm.State,
 		InFlight:           pm.InFlight,
 		InMsgQSize:         pm.InMsqQSize,
-		Carried:            carried,
 		ViewSequences:      pm.ViewSequences,
 		MetricsBlacklist:   pm.MetricsBlacklist,
 		MetricsView:        pm.MetricsView,
 	}
 
+	var restoredCarried *types.Proposal
 	pm.restoreOnceFromWAL.Do(func() {
 		err := pm.State.Restore(view)
 		if err != nil {
 			pm.Logger.Panicf("Failed restoring view from WAL: %v", err)
 		}
+		restoredCarried = carriedInto(view)
 	})
 
 	if proposalSequence > view.ProposalSequence {
@@ -376,6 +377,26 @@ func (pm *ProposalMaker) NewProposer(leader, proposalSequence, viewNum, decision
 	if viewNum > view.Number {
 		view.Number = viewNum
 		view.DecisionsInView = decisionsInView
+		restoredCarried = nil // restored in an earlier view
+	}
+
+	// A view restored in the middle of a carried proposal starts with it. Otherwise it uses carried only if it isn't in
+	// the middle of a proposal and starts at carried's sequence, which the restore can have moved it past.
+	// The restore puts a view in the middle of a proposal only at the sequence it starts at, so the check of the
+	// restored proposal's sequence is only defensive.
+	switch {
+	case restoredCarried != nil && carriedFor(restoredCarried, view.ProposalSequence):
+		if carried != nil && !sameProposal(*carried, *restoredCarried) {
+			pm.Logger.Warnf("View %d is in the middle of a carried proposal at sequence %d, so it doesn't use another one", view.Number, view.ProposalSequence)
+		}
+		startsWith = restoredCarried
+	case carried != nil && view.Phase != COMMITTED:
+		pm.Logger.Warnf("View %d is in the middle of a proposal at sequence %d, so it doesn't use the carried proposal", view.Number, view.ProposalSequence)
+	case carried != nil && !carriedFor(carried, view.ProposalSequence):
+		pm.Logger.Warnf("View %d starts at sequence %d, which the carried proposal isn't for, so it doesn't use it", view.Number, view.ProposalSequence)
+	case carried != nil:
+		view.Carried = carried
+		startsWith = carried
 	}
 
 	// Published after the restore, which can move the view to a later sequence.
@@ -391,7 +412,26 @@ func (pm *ProposalMaker) NewProposer(leader, proposalSequence, viewNum, decision
 	view.MetricsView.DecisionsInView.Set(float64(view.DecisionsInView))
 	view.MetricsView.Phase.Set(float64(view.Phase))
 
-	return view, view.Phase
+	return view, view.Phase, startsWith
+}
+
+// carriedFor returns whether the carried proposal is for the given sequence.
+func carriedFor(carried *types.Proposal, seq uint64) bool {
+	md := &protos.ViewMetadata{}
+	return proto.Unmarshal(carried.Metadata, md) == nil && md.GetLatestSequence() == seq
+}
+
+// carriedInto returns the proposal that the view, just restored from the write ahead log, is in the middle of, if it
+// was carried into the view from an earlier one, or nil.
+func carriedInto(view *View) *types.Proposal {
+	if view.inFlightProposal == nil || (view.Phase != PROPOSED && view.Phase != PREPARED) {
+		return nil
+	}
+	md := &protos.ViewMetadata{}
+	if err := proto.Unmarshal(view.inFlightProposal.Metadata, md); err != nil || countsInView(md, view.Number) {
+		return nil
+	}
+	return view.inFlightProposal
 }
 
 // ViewSequence indicates if a view is currently active and its current proposal sequence

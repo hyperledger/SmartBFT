@@ -72,8 +72,10 @@ type Proposer interface {
 // ProposerBuilder builds a new Proposer
 type ProposerBuilder interface {
 	// NewProposer builds a view. carried is the proposal that a new view carries from this or an earlier view, for the
-	// view's first sequence, or nil. The view uses it in place of a pre-prepare from the leader.
-	NewProposer(leader, proposalSequence, viewNum, decisionsInView uint64, quorumSize int, carried *types.Proposal) (Proposer, Phase)
+	// view's first sequence, or nil. The view uses it in place of a pre-prepare from the leader. NewProposer returns the
+	// view, its phase, and the carried proposal the view starts with: carried if the view uses it, or one that the view
+	// was in the middle of when it was restored from the write ahead log, or nil.
+	NewProposer(leader, proposalSequence, viewNum, decisionsInView uint64, quorumSize int, carried *types.Proposal) (Proposer, Phase, *types.Proposal)
 }
 
 // Controller controls the entire flow of the consensus
@@ -405,24 +407,18 @@ func (c *Controller) convertViewMessageToHeartbeat(m *protos.Message) *protos.Me
 	}
 }
 
-// startView starts the current view at the given sequence. If carried isn't nil, it is the proposal for that sequence,
-// and the view starts with it instead of a proposal from the leader, so the leader doesn't propose there.
+// startView starts the current view at the given sequence, with the given carried proposal for that sequence if it
+// isn't nil. The view says which carried proposal it starts with, if any (ProposerBuilder), and then the leader doesn't
+// propose there.
 func (c *Controller) startView(proposalSequence uint64, carried *types.Proposal) {
-	view, initPhase := c.ProposerBuilder.NewProposer(c.leaderID(), proposalSequence, c.currViewNumber, c.currDecisionsInView, c.quorum, carried)
+	view, initPhase, startsWith := c.ProposerBuilder.NewProposer(c.leaderID(), proposalSequence, c.currViewNumber, c.currDecisionsInView, c.quorum, carried)
 
 	if c.currViewNumber < c.minStartView {
 		c.startLeftView(proposalSequence)
 		return
 	}
 
-	// The view uses the carried proposal only if it is for the sequence the view starts at (View.Carried). A restore
-	// from the write ahead log can have moved the view past it, and then the view waits for a pre-prepare instead.
-	startSeq := c.runningViewSequence().ProposalSeq
-	if carried != nil && !carriedFor(carried, startSeq) {
-		c.Logger.Warnf("View %d starts at sequence %d, which the carried proposal isn't for, so it doesn't use it", c.currViewNumber, startSeq)
-		carried = nil
-	}
-	c.startSeq, c.carried = startSeq, carried
+	c.startSeq, c.carried = c.runningViewSequence().ProposalSeq, startsWith
 
 	c.currViewLock.Lock()
 	c.currView = view
@@ -433,7 +429,7 @@ func (c *Controller) startView(proposalSequence uint64, carried *types.Proposal)
 	leader, _ := c.iAmTheLeader()
 	if leader {
 		switch {
-		case carried != nil:
+		case startsWith != nil:
 			c.Logger.Debugf("Not acquiring leader token when starting view with a carried proposal")
 		case initPhase == COMMITTED || initPhase == ABORT:
 			c.Logger.Debugf("Acquiring leader token when starting view with phase %s", initPhase.String())
@@ -532,12 +528,6 @@ func (c *Controller) changeView(newViewNumber uint64, newProposalSequence uint64
 	if iAm, _ := c.iAmTheLeader(); iAm {
 		c.Batcher.Reset()
 	}
-}
-
-// carriedFor returns whether the carried proposal is for the given sequence.
-func carriedFor(carried *types.Proposal, seq uint64) bool {
-	md := &protos.ViewMetadata{}
-	return proto.Unmarshal(carried.Metadata, md) == nil && md.GetLatestSequence() == seq
 }
 
 // carriedAt returns the proposal that the current view started with at the given sequence, or nil if it started with
