@@ -382,14 +382,21 @@ func (pm *ProposalMaker) NewProposer(leader, proposalSequence, viewNum, decision
 
 	// A view restored in the middle of a carried proposal starts with it. Otherwise it uses carried only if it isn't in
 	// the middle of a proposal and starts at carried's sequence, which the restore can have moved it past.
+	// The restore puts a view in the middle of a proposal only at the sequence it starts at, so the check of the
+	// restored proposal's sequence is only defensive.
 	switch {
 	case restoredCarried != nil && carriedFor(restoredCarried, view.ProposalSequence):
+		if carried != nil && !sameProposal(*carried, *restoredCarried) {
+			pm.Logger.Warnf("View %d is in the middle of a carried proposal at sequence %d, so it doesn't use another one", view.Number, view.ProposalSequence)
+		}
 		startsWith = restoredCarried
-	case carried != nil && view.Phase == COMMITTED && carriedFor(carried, view.ProposalSequence):
+	case carried != nil && view.Phase != COMMITTED:
+		pm.Logger.Warnf("View %d is in the middle of a proposal at sequence %d, so it doesn't use the carried proposal", view.Number, view.ProposalSequence)
+	case carried != nil && !carriedFor(carried, view.ProposalSequence):
+		pm.Logger.Warnf("View %d starts at sequence %d, which the carried proposal isn't for, so it doesn't use it", view.Number, view.ProposalSequence)
+	case carried != nil:
 		view.Carried = carried
 		startsWith = carried
-	case carried != nil:
-		pm.Logger.Warnf("View %d at sequence %d in phase %s doesn't use the carried proposal", view.Number, view.ProposalSequence, view.Phase)
 	}
 
 	// Published after the restore, which can move the view to a later sequence.

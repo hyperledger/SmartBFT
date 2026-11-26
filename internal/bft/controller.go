@@ -411,14 +411,14 @@ func (c *Controller) convertViewMessageToHeartbeat(m *protos.Message) *protos.Me
 // isn't nil. The view says which carried proposal it starts with, if any (ProposerBuilder), and then the leader doesn't
 // propose there.
 func (c *Controller) startView(proposalSequence uint64, carried *types.Proposal) {
-	view, initPhase, carried := c.ProposerBuilder.NewProposer(c.leaderID(), proposalSequence, c.currViewNumber, c.currDecisionsInView, c.quorum, carried)
+	view, initPhase, startsWith := c.ProposerBuilder.NewProposer(c.leaderID(), proposalSequence, c.currViewNumber, c.currDecisionsInView, c.quorum, carried)
 
 	if c.currViewNumber < c.minStartView {
 		c.startLeftView(proposalSequence)
 		return
 	}
 
-	c.startSeq, c.carried = c.runningViewSequence().ProposalSeq, carried
+	c.startSeq, c.carried = c.runningViewSequence().ProposalSeq, startsWith
 
 	c.currViewLock.Lock()
 	c.currView = view
@@ -429,7 +429,7 @@ func (c *Controller) startView(proposalSequence uint64, carried *types.Proposal)
 	leader, _ := c.iAmTheLeader()
 	if leader {
 		switch {
-		case carried != nil:
+		case startsWith != nil:
 			c.Logger.Debugf("Not acquiring leader token when starting view with a carried proposal")
 		case initPhase == COMMITTED || initPhase == ABORT:
 			c.Logger.Debugf("Acquiring leader token when starting view with phase %s", initPhase.String())

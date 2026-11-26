@@ -614,6 +614,10 @@ func TestNewProposerReportsTheCarriedProposalItStartsWith(t *testing.T) {
 			state: &restoringState{seq: 5, proposal: carried, view: 1, phase: PROPOSED},
 		},
 		{
+			description: "restored in the middle of a proposal of its view, and given a carried one", viewNum: 1, carried: carried,
+			state: &restoringState{seq: 5, proposal: carriedAt(1, 5), view: 1, phase: PROPOSED},
+		},
+		{
 			description: "restored in the middle of a carried proposal of an earlier view", viewNum: 3,
 			state: &restoringState{seq: 5, proposal: carried, view: 2, phase: PROPOSED},
 		},
@@ -622,8 +626,9 @@ func TestNewProposerReportsTheCarriedProposalItStartsWith(t *testing.T) {
 			state: &restoringState{seq: 5, proposal: carried, view: 2, phase: PROPOSED},
 		},
 		{
-			description: "restored in the middle of a carried proposal for an earlier sequence", viewNum: 2,
-			state: &restoringState{seq: 4, proposal: carriedAt(1, 4), view: 2, phase: PROPOSED},
+			description: "restored in the middle of a carried proposal, and given another one", viewNum: 2, startsWith: carried,
+			carried: &types.Proposal{Payload: []byte{1}, Metadata: carried.Metadata},
+			state:   &restoringState{seq: 5, proposal: carried, view: 2, phase: PROPOSED},
 		},
 	} {
 		t.Run(test.description, func(t *testing.T) {
