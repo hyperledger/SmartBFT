@@ -205,6 +205,8 @@ func copyFile(source, target string) error {
 }
 
 func truncateCloseFile(f *os.File, offset int64) error {
+	defer func() { _ = f.Close() }()
+
 	if err := f.Truncate(offset); err != nil {
 		return fmt.Errorf("failed to truncate at: %d; log file: %s; error: %w", offset, f.Name(), err)
 	}
