@@ -23,7 +23,8 @@ import (
 // ViewController controls the view
 type ViewController interface {
 	// ViewChanged aborts the current view and starts the given view at the given sequence, with the given carried
-	// proposal for that sequence if it isn't nil.
+	// proposal for that sequence if it isn't nil. A restart of the current view at the sequence it started at keeps
+	// the carried proposal it started with, and a different carried proposal there is refused.
 	ViewChanged(newViewNumber uint64, newProposalSequence uint64, carried *types.Proposal)
 	// AbortView aborts the given view and waits until it has stopped. It stops
 	// waiting when cancel is closed, so that stopping the view changer does not

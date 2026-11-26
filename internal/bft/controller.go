@@ -415,11 +415,11 @@ func (c *Controller) startView(proposalSequence uint64, carried *types.Proposal)
 		return
 	}
 
-	// The view uses the carried proposal only at its sequence. A restore from the write ahead log can have moved the
-	// view past it, and then the view waits for a pre-prepare from the leader instead.
+	// The view uses the carried proposal only if it is for the sequence the view starts at (View.Carried). A restore
+	// from the write ahead log can have moved the view past it, and then the view waits for a pre-prepare instead.
 	startSeq := c.runningViewSequence().ProposalSeq
-	if carried != nil && startSeq != proposalSequence {
-		c.Logger.Warnf("View %d starts at sequence %d, not at %d, so it doesn't use the carried proposal", c.currViewNumber, startSeq, proposalSequence)
+	if carried != nil && !carriedFor(carried, startSeq) {
+		c.Logger.Warnf("View %d starts at sequence %d, which the carried proposal isn't for, so it doesn't use it", c.currViewNumber, startSeq)
 		carried = nil
 	}
 	c.startSeq, c.carried = startSeq, carried
@@ -466,7 +466,9 @@ func (c *Controller) startLeftView(proposalSequence uint64) {
 // changeView aborts the current view and starts the given view at the given sequence, with the given decisions in it
 // and the given carried proposal for that sequence, if it isn't nil. A new view change, a sync and a leader rotation
 // all call it. It does nothing for an earlier view or a view the node left, and it keeps the current view if that is
-// already the requested one.
+// already the requested one. A restart of the current view at the sequence it started at keeps the carried proposal it
+// started with, and a different carried proposal there is refused, since the view may have voted for or proposed
+// another proposal there.
 func (c *Controller) changeView(newViewNumber uint64, newProposalSequence uint64, newDecisionsInView uint64, carried *types.Proposal) {
 	c.viewTransitionLock.Lock()
 	defer c.viewTransitionLock.Unlock()
@@ -530,6 +532,12 @@ func (c *Controller) changeView(newViewNumber uint64, newProposalSequence uint64
 	if iAm, _ := c.iAmTheLeader(); iAm {
 		c.Batcher.Reset()
 	}
+}
+
+// carriedFor returns whether the carried proposal is for the given sequence.
+func carriedFor(carried *types.Proposal, seq uint64) bool {
+	md := &protos.ViewMetadata{}
+	return proto.Unmarshal(carried.Metadata, md) == nil && md.GetLatestSequence() == seq
 }
 
 // carriedAt returns the proposal that the current view started with at the given sequence, or nil if it started with
@@ -680,7 +688,8 @@ func (c *Controller) ReleaseViewWrite() {
 }
 
 // ViewChanged makes the controller abort the current view and start a new one with the given numbers, and with the
-// given carried proposal for the given sequence, if it isn't nil.
+// given carried proposal for the given sequence, if it isn't nil. The rules of changeView apply: for example, a
+// different carried proposal for the sequence the current view started at is refused.
 func (c *Controller) ViewChanged(newViewNumber uint64, newProposalSequence uint64, carried *types.Proposal) {
 	c.Logger.Debugf("ViewChanged, the new view is %d", newViewNumber)
 	amILeader, _ := c.iAmTheLeader()

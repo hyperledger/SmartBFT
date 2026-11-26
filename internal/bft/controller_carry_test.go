@@ -14,6 +14,7 @@ import (
 	"github.com/hyperledger/SmartBFT/pkg/api"
 	"github.com/hyperledger/SmartBFT/pkg/metrics/disabled"
 	"github.com/hyperledger/SmartBFT/pkg/types"
+	protos "github.com/hyperledger/SmartBFT/smartbftprotos"
 	"github.com/stretchr/testify/require"
 )
 
@@ -21,15 +22,16 @@ import (
 // that its leader doesn't take the leader token, since the view starts with that proposal instead of one from the
 // leader.
 func TestStartViewWithACarriedProposal(t *testing.T) {
-	carried := &types.Proposal{Payload: []byte{1}}
+	carried := newCarriedProposal(5, 1)
 
 	for _, test := range []struct {
 		description string
 		carried     *types.Proposal
-		token       bool
+		used        bool
 	}{
-		{description: "with a carried proposal", carried: carried},
-		{description: "without one", token: true},
+		{description: "with a carried proposal", carried: carried, used: true},
+		{description: "without one"},
+		{description: "with a proposal carried for another sequence", carried: newCarriedProposal(6, 1)},
 	} {
 		t.Run(test.description, func(t *testing.T) {
 			controller, builder := newCarryingController(t)
@@ -38,7 +40,8 @@ func TestStartViewWithACarriedProposal(t *testing.T) {
 			controller.startView(5, test.carried)
 			require.Equal(t, []*types.Proposal{test.carried}, builder.carriedProposals())
 			require.Equal(t, []uint64{0}, builder.started())
-			require.Equal(t, test.token, len(controller.leaderToken) == 1)
+			require.Equal(t, !test.used, len(controller.leaderToken) == 1, "the leader takes the token if the view doesn't use a carried proposal")
+			require.Equal(t, test.used, controller.carriedAt(5) != nil)
 		})
 	}
 }
@@ -60,12 +63,17 @@ func TestViewChangedPassesTheCarriedProposal(t *testing.T) {
 	})
 	t.Cleanup(stop)
 
-	carried := &types.Proposal{Payload: []byte{1}}
+	carried := newCarriedProposal(5, 1)
 	controller.ViewChanged(1, 5, carried)
 	require.Eventually(t, func() bool { return len(builder.carriedProposals()) == 1 }, time.Minute, 10*time.Millisecond)
 	stop()
 	require.Equal(t, []uint64{1}, builder.started())
 	require.Equal(t, []*types.Proposal{carried}, builder.carriedProposals())
+}
+
+// newCarriedProposal returns a proposal for the given sequence, to carry.
+func newCarriedProposal(seq uint64, payload byte) *types.Proposal {
+	return &types.Proposal{Payload: []byte{payload}, Metadata: MarshalOrPanic(&protos.ViewMetadata{LatestSequence: seq})}
 }
 
 // newCarryingController returns a controller in view 0 whose own ID leads view 1, with a view builder that records
@@ -89,7 +97,7 @@ func newCarryingController(t *testing.T) (*Controller, *recordingProposerBuilder
 // at a later sequence doesn't.
 func TestRestartKeepsTheCarriedProposal(t *testing.T) {
 	controller, builder := newCarryingController(t)
-	carried := &types.Proposal{Payload: []byte{1}}
+	carried := newCarriedProposal(5, 1)
 
 	controller.changeView(1, 5, 0, carried)
 	builder.views[0].Abort() // the view stops, and a sync that found nothing newer restarts it
@@ -109,8 +117,8 @@ func TestRestartKeepsTheCarriedProposal(t *testing.T) {
 // may have voted for another proposal there, or proposed one.
 func TestCarriedProposalDoesNotReplaceWhatTheViewStartedWith(t *testing.T) {
 	controller, builder := newCarryingController(t)
-	carried := &types.Proposal{Payload: []byte{1}}
-	other := &types.Proposal{Payload: []byte{2}}
+	carried := newCarriedProposal(5, 1)
+	other := newCarriedProposal(5, 2)
 
 	controller.changeView(1, 5, 0, nil) // for example, a sync started the view without the carried proposal
 	controller.changeView(1, 5, 0, carried)
@@ -126,8 +134,8 @@ func TestCarriedProposalDoesNotReplaceWhatTheViewStartedWith(t *testing.T) {
 // restarts the view with it, and that the view doesn't keep the carried proposal of the earlier sequence.
 func TestCarriedProposalForALaterSequence(t *testing.T) {
 	controller, builder := newCarryingController(t)
-	carried := &types.Proposal{Payload: []byte{1}}
-	later := &types.Proposal{Payload: []byte{2}}
+	carried := newCarriedProposal(5, 1)
+	later := newCarriedProposal(6, 2)
 
 	controller.changeView(1, 5, 0, carried)
 	controller.changeView(1, 6, 0, later)
@@ -151,7 +159,7 @@ func TestCarriedProposalIsNotUsedWhereTheViewDoesNotStart(t *testing.T) {
 		N:             4,
 	}
 
-	controller.startView(5, &types.Proposal{Payload: []byte{1}})
+	controller.startView(5, newCarriedProposal(5, 1))
 	t.Cleanup(controller.currView.Abort)
 	require.Len(t, controller.leaderToken, 1)
 	require.Nil(t, controller.carriedAt(5))
@@ -162,7 +170,7 @@ func TestCarriedProposalIsNotUsedWhereTheViewDoesNotStart(t *testing.T) {
 // not restarted for a copy of that proposal, nor at a later sequence, where no proposal is carried.
 func TestViewWithACarriedProposalIsNotRestartedForNothing(t *testing.T) {
 	controller, builder := newCarryingController(t)
-	carried := &types.Proposal{Payload: []byte{1}}
+	carried := newCarriedProposal(5, 1)
 	controller.changeView(1, 5, 0, carried)
 
 	copied := *carried
